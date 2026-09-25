@@ -749,6 +749,12 @@ void App::drawClassicPanel() {
     if (deep) snprintf(precLabel, sizeof precLabel, "(deep, %d bits)", hp::bitsForPixel(view.cs.height / fbH));
     else snprintf(precLabel, sizeof precLabel, fp64 ? "(fp64)" : "(fp32)");
     ImGui::TextDisabled("%s", precLabel);
+    if (deep) {
+        ImGui::Checkbox("Skip ahead (BLA)", &view.cs.bla);
+        helpTip("While a pixel stays very close to the reference orbit, thousands of iterations can be replaced by "
+                "one linear step (bivariate linear approximation). Near a deep minibrot that's 5x faster, and the "
+                "picture is the same: the approximation is only used where its error is below double precision.");
+    }
     if (deep && (refPending || !refWorker.ready()))
         ImGui::ProgressBar(refWorker.progress(), ImVec2(-1, 0), "reference orbit (high precision)...");
     if (view.cs.formula != 0 && view.cs.height / fbH < 1e-13)

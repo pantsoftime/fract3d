@@ -76,7 +76,8 @@ struct Classic2DSettings {
     int power = 3;
     float phoenixP[2] = {-0.5f, 0.0f};
     int supersample = 2;
-    int fp64 = 2;  // 0 off, 1 on, 2 auto
+    int fp64 = 2;  // 0 off, 1 on, 2 auto, 3 perturbation
+    bool bla = true;  // deep zoom: skip ahead with linear approximations (much faster)
     bool banded = true;
     float colorDensity = 1.0f;  // palette entries per iteration
     int insideMode = 0;         // black, zmag, solid

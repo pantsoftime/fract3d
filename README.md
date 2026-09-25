@@ -36,7 +36,7 @@ Mandelbulb, Mandelbox, Menger sponge, Sierpinski tetrahedron, Kaleidoscopic IFS,
 - seven coloring methods: escape time, binary decomposition, escape angle, stripe average, two orbit traps, biomorphs
 - right-click any point for its Julia set, or press J for a live Julia preview under the cursor
 - an orbit viewer that draws z0, z1, z2 ... under the cursor
-- **deep zoom**: floats, then doubles, then perturbation theory with an arbitrary-precision reference orbit - zooms to 10^100x and far beyond
+- **deep zoom**: floats, then doubles, then perturbation theory with an arbitrary-precision reference orbit and linear skip-ahead (BLA) - zooms to 10^290x, checked pixel by pixel against exact arithmetic
 - progressive rendering in resumable chunks (Fractint's scanline reveal), so even millions of iterations never stall the desktop
 - **Lift into 3D** turns the current view into a landscape
 
@@ -49,7 +49,7 @@ Mandelbulb, Mandelbox, Menger sponge, Sierpinski tetrahedron, Kaleidoscopic IFS,
 **Learning.** The Learn panel has three tabs:
 - **This fractal:** a lesson on the current fractal
 - **Concepts:** fractal dimension, escape time, distance estimation, IFS and folding, orbit traps, precision, path tracing, history
-- **Tour:** a guided walk through 17 curated views
+- **Tour:** a guided walk through 18 curated views
 
 Every slider has a tooltip explaining what it does.
 

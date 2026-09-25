@@ -314,9 +314,10 @@ void StateImages::release() {
 }
 
 // ------------------------------------------------------------------ timers
-void PassTimer::begin(float amountOfWork) {
+void PassTimer::begin(float amountOfWork, bool worstCase) {
     if (!q[0]) glGenQueries(kSlots, q);
     work[head] = amountOfWork;
+    worst[head] = worstCase;
     glBeginQuery(GL_TIME_ELAPSED, q[head]);
 }
 
@@ -332,7 +333,13 @@ void PassTimer::poll() {
         if (!avail) break;
         GLuint64 ns = 0;
         glGetQueryObjectui64v(q[tail], GL_QUERY_RESULT, &ns);
-        if (work[tail] > 0) msPerWork = msPerWork * 0.5 + (ns / 1e6 / work[tail]) * 0.5;
+        if (work[tail] > 0) {
+            msPerWork = msPerWork * 0.5 + (ns / 1e6 / work[tail]) * 0.5;
+            lastMs = ns / 1e6;
+            lastWork = work[tail];
+            fresh++;
+            if (worst[tail]) worstMsPerWork = ns / 1e6 / work[tail];
+        }
         tail = (tail + 1) % kSlots;
     }
 }

@@ -235,6 +235,12 @@ if(FRACT3D_TESTS)
                      -DRE=${re} -DIM=${im} -DHEIGHT=${h} -DMAXITER=${it} -DMAXMISMATCH=${tol}
                      -P ${CMAKE_SOURCE_DIR}/tests/iter_check.cmake)
   endforeach()
+  # skipping ahead (BLA) changes nothing visible: the 10^32x minibrot with and without it
+  add_test(NAME deep.bla-agrees
+           COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:fract3d> -DDIFF=$<TARGET_FILE:imgdiff>
+                   -DPAR=${CMAKE_SOURCE_DIR}/presets/18-minibrot-1e32.par
+                   -DGOLDEN_PAR=${CMAKE_SOURCE_DIR}/tests/deep/minibrot-no-bla.par -DOUT=${TEST_OUT} -DSIZE=240x135
+                   -P ${CMAKE_SOURCE_DIR}/tests/render_pair.cmake)
   # ...and agrees with plain doubles where both are accurate (a well-conditioned view)
   add_test(NAME deep.agrees-with-fp64
            COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:fract3d> -DDIFF=$<TARGET_FILE:imgdiff>

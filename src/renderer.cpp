@@ -106,6 +106,7 @@ void Renderer::shutdown() {
         for (auto& p : row) p = Program();
     classicDeep_ = Program();
     if (refSsbo_) glDeleteBuffers(1, &refSsbo_);
+    if (blaSsbo_) glDeleteBuffers(1, &blaSsbo_);
     accum.release();
     index2D.release();
     for (auto& s : state2D_) s.release();
@@ -384,6 +385,14 @@ void Renderer::setReferenceOrbit(const std::vector<double>& xy) {
     refLen_ = (int)(xy.size() / 2);
 }
 
+void Renderer::setBlaTable(const BlaTable& t) {
+    if (!blaSsbo_) glCreateBuffers(1, &blaSsbo_);
+    glNamedBufferData(blaSsbo_, (GLsizeiptr)std::max<size_t>(t.data.size(), 6) * sizeof(double), t.data.empty() ? nullptr : t.data.data(),
+                      GL_STATIC_DRAW);
+    blaOffset_ = t.levelOffset;
+    blaCount_ = t.levelCount;
+}
+
 bool Renderer::classicUsesFp64(const Classic2DSettings& cs, int targetH) const {
     if (cs.formula == kCustomFormula) return false;  // user formulas use transcendental functions: float only
     if (cs.fp64 == 0) return false;
@@ -443,6 +452,18 @@ bool Renderer::dispatch2D(IndexTarget& out, const Classic2DSettings& cs, int y0,
     if (deep) {
         double pixel = cs.height / out.h;
         p.setd("uRefOffsetPx", deepOffset_[0] / pixel, deepOffset_[1] / pixel);
+        // skip-ahead table; not with colorings that look at every iteration (stripes, traps)
+        bool bla = cs.bla && cs.coloring != 3 && cs.coloring != 4 && cs.coloring != 5 && cs.coloring != 6;
+        int levels = bla ? std::min((int)blaOffset_.size() - 1, 30) : 0;
+        p.set("uBlaLevels", std::max(levels, 0));
+        for (int j = 1; j <= levels; j++) {
+            char name[32];
+            snprintf(name, sizeof name, "uBlaOffset[%d]", j);
+            p.set(name, blaOffset_[j]);
+            snprintf(name, sizeof name, "uBlaCount[%d]", j);
+            p.set(name, blaCount_[j]);
+        }
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, blaSsbo_);
         p.set("uRefLen", refLen_);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, refSsbo_);
     }

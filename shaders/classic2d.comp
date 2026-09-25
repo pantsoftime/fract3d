@@ -139,6 +139,13 @@ layout(std430, binding = 0) readonly buffer RefOrbit { dvec2 refZ[]; };
 uniform int   uRefLen;       // entries in refZ
 uniform dvec2 uRefOffsetPx;  // (view center - reference point) in pixels
 
+// Skip-ahead table (see src/deepzoom.h): level j (skip 2^j iterations) has
+// uBlaCount[j] entries for the reference starts m = 1 + k 2^j.
+struct BlaStep { dvec2 A, B; double r2, pad; };
+layout(std430, binding = 1) readonly buffer Bla { BlaStep bla[]; };
+uniform int uBlaLevels;  // 0: no skipping
+uniform int uBlaOffset[31], uBlaCount[31];
+
 dvec2 dcmul(dvec2 a, dvec2 b) { return dvec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
 
 void mainPerturb() {
@@ -171,6 +178,29 @@ void mainPerturb() {
     dvec2 zf = refZ[m] + eps;
     int end = min(i + uChunk, uMaxIter);
     for (; i < end; i++) {
+        // Skip ahead while delta is small enough for the linear approximation: the
+        // longest valid jump that starts at this (aligned) reference index. Jumps may
+        // run past this pass's chunk, never past the iteration limit or the reference.
+        if (uBlaLevels > 0 && m >= 1) {
+            int mm = m - 1;
+            double d2 = dot(eps, eps);
+            for (int j = min(mm == 0 ? uBlaLevels : findLSB(mm), uBlaLevels); j >= 1; j--) {
+                int l = 1 << j, k = mm >> j;
+                if (k >= uBlaCount[j] || m + l >= uRefLen - 1 || i + l >= uMaxIter) continue;
+                BlaStep s = bla[uBlaOffset[j] + k];
+                if (d2 < s.r2) {
+                    eps = dcmul(s.A, eps) + dcmul(s.B, cD);
+                    m += l;
+                    i += l - 1;  // (the loop adds the last one)
+                    zf = refZ[m] + eps;
+                    break;
+                }
+            }
+            if (m - 1 != mm) {  // jumped: z is still close to the reference, so it can't escape or need rebasing here
+                accumulate(vec2(zf));
+                continue;
+            }
+        }
         eps = dcmul(2.0LF * refZ[m] + eps, eps) + cD;  // delta' = 2 Z delta + delta^2 + delta_c
         m++;
         zf = refZ[m] + eps;

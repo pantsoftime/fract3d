@@ -144,13 +144,17 @@ struct PassTimer {
     static constexpr int kSlots = 64;  // passes in flight at most
     GLuint q[kSlots] = {};
     float work[kSlots] = {};
+    bool worst[kSlots] = {};  // a pass whose cost is the worst case (2D: a band's first pass, all pixels busy)
     int head = 0, tail = 0;  // in flight: [tail, head)
     double msPerWork = 0.002;  // running estimate
+    double lastMs = 0, lastWork = 0;  // the newest measured pass
+    int fresh = 0;                    // measurements since the caller last looked
+    double worstMsPerWork = 0;        // from the newest worst-case pass (0: none measured yet)
     PassTimer() = default;
     PassTimer(const PassTimer&) = delete;
     PassTimer& operator=(const PassTimer&) = delete;
     bool full() const { return (head + 1) % kSlots == tail; }
-    void begin(float amountOfWork);
+    void begin(float amountOfWork, bool worstCase = false);
     void end();
     void poll();  // folds finished passes into the estimate
     void release();

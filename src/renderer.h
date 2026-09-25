@@ -1,5 +1,6 @@
 #pragma once
 #include "camera.h"
+#include "deepzoom.h"
 #include "fractal_lib.h"
 #include "gl_util.h"
 #include "palettes.h"
@@ -69,6 +70,7 @@ public:
     // Julia sets when a pixel is smaller than doubles can resolve, or when forced.
     bool classicUsesDeep(const Classic2DSettings& cs, int targetH) const;
     void setReferenceOrbit(const std::vector<double>& xy);  // uploads Z_0..Z_n
+    void setBlaTable(const BlaTable& t);                      // the skip-ahead table that goes with it
     // (view center - reference point), in plane units
     void setDeepOffset(double dx, double dy) { deepOffset_[0] = dx, deepOffset_[1] = dy; }
     int referenceLength() const { return refLen_; }
@@ -111,8 +113,9 @@ private:
     bool classicBuilt_[2][3] = {};
     Program classicDeep_;
     bool classicDeepBuilt_ = false;
-    GLuint refSsbo_ = 0;
+    GLuint refSsbo_ = 0, blaSsbo_ = 0;
     int refLen_ = 0;
+    std::vector<int> blaOffset_, blaCount_;
     double deepOffset_[2] = {0, 0};
     std::string customGlsl_[2], customError_[2];
     std::unordered_map<std::string, std::unique_ptr<FractalPrograms>> progs_;

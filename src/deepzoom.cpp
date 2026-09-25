@@ -92,6 +92,49 @@ int digitsForPixel(double pixelSize) { return std::clamp((int)std::ceil(-std::lo
 
 }  // namespace hp
 
+// ------------------------------------------------------------------ BLA
+// Heiland-Allen, "Deep zoom theory and practice (again)", 2022. One iteration at
+// reference index m is  delta' = A delta + B dc  with A = 2 Z_m, B = 1, dropping
+// delta^2, which is small next to 2 Z delta while |delta| < eps |A|. Two
+// consecutive steps x then y merge into  A = Ay Ax, B = Ay Bx + By, valid while
+// delta stays inside x's radius and x's result inside y's:
+//   R = min(Rx, (Ry - |Bx| dcMax) / |Ax|).
+static BlaTable buildBla(const std::vector<double>& z, double eps, double dcMax, const std::atomic<bool>& cancel) {
+    BlaTable t;
+    int n = (int)(z.size() / 2);
+    int steps = n - 2;  // single steps m = 1 .. n-2 (the shader never skips onto the last entry)
+    if (steps < 2) return t;
+    struct E { double ar, ai, br, bi, r; };
+    std::vector<E> cur(steps);
+    for (int k = 0; k < steps; k++) {
+        double zr = z[2 * (k + 1)], zi = z[2 * (k + 1) + 1];
+        double ar = 2 * zr, ai = 2 * zi;
+        cur[k] = {ar, ai, 1, 0, eps * std::hypot(ar, ai)};
+    }
+    t.levelOffset.push_back(0);
+    t.levelCount.push_back(0);
+    while (cur.size() >= 2 && !cancel) {
+        std::vector<E> next(cur.size() / 2);
+        for (size_t k = 0; k < next.size(); k++) {
+            const E &x = cur[2 * k], &y = cur[2 * k + 1];
+            E e;
+            e.ar = y.ar * x.ar - y.ai * x.ai;
+            e.ai = y.ar * x.ai + y.ai * x.ar;
+            e.br = y.ar * x.br - y.ai * x.bi + y.br;
+            e.bi = y.ar * x.bi + y.ai * x.br + y.bi;
+            double ax = std::hypot(x.ar, x.ai), bx = std::hypot(x.br, x.bi);
+            e.r = std::min(x.r, std::max(0.0, (y.r - bx * dcMax) / std::max(ax, 1e-300)));
+            if (!std::isfinite(e.ar) || !std::isfinite(e.ai) || !std::isfinite(e.br) || !std::isfinite(e.bi)) e = {0, 0, 0, 0, 0};
+            next[k] = e;
+        }
+        t.levelOffset.push_back((int)(t.data.size() / 6));
+        t.levelCount.push_back((int)next.size());
+        for (auto& e : next) t.data.insert(t.data.end(), {e.ar, e.ai, e.br, e.bi, e.r * e.r, 0.0});
+        cur.swap(next);
+    }
+    return t;
+}
+
 // ------------------------------------------------------------------ worker
 RefOrbitWorker::~RefOrbitWorker() { stop(); }
 
@@ -145,7 +188,11 @@ void RefOrbitWorker::request(const RefOrbitRequest& r) {
             if ((n & 1023) == 0) progress_ = (float)n / std::max(r.maxIter, 1);
         }
         mpfr_clears(zr, zi, cr, ci, t1, t2, t3, (mpfr_ptr)0);
+        // the skip-ahead table (large orbits would need too much memory: they iterate normally)
+        BlaTable bla;
+        if (r.blaEps > 0 && out.size() / 2 <= (1u << 21) && !cancel_) bla = buildBla(out, r.blaEps, r.dcMax, cancel_);
         if (!cancel_) {
+            bla_ = std::move(bla);
             orbit_ = std::move(out);
             progress_ = 1;
             version_++;

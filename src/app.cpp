@@ -1377,6 +1377,18 @@ bool App::stepJob2D(Job2D& job, IndexTarget& target, double budgetMs, int stateS
     // from falling far behind when an estimate is too optimistic.
     PassTimer& pt = rend.passTimer(stateSlot);
     pt.poll();
+    // Pass length follows real measurements only, changing by at most 2x up (4x down) per
+    // measurement, and is capped by the worst case: a band's first pass, when every pixel
+    // is still iterating. Late passes are cheap because most pixels are done, and a chunk
+    // grown on them would make the next band's first pass run for seconds - which the
+    // driver kills, silently wiping the image (a 300000-iteration deep zoom did that).
+    if (pt.fresh > 0 && pt.lastMs > 0) {
+        double ideal = pt.lastWork * (budgetMs / 3.0) / pt.lastMs;
+        job.chunk = (int)std::clamp(ideal, std::max(job.chunk / 4.0, 16.0), job.chunk * 2.0);
+        pt.fresh = 0;
+    }
+    double worstCap = pt.worstMsPerWork > 0 ? budgetMs / pt.worstMsPerWork : 512.0;
+    job.chunk = (int)std::clamp((double)job.chunk, (double)std::min(16, maxIter), std::max(16.0, std::min(worstCap, (double)maxIter)));
     double spent = 0;
     int passes = 0;
     while (job.active && !pt.full()) {
@@ -1389,7 +1401,7 @@ bool App::stepJob2D(Job2D& job, IndexTarget& target, double budgetMs, int stateS
         double est = pt.msPerWork * k;
         if (passes > 0 && spent + est > budgetMs) break;
         int y0 = th - job.row - job.bandRows;  // bands run top-down (GL rows count up)
-        pt.begin((float)k);
+        pt.begin((float)k, first);
         bool ok = rend.dispatch2D(target, job.cs, y0, job.bandRows, k, first, stateSlot);
         pt.end();
         if (!ok) {
@@ -1399,7 +1411,6 @@ bool App::stepJob2D(Job2D& job, IndexTarget& target, double budgetMs, int stateS
         passes++;
         spent += est;
         job.itersDone += k;
-        job.chunk = (int)std::clamp(budgetMs / 3.0 / std::max(pt.msPerWork, 1e-6), std::min(16.0, (double)maxIter), (double)maxIter);
         if (job.itersDone >= maxIter) {  // every orbit in the band has escaped or hit the limit
             job.row += job.bandRows;
             job.bandRows = 0;
@@ -1522,9 +1533,14 @@ bool App::ensureReference(int targetH, bool wait) {
     want.maxIter = cs.maxIter;
     want.bits = hp::bitsForPixel(pixel);
     want.bailout = cs.banded ? std::max(cs.bailout, 2.0f) : std::max(cs.bailout, 64.0f);  // as the shader uses
+    // the skip-ahead table is valid for |delta_c| up to: half the (widest) screen's diagonal
+    // plus the 4 screens the reference may be reused for
+    want.dcMax = cs.julia ? 0.0 : cs.height * 6.5;
+    want.blaEps = kBlaEpsilon;
     const RefOrbitRequest& cur = refWorker.current();
     bool compatible = cur.julia == want.julia && cur.jre == want.jre && cur.jim == want.jim &&
-                      cur.maxIter >= want.maxIter && cur.bits >= want.bits && cur.bailout == want.bailout;
+                      cur.maxIter >= want.maxIter && cur.bits >= want.bits && cur.bailout == want.bailout &&
+                      cur.dcMax >= want.dcMax && cur.blaEps == want.blaEps;
     bool reuse = false;
     if (compatible && !cur.re.empty()) {
         double ox = hp::diffOver(want.re, cur.re, pixel, want.bits), oy = hp::diffOver(want.im, cur.im, pixel, want.bits);
@@ -1536,6 +1552,7 @@ bool App::ensureReference(int targetH, bool wait) {
     if (!refWorker.ready()) return false;
     if (refWorker.version() != refUploaded) {
         rend.setReferenceOrbit(refWorker.orbit());
+        rend.setBlaTable(refWorker.bla());
         refUploaded = refWorker.version();
     }
     const RefOrbitRequest& ref = refWorker.current();

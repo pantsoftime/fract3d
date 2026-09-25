@@ -12,6 +12,16 @@
 // double, so no separate exponent is needed.) When |z| gets smaller than |delta|, or
 // the reference runs out, the pixel restarts from the start of the reference
 // ("rebasing", Zhuoran 2021), which avoids the glitches of older methods.
+//
+// Skipping ahead (bivariate linear approximation, "BLA", Zhuoran 2021 and
+// Heiland-Allen 2022): while delta is tiny next to Z, the delta^2 term doesn't
+// matter and l iterations collapse into one linear map,
+//
+//   delta_{m+l} = A delta_m + B delta_c,   valid while |delta_m| < R
+//
+// The worker builds a table of these for l = 2, 4, 8, ... at every aligned start
+// m, merging pairs level by level; the GPU then jumps over long stretches of the
+// orbit in one step.
 #include <atomic>
 #include <mutex>
 #include <string>
@@ -31,6 +41,13 @@ std::string round(const std::string& a, int digits);  // for display: `digits` s
 int digitsForPixel(double pixelSize);                  // digits that locate a point to a fraction of a pixel
 }  // namespace hp
 
+// BLA error tolerance: the dropped delta^2 term may be this fraction of the kept
+// linear term. Measured with tools/itercheck on a 10^20x view (whose own conditioning
+// lets 0.42% of pixels change for a millionth-of-a-pixel shift): 1e-16 -> 0.36% of
+// pixels differ from exact arithmetic, 1e-14 -> 0.68%, 1e-12 -> 1.8%. Speed-up on a
+// 300000-iteration minibrot at 10^31x: 5x, 6x, 8x. Accuracy wins.
+inline constexpr double kBlaEpsilon = 1e-16;
+
 struct RefOrbitRequest {
     std::string re, im;  // reference point (Mandelbrot: c; Julia: z0)
     bool julia = false;
@@ -38,10 +55,21 @@ struct RefOrbitRequest {
     int maxIter = 0;
     int bits = 64;
     float bailout = 64;
+    double dcMax = 0;       // largest |delta_c| the reference will serve (BLA validity); 0 for Julia sets
+    double blaEps = 0;      // BLA error tolerance (relative); 0: no table
     bool operator==(const RefOrbitRequest& o) const {
         return re == o.re && im == o.im && julia == o.julia && jre == o.jre && jim == o.jim && maxIter == o.maxIter &&
-               bits == o.bits && bailout == o.bailout;
+               bits == o.bits && bailout == o.bailout && dcMax == o.dcMax && blaEps == o.blaEps;
     }
+};
+
+// The BLA table: for each level j >= 1 (skip length 2^j), entries for the starts
+// m = 1 + k 2^j, each (A.re, A.im, B.re, B.im, R^2, 0) - 6 doubles, the layout of
+// the shader's BlaStep. levelOffset[j] is the index of level j's first entry.
+struct BlaTable {
+    std::vector<double> data;
+    std::vector<int> levelOffset, levelCount;  // [0] unused
+    int levels() const { return (int)levelOffset.size() - 1; }
 };
 
 // Computes reference orbits on a background thread.
@@ -55,6 +83,7 @@ public:
     // Takes the finished orbit (x, y doubles, Z_0 first). Only valid when ready().
     const std::vector<double>& orbit() const { return orbit_; }
     int version() const { return version_; }  // bumped whenever a new orbit is ready
+    const BlaTable& bla() const { return bla_; }  // only valid when ready()
 
 private:
     void stop();
@@ -63,6 +92,7 @@ private:
     std::atomic<bool> cancel_{false}, ready_{false};
     std::atomic<float> progress_{0};
     std::vector<double> orbit_;
+    BlaTable bla_;
     std::atomic<int> version_{0};
     bool running_ = false;
 };

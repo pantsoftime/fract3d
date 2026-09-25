@@ -90,6 +90,7 @@ void visitClassic(Classic2DSettings& c, F&& f) {
     f("classic.power", nullptr, &c.power, 1, C);
     f("classic.phoenixP", nullptr, c.phoenixP, 2, C);
     f("classic.fp64", nullptr, &c.fp64, 1, C);
+    f("classic.bla", nullptr, &c.bla, 1, C);
     f("classic.banded", nullptr, &c.banded, 1, C);
     f("classic.coloring", nullptr, &c.coloring, 1, C);
     f("classic.trapSize", nullptr, &c.trapSize, 1, C);
