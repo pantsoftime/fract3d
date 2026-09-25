@@ -230,19 +230,28 @@ void mainPerturb() {
         // longest valid jump that starts at this (aligned) reference index. Jumps may
         // run past this pass's chunk, never past the iteration limit or the reference.
         if (uBlaLevels > 0 && m >= 1) {
+            // A longer jump is only valid where its first half is, so the radius shrinks
+            // as the level grows: scan upward and stop at the first level that fails.
+            // (Scanning down from the longest cost a table read per level before every
+            // ordinary step - that, not the iterations, dominated some deep views.)
             int mm = m - 1;
             double d2 = dot(eps, eps);
-            for (int j = min(mm == 0 ? uBlaLevels : findLSB(mm), uBlaLevels); j >= 1; j--) {
+            int jmax = min(mm == 0 ? uBlaLevels : findLSB(mm), uBlaLevels), best = 0;
+            BlaStep bs;
+            for (int j = 1; j <= jmax; j++) {
                 int l = 1 << j, k = mm >> j;
-                if (k >= uBlaCount[j] || m + l >= uRefLen - 1 || i + l >= uMaxIter) continue;
+                if (k >= uBlaCount[j] || m + l >= uRefLen - 1 || i + l >= uMaxIter) break;
                 BlaStep s = bla[uBlaOffset[j] + k];
-                if (d2 < s.r2) {
-                    eps = dcmul(s.A, eps) + dcmul(s.B, cD);
-                    m += l;
-                    i += l - 1;  // (the loop adds the last one)
-                    zf = refZ[m] + eps;
-                    break;
-                }
+                if (d2 >= s.r2) break;
+                best = j;
+                bs = s;
+            }
+            if (best > 0) {
+                int l = 1 << best;
+                eps = dcmul(bs.A, eps) + dcmul(bs.B, cD);
+                m += l;
+                i += l - 1;  // (the loop adds the last one)
+                zf = refZ[m] + eps;
             }
             if (m - 1 != mm) {  // jumped: z is still close to the reference, so it can't escape or need rebasing here
                 accumulate(vec2(zf));
