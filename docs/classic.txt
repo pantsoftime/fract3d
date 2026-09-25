@@ -46,3 +46,38 @@ The complex version of the logistic map, the population model that made "chaos" 
 @@ Magnet I
 # z -> ((z^2 + c - 1) / (2z + c - 2))^2
 This comes from physics, not art: renormalization studies of magnetic materials (the Ising model) produce this map. It has two kinds of attracting behavior: escape to infinity, or settle at z = 1. The fractal is where the two compete. Fractint shipped it as the magnet1m and magnet1j types.
+
+@@ Coloring: Binary decomposition
+# Which half-plane did z escape into?
+At the moment z escapes, look at the sign of its imaginary part and shift the color by half a palette when it's positive. The bands split into a checkerboard of cells.
+$ color = iterations + (Im z > 0 ? 128 : 0)
+Each cell is the set of starting points whose orbits escape through the same "gate" at the same step. Following the cells inward traces the external rays that Douady and Hubbard used to prove the Mandelbrot set is connected. Fractint called this option "decomp".
+
+@@ Coloring: Escape angle
+# Color by direction, not by time
+Instead of counting steps, color by the angle of z as it escapes: arg(z), from -pi to pi, mapped around the palette.
+$ color = arg(z_escape) / 2pi
+The result shows how the outside of the set is "combed": angle lines flow toward the boundary. Fractint's "atan" outside coloring did the same.
+
+@@ Coloring: Stripe average
+# The average of a wiggle
+While iterating, keep a running average of sin(k * arg z) over the whole orbit. Points whose orbits wind the same way get the same shade, which paints fine stripes that follow the set's filaments. The final value is blended between the last two averages using the fractional escape count, so the stripes stay smooth.
+$ color = mean over the orbit of 0.5 + 0.5 sin(k arg z_n)
+Jussi Harkonen introduced it in 2007. "Stripe density" is k: higher values give more, thinner stripes.
+
+@@ Coloring: Orbit trap: cross
+# How close did the orbit come to the axes?
+Track the smallest distance from any z_n to the real or imaginary axis. Orbits that brush past an axis get one color, orbits that keep their distance another. The traps reveal cross-shaped structures that repeat at every scale. It's the same idea the 3D fractals here use for their "orbit trap" colors.
+$ color = min over n of min(|Re z_n|, |Im z_n|)
+
+@@ Coloring: Orbit trap: point
+# How close did the orbit come to a point?
+Track the smallest distance from any z_n to a fixed point (set by "Trap size"). Every time an orbit passes near the point it leaves a bright dot, so the picture fills with little circles strung along the filaments.
+$ color = min over n of |z_n - trap point|
+
+@@ Coloring: Biomorph
+# Creatures from a bug
+In 1986 Clifford Pickover wrote a Julia-set program with a small mistake: his escape test checked the real and imaginary parts separately instead of |z|. Points that escaped with one part still small were drawn in the "inside" color, and cell-like, organic shapes appeared: he called them biomorphs, and they became a Fractint favorite.
+$ escape when |Re z| > L or |Im z| > L
+$ "inside" if either part is still < L
+Try it on Julia sets and with higher powers (Multibrot).

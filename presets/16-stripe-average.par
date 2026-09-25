@@ -1,0 +1,11 @@
+; Stripe-average coloring: the orbit's average winding paints stripes that follow every filament.
+mode = 2d
+color.palette = Ultra Fractal
+classic.banded = 0
+classic.coloring = 3
+classic.trapSize = 5
+classic.maxIter = 800
+classic.julia = 1
+classic.juliaC = -0.8 0.156
+classic.center = 0 0
+classic.height = 2.6

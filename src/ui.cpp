@@ -719,6 +719,13 @@ void App::drawClassicPanel() {
 
     ImGui::SeparatorText("Color");
     paletteCombo(*this);
+    ImGui::Combo("Coloring", &view.cs.coloring, kColoringModes, kColoringModeCount);
+    helpTip("How escaped points get their color. Escape time is Fractint's classic; the others reveal different "
+            "hidden structure in the same orbits. The Learn panel explains the one you pick.");
+    if (view.cs.coloring == 3)
+        ImGui::SliderFloat("Stripe density", &view.cs.trapSize, 1.0f, 16.0f, "%.1f");
+    else if (view.cs.coloring == 4 || view.cs.coloring == 5)
+        ImGui::SliderFloat("Trap size", &view.cs.trapSize, 0.1f, 20.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
     ImGui::Checkbox("Fractint bands (B)", &view.cs.banded);
     helpTip("On: one palette entry per whole iteration, the classic 1990 look. Off: the smooth (continuous) iteration count blends the colors.");
     ImGui::SliderFloat("Color density", &view.cs.colorDensity, 0.05f, 16.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
@@ -822,6 +829,14 @@ void App::drawLearnPanel() {
                         found = true;
                     }
                 if (!found) ImGui::TextDisabled("(no notes for this formula yet)");
+                // ...and the coloring method, if it isn't the default
+                if (view.cs.coloring > 0)
+                    for (auto& [title, body] : sections(ui.classicText))
+                        if (title == std::string("Coloring: ") + kColoringModes[view.cs.coloring]) {
+                            ImGui::Spacing();
+                            ImGui::SeparatorText(title.c_str());
+                            drawLesson(body);
+                        }
             }
             ImGui::EndChild();
             ImGui::EndTabItem();
