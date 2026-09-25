@@ -55,6 +55,7 @@ int main(int argc, char** argv) {
             if (sscanf(s.c_str(), "%f,%f", &o.fakeMouse[0], &o.fakeMouse[1]) != 2) { fprintf(stderr, "bad --mouse\n"); return 2; }
         }
         else if (a == "--inset") o.insetOn = true;
+        else if (a == "--self-test") o.selfTest = o.hidden = true;
         else if (a == "--orbit") o.orbitOn = true;
         else if (a == "--gl-debug-verbose") o.glDebug = o.glDebugVerbose = true;
         else if (a.size() > 4 && a.substr(a.size() - 4) == ".par") o.parFile = a;

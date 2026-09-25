@@ -122,6 +122,14 @@ bool App::init(const CliOptions& opts) {
 
     int idx = session.cli.fractal.empty() ? 0 : std::max(lib_.indexOf(session.cli.fractal), 0);
     selectFractal(idx, true);
+    const auto& c = session.cli;
+    bool askedForSomething = !c.parFile.empty() || !c.fractal.empty() || !c.formula.empty() || c.mode2d || c.hidden;
+    if (session.restoreSession && !askedForSomething) {
+        bool ok = false;
+        std::string last = readTextFile((session.userDir / "session.par").string(), &ok);
+        if (ok && loadParText(last, "last session", true)) toast("Welcome back - restored your last view", 3);
+    }
+    recordHistoryNow();  // the starting view is the first history entry
     if (!session.cli.parFile.empty() && !loadPar(session.cli.parFile))
         fprintf(stderr, "fract3d: could not load %s\n", session.cli.parFile.c_str());
     if (session.cli.mode2d) view.mode = ViewMode::Classic2D;
@@ -136,6 +144,11 @@ bool App::init(const CliOptions& opts) {
     sanitize(view.cs);
     applyPalette();
 
+    if (session.cli.selfTest) {
+        exitCode = selfTest();
+        quit = true;
+        return true;
+    }
     if (!session.cli.shotPath.empty()) {
         int w = session.cli.shotW ? session.cli.shotW : fbW, h = session.cli.shotH ? session.cli.shotH : fbH;
         int s = session.cli.shotSamples ? session.cli.shotSamples : (view.rs.renderMode ? 256 : 32);
@@ -148,6 +161,7 @@ bool App::init(const CliOptions& opts) {
 
 void App::shutdown() {
     if (!session.cli.hidden) savePrefs();
+    saveSession(true);
     // every GL object must go before the context does
     poster.target.release();
     poster.index.release();
@@ -273,6 +287,139 @@ bool App::compileFormula() {
     return true;
 }
 
+// ------------------------------------------------------------------ undo / history
+std::string App::historyLabel() const {
+    char t[16];
+    std::time_t now_ = std::time(nullptr);
+    std::strftime(t, sizeof t, "%H:%M:%S", std::localtime(&now_));
+    std::string what = view.mode == ViewMode::Classic2D
+                           ? std::string(kClassicFormulas[view.cs.formula]) + (view.cs.julia ? " Julia" : "") +
+                                 (view.cs.formula == kCustomFormula ? " (" + view.formulaName + ")" : "")
+                           : lib_.all()[view.fractal].name;
+    return std::string(t) + "  " + what;
+}
+
+// A new entry is recorded once the view has stayed the same for 0.6 s after a
+// change, so a slider drag or a zoom becomes one undo step, not hundreds.
+void App::recordHistory() {
+    if (dragButton >= 0 || flying || camAnim.active || ImGui::IsAnyItemActive()) {
+        history.changedAt = now;
+        return;
+    }
+    std::string text = parText();
+    if (text == history.lastText) {
+        history.changedAt = -1;
+        return;
+    }
+    if (history.changedAt < 0) history.changedAt = now;
+    if (now - history.changedAt < 0.6) return;
+    recordHistoryNow();  // (a new edit after undoing discards the redo tail)
+    if (history.entries.size() > 200) {
+        history.entries.erase(history.entries.begin());
+        history.pos--;
+    }
+}
+
+void App::recordHistoryNow() {
+    std::string text = parText();
+    if (history.pos >= 0 && history.entries[history.pos].second == text) return;
+    if (history.pos + 1 < (int)history.entries.size()) history.entries.resize(history.pos + 1);
+    history.entries.push_back({historyLabel(), text});
+    history.pos = (int)history.entries.size() - 1;
+    history.lastText = text;
+    history.changedAt = -1;
+}
+
+void App::jumpToHistory(int i) {
+    if (i < 0 || i >= (int)history.entries.size()) return;
+    history.pos = i;
+    loadParText(history.entries[i].second, "history", true);
+}
+
+void App::undo() {
+    // an unrecorded change counts as the newest entry: undo returns to the last recorded view
+    if (parText() != history.lastText && history.pos >= 0) {
+        jumpToHistory(history.pos);
+        toast("Undo", 0.8f);
+        return;
+    }
+    if (history.pos > 0) {
+        jumpToHistory(history.pos - 1);
+        toast("Undo", 0.8f);
+    } else {
+        toast("Nothing to undo", 1.0f);
+    }
+}
+
+void App::redo() {
+    if (history.pos + 1 < (int)history.entries.size()) {
+        jumpToHistory(history.pos + 1);
+        toast("Redo", 0.8f);
+    } else {
+        toast("Nothing to redo", 1.0f);
+    }
+}
+
+// --self-test: exercises logic that normally needs keyboard/mouse input.
+int App::selfTest() {
+    int fails = 0;
+    auto check = [&](bool ok, const char* what) {
+        printf("self-test: %-58s %s\n", what, ok ? "ok" : "FAILED");
+        if (!ok) fails++;
+    };
+    auto preset = [&](const char* name) { return loadPar(session.dataDir / "presets" / name); };
+    history = History();
+    recordHistoryNow();
+    std::string start = parText();
+    check(preset("10-menger-crystal.par"), "load a preset");
+    recordHistoryNow();
+    std::string menger = parText();
+    check(preset("02-seahorse-valley.par"), "load a second preset");
+    // an unrecorded change: undo goes back to the last recorded view (Menger)
+    undo();
+    check(parText() == menger, "undo an unrecorded load returns to the previous view");
+    undo();
+    check(parText() == start, "undo again returns to the start");
+    redo();
+    check(parText() == menger, "redo");
+    view.rs.exposure = 2.5f;  // a new edit after undo...
+    recordHistoryNow();
+    check(history.pos == (int)history.entries.size() - 1, "a new edit becomes the newest entry");
+    redo();
+    check(view.rs.exposure == 2.5f, "...and discards the redo tail");
+    undo();
+    check(parText() == menger, "undo the edit");
+    // saved PARs restore the formula, camera and settings exactly
+    std::string before = parText();
+    loadParText(before, "roundtrip", true);
+    check(parText() == before, "PAR text round-trips exactly");
+    selectFormula("Spider");
+    view.cs.formula = kCustomFormula;
+    setMode(ViewMode::Classic2D);
+    std::string withFormula = parText();
+    selectFormula("Mandel");
+    loadParText(withFormula, "formula", true);
+    check(view.formulaName == "Spider" && rend.hasCustomFormula(), "a PAR restores its custom formula");
+    // hostile values are repaired
+    loadParText("mode = 2d\nclassic.formula = 99\nclassic.maxIter = -3\npost.tonemap = 7\n", "bad", true);
+    check(view.cs.formula < kClassicFormulaCount && view.cs.maxIter >= 1 && view.rs.tonemap <= 2, "hostile PAR values are sanitized");
+    printf("self-test: %s\n", fails ? "FAILED" : "all passed");
+    return fails ? 1 : 0;
+}
+
+// ------------------------------------------------------------------ session
+// The current view is saved on exit (and every 30 s when it changed), and
+// reopened at the next start unless something else was asked for.
+void App::saveSession(bool force) {
+    if (session.cli.hidden) return;
+    if (!force && now - lastSessionSave < 30.0) return;
+    lastSessionSave = now;
+    std::string text = parText();
+    if (text == lastSessionText) return;
+    lastSessionText = text;
+    std::ofstream(session.userDir / "session.par") << text;
+}
+
 // ------------------------------------------------------------------ preferences
 // UI preferences (not part of a view, so not in PAR files).
 void App::loadPrefs() {
@@ -288,6 +435,7 @@ void App::loadPrefs() {
         else if (k == "showLearn") session.showLearn = v != 0;
         else if (k == "flySpeed") session.flySpeed = std::isfinite(v) ? std::clamp(v, 0.01f, 100.0f) : 1.5f;
         else if (k == "keepLighting") session.keepLighting = v != 0;
+        else if (k == "restoreSession") session.restoreSession = v != 0;
         else if (k == "fullscreenMonitor") session.fullscreenMonitor = line.substr(e + 1);
         else
             visitRender(view.rs, [&](const char* name, const char*, auto* ptr, int, unsigned flags) {
@@ -301,8 +449,9 @@ void App::loadPrefs() {
 void App::savePrefs() {
     FILE* f = fopen((session.userDir / "prefs.ini").c_str(), "w");
     if (!f) return;
-    fprintf(f, "theme=%d\nuiScale=%g\nshowLearn=%d\nflySpeed=%g\nkeepLighting=%d\nfullscreenMonitor=%s\n", session.uiTheme,
-            session.uiScale, (int)session.showLearn, session.flySpeed, (int)session.keepLighting, session.fullscreenMonitor.c_str());
+    fprintf(f, "theme=%d\nuiScale=%g\nshowLearn=%d\nflySpeed=%g\nkeepLighting=%d\nfullscreenMonitor=%s\nrestoreSession=%d\n",
+            session.uiTheme, session.uiScale, (int)session.showLearn, session.flySpeed, (int)session.keepLighting,
+            session.fullscreenMonitor.c_str(), (int)session.restoreSession);
     visitRender(view.rs, [&](const char* name, const char*, auto* ptr, int, unsigned flags) {
         if (flags & kPerf) fprintf(f, "%s=%g\n", name, (double)*ptr);
     });
@@ -473,6 +622,8 @@ void App::frame() {
     if (now - lastReloadCheck > 0.5) {
         lastReloadCheck = now;
         refreshDocs();
+        recordHistory();
+        saveSession(false);
         if (rend.reloadCoreIfChanged()) {
             generation++;
             toast(rend.coreError.empty() ? "Shaders reloaded" : "Shader error - see Fractal tab", 3);
@@ -556,6 +707,8 @@ void App::handleKeys() {
     if (pressed(ImGuiKey_Escape) && ui.showHelp) ui.showHelp = false;
     if (ctrl && pressed(ImGuiKey_S)) saveNamedPar();
     if (ctrl && pressed(ImGuiKey_Q)) quit = true;
+    if (ctrl && pressed(ImGuiKey_Z)) io.KeyShift ? redo() : undo();
+    if (ctrl && pressed(ImGuiKey_Y)) redo();
     if (pressed(ImGuiKey_N)) tourStep(io.KeyShift ? -1 : 1);
     if (pressed(ImGuiKey_C) && !ctrl) {  // Fractint's 'c': color cycling
         if (view.rs.cycleSpeed != 0.0f) lastCycleSpeed = view.rs.cycleSpeed, view.rs.cycleSpeed = 0.0f;

@@ -30,6 +30,7 @@ struct CliOptions {
     std::string formula;     // start in Classic 2D with this formula from the formula files
     bool glDebug = false;    // report OpenGL errors (always on in debug builds)
     bool glDebugVerbose = false;
+    bool selfTest = false;
     // testing aids for --ui-shot runs (there's no real mouse in a hidden window)
     float fakeMouse[2] = {-1, -1};
     bool insetOn = false, orbitOn = false;
@@ -61,6 +62,7 @@ struct Session {
     bool showLearn = true;
     float flySpeed = 1.5f;
     bool keepLighting = false;      // keep the current lighting when switching fractals
+    bool restoreSession = true;     // reopen the last view at startup
     std::string fullscreenMonitor;  // monitor chosen in View > Fullscreen on
 };
 
@@ -105,6 +107,21 @@ public:
     void saveNamedPar();          // File > Save PAR / Ctrl+S
     std::string parText() const;  // the current view as PAR text
     bool loadPar(const std::filesystem::path& p);
+    bool loadParText(const std::string& text, const std::string& label, bool quiet);
+    // ---- undo / history (each entry is PAR text: a complete, tested snapshot of the view)
+    struct History {
+        std::vector<std::pair<std::string, std::string>> entries;  // (label, PAR text)
+        int pos = -1;           // entry currently shown
+        std::string lastText;   // view as last recorded (or restored)
+        double changedAt = -1;  // when the view last differed from lastText
+    } history;
+    void recordHistory();       // call regularly: records the view once it settles
+    void recordHistoryNow();    // records the current view immediately
+    int selfTest();             // --self-test: checks app logic that needs no user input
+    void undo();
+    void redo();
+    void jumpToHistory(int i);
+    std::string historyLabel() const;
     void liftTo3D();
     void flattenTo2D();
     void toast(const std::string& msg, float seconds = 2.5f);
@@ -272,6 +289,9 @@ public:
     int savedWin[4] = {0, 0, 1600, 900};
     bool quit = false;
     bool idle = false;  // converged and nothing animating: wait for input instead of redrawing
+    double lastSessionSave = 0;
+    std::string lastSessionText;
+    void saveSession(bool force);
 };
 
 std::string timestampName();

@@ -98,8 +98,14 @@ std::string App::parText() const {
 }
 
 bool App::loadPar(const fs::path& path) {
-    std::ifstream in(path);
-    if (!in) return false;
+    bool ok = false;
+    std::string text = readTextFile(path.string(), &ok);
+    return ok && loadParText(text, path.filename().string(), false);
+}
+
+// Applies PAR text. `quiet` (undo/redo, session restore) skips the toast.
+bool App::loadParText(const std::string& text, const std::string& label, bool quiet) {
+    std::istringstream in(text);
     std::map<std::string, std::string> kv;
     std::string line, note;
     while (std::getline(in, line)) {
@@ -205,7 +211,10 @@ bool App::loadPar(const fs::path& path) {
     sanitize(f);
     applyPalette();
     ui.parNote = note;
-    toast(note.empty() ? "Loaded " + path.filename().string() : note, note.empty() ? 2.5f : 6.0f);
+    if (!quiet) toast(note.empty() ? "Loaded " + label : note, note.empty() ? 2.5f : 6.0f);
+    // Undo/redo/restore loads are already in the history; a user's load becomes
+    // a new entry (recordHistory picks it up), so Undo returns to what was before.
+    if (quiet) history.lastText = parText();
     return true;
 }
 

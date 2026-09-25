@@ -269,6 +269,18 @@ void App::drawMenuBar() {
         if (ImGui::MenuItem("Quit", "Ctrl+Q")) quit = true;
         ImGui::EndMenu();
     }
+    if (ImGui::BeginMenu("Edit")) {
+        if (ImGui::MenuItem("Undo", "Ctrl+Z", false, history.pos > 0 || parText() != history.lastText)) undo();
+        if (ImGui::MenuItem("Redo", "Ctrl+Y", false, history.pos + 1 < (int)history.entries.size())) redo();
+        ImGui::SeparatorText("History");
+        if (history.entries.empty()) ImGui::TextDisabled("(views are recorded as you explore)");
+        int first = std::max(0, (int)history.entries.size() - 25);
+        for (int i = (int)history.entries.size() - 1; i >= first; i--)
+            if (ImGui::MenuItem(history.entries[i].first.c_str(), nullptr, i == history.pos)) jumpToHistory(i);
+        ImGui::Separator();
+        ImGui::MenuItem("Reopen my last view at startup", nullptr, &session.restoreSession);
+        ImGui::EndMenu();
+    }
     if (ImGui::BeginMenu("Mode")) {
         if (ImGui::MenuItem("3D fractals", "M", view.mode == ViewMode::Fractal3D)) setMode(ViewMode::Fractal3D);
         if (ImGui::MenuItem("Classic 2D (Fractint style)", "M", view.mode == ViewMode::Classic2D)) setMode(ViewMode::Classic2D);
@@ -1104,6 +1116,7 @@ void App::drawHelp() {
                    {"F11", "fullscreen"},
                    {"F12", "screenshot (+ .par file to recreate it)"},
                    {"Ctrl+S", "save the current view as a .par"},
+                   {"Ctrl+Z / Ctrl+Y", "undo / redo (Edit menu: history)"},
                    {"Ctrl+Q", "quit"}});
     ImGui::End();
 }

@@ -115,6 +115,9 @@ if(FRACT3D_TESTS)
              COMMAND fract3d --par ${p} --render ${TEST_OUT}/hostile-${name}.png --size 64x36 --samples 1)
   endforeach()
 
+  # app logic that normally needs input: undo/redo, PAR round trips, sanitizing
+  add_test(NAME app.self-test COMMAND fract3d --self-test)
+
   # formula parser/transpiler unit tests, and every shipped formula on the GPU
   add_executable(formula_test tests/formula_test.cpp src/formula.cpp)
   target_include_directories(formula_test PRIVATE src)
