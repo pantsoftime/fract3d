@@ -143,7 +143,7 @@ fract3d --par collection.par --par-entry Seahorse --render out.png   # a Fractin
 ## Tests
 
 ```bash
-ctest --test-dir build                      # ~60 tests, a few seconds (needs a GPU and a display)
+ctest --test-dir build                      # ~90 tests, about 10 seconds (needs a GPU and a display)
 cmake --build build -t update-golden        # after an intentional visual change
 cmake --preset asan && cmake --build --preset asan && ctest --preset asan
 ```
@@ -161,6 +161,6 @@ shaders/    raymarch.frag (3D), classic2d.comp (2D, resumable + perturbation), d
 fractals/   one self-describing .glsl per 3D fractal
 formulas/   Fractint-style .frm formula files
 presets/    the guided tour (.par)
-docs/       concepts.txt and classic.txt (Learn panel content), the code review and its resolution
+docs/       concepts.txt and classic.txt (Learn panel content), the two code reviews and their resolutions
 tests/      golden images, hostile inputs, test paths and deep views; tools/ imgdiff and itercheck (exact MPFR check)
 ```
