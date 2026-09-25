@@ -102,6 +102,8 @@ void Renderer::shutdown() {
     displayProg_ = Program();
     for (auto& row : classic_)
         for (auto& p : row) p = Program();
+    classicDeep_ = Program();
+    if (refSsbo_) glDeleteBuffers(1, &refSsbo_);
     accum.release();
     index2D.release();
     for (auto& s : state2D_) s.release();
@@ -160,6 +162,8 @@ bool Renderer::loadCore(std::string& err) {
     std::memset(classicBuilt_, 0, sizeof classicBuilt_);
     classic_[0][0] = std::move(c32);
     classicBuilt_[0][0] = true;
+    classicDeep_ = Program();
+    classicDeepBuilt_ = false;
     vert_ = vert;
     common_ = common;
     raymarch_ = raymarch;
@@ -361,6 +365,20 @@ bool Renderer::renderSample3D(RenderTarget& target, int sampleIndex, const Fract
 }
 
 // ------------------------------------------------------------------ 2D
+bool Renderer::classicUsesDeep(const Classic2DSettings& cs, int targetH) const {
+    if (cs.formula != 0) return false;  // perturbation is implemented for z^2 + c
+    if (cs.fp64 == 3) return true;
+    if (cs.fp64 != 2) return false;
+    return cs.height / std::max(targetH, 1) < 1e-13;  // doubles start to run out here
+}
+
+void Renderer::setReferenceOrbit(const std::vector<float>& xy) {
+    if (!refSsbo_) glCreateBuffers(1, &refSsbo_);
+    glNamedBufferData(refSsbo_, (GLsizeiptr)std::max<size_t>(xy.size(), 2) * sizeof(float), xy.empty() ? nullptr : xy.data(),
+                      GL_STATIC_DRAW);
+    refLen_ = (int)(xy.size() / 2);
+}
+
 bool Renderer::classicUsesFp64(const Classic2DSettings& cs, int targetH) const {
     if (cs.formula == kCustomFormula) return false;  // user formulas use transcendental functions: float only
     if (cs.fp64 == 0) return false;
@@ -380,7 +398,19 @@ bool Renderer::dispatch2D(IndexTarget& out, const Classic2DSettings& cs, int y0,
                           int stateSlot) {
     StateImages& state = state2D_[stateSlot & 1];
     bool custom = cs.formula == kCustomFormula;
-    Program* pp = classicProgram(classicUsesFp64(cs, out.h), custom);
+    bool deep = classicUsesDeep(cs, out.h);
+    Program* pp;
+    if (deep) {
+        if (!classicDeepBuilt_) {
+            classicDeepBuilt_ = true;
+            classicDeep_.buildCompute({{"header", "#version 460\n#define PERTURB\n"}, {"common.glsl", common_}, {"classic2d.comp", classicSrc_}});
+            if (!classicDeep_.valid()) fprintf(stderr, "fract3d: deep zoom shader: %s\n", classicDeep_.error().c_str());
+        }
+        if (!classicDeep_.valid() || refLen_ < 2) return false;
+        pp = &classicDeep_;
+    } else {
+        pp = classicProgram(classicUsesFp64(cs, out.h), custom);
+    }
     if (!pp) return false;
     Program& p = *pp;
     if (!state.ensure(out.w, bandRowsFor(out.w))) return false;
@@ -407,6 +437,17 @@ bool Renderer::dispatch2D(IndexTarget& out, const Classic2DSettings& cs, int y0,
     p.set("uP1", cs.p1[0], cs.p1[1]);
     p.set("uP2", cs.p2[0], cs.p2[1]);
     p.set("uP3", cs.p3[0], cs.p3[1]);
+    if (deep) {
+        // pixel size as mantissa * 2^exponent: at 10^100x it's far below the smallest float
+        double pixel = cs.height / out.h;
+        int pe = 0;
+        double pm = std::frexp(pixel, &pe);
+        p.set("uPixelMant", (float)pm);
+        p.set("uPixelExp", pe);
+        p.set("uRefOffsetPx", (float)(deepOffset_[0] / pixel), (float)(deepOffset_[1] / pixel));
+        p.set("uRefLen", refLen_);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, refSsbo_);
+    }
     for (int i = 0; i < 4; i++) glBindImageTexture(i, state.tex[i], 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA32UI);
     glBindImageTexture(4, out.value, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_R32F);
     glBindImageTexture(5, out.aux, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_R8);

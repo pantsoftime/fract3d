@@ -82,6 +82,9 @@ std::string App::parText() const {
             for (int k = 0; k < 3; k++) o << " " << arr[k];
         o << "\n";
     }
+    if (!view.hpRe.empty() && view.cs.cx == view.hpShadow[0] && view.cs.cy == view.hpShadow[1] &&
+        (view.hpRe != hp::fromDouble(view.cs.cx) || view.hpIm != hp::fromDouble(view.cs.cy)))
+        o << "classic.centerHP = " << view.hpRe << " " << view.hpIm << "\n";  // deep zoom: every digit counts
     if (view.mode == ViewMode::Classic2D && view.cs.formula == kCustomFormula) {
         std::string src = view.formulaSource;  // one line: newlines become \n
         std::string esc;
@@ -230,6 +233,16 @@ bool App::loadParText(const std::string& text, const std::string& label, bool qu
         if (!compileFormula()) toast("The formula in this PAR has an error: " + formulaError, 6);
     } else if (kv.count("formula.name")) {
         selectFormula(kv["formula.name"]);
+    }
+    if (kv.count("classic.centerHP")) {
+        std::istringstream is(kv["classic.centerHP"]);
+        std::string re, im;
+        if (is >> re >> im && hp::valid(re) && hp::valid(im)) {
+            view.hpRe = re;
+            view.hpIm = im;
+            view.cs.cx = view.hpShadow[0] = hp::toDouble(re);
+            view.cs.cy = view.hpShadow[1] = hp::toDouble(im);
+        }
     }
     // Everything above came from a file: repair anything out of range before use.
     sanitize(view.rs);

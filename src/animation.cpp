@@ -113,6 +113,14 @@ void App::applyPathTime(float t) {
         v.cs.height = h;
         v.cs.cx = B.v.cs.cx + (C.v.cs.cx - B.v.cs.cx) * w;
         v.cs.cy = B.v.cs.cy + (C.v.cs.cy - B.v.cs.cy) * w;
+        if (std::min(hb, hc) / 1000 < 1e-13 && !B.v.hpRe.empty() && !C.v.hpRe.empty()) {
+            // deep zoom path: interpolate the exact centers
+            int bits = hp::bitsForPixel(std::min(h, std::min(hb, hc)) / 1000);
+            v.hpRe = hp::lerp(B.v.hpRe, C.v.hpRe, w, bits);
+            v.hpIm = hp::lerp(B.v.hpIm, C.v.hpIm, w, bits);
+            v.cs.cx = v.hpShadow[0] = hp::toDouble(v.hpRe);
+            v.cs.cy = v.hpShadow[1] = hp::toDouble(v.hpIm);
+        }
         // camera: splined position, angles unwrapped around B's (shortest turn), distance in log space
         const Camera *ca = &A2.v.cam, *cb = &B.v.cam, *cc = &C.v.cam, *cd = &D2.v.cam;
         v.cam.pos = Vec3(catmull(ca->pos.x, cb->pos.x, cc->pos.x, cd->pos.x, u), catmull(ca->pos.y, cb->pos.y, cc->pos.y, cd->pos.y, u),

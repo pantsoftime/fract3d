@@ -75,7 +75,7 @@ void sanitize(Classic2DSettings& c) {
     fix(c.formula, 0, kClassicFormulaCount - 1, d.formula);
     fix(c.cx, -1e3, 1e3, d.cx);
     fix(c.cy, -1e3, 1e3, d.cy);
-    fix(c.height, 1e-300, 100.0, d.height);
+    fix(c.height, kMinHeight, 100.0, d.height);
     fix(c.jx, -1e3, 1e3, d.jx);
     fix(c.jy, -1e3, 1e3, d.jy);
     fix(c.maxIter, 1, kMaxIterations, d.maxIter);
@@ -83,7 +83,7 @@ void sanitize(Classic2DSettings& c) {
     fix(c.power, 2, 16, d.power);
     for (auto& v : c.phoenixP) fix(v, -10.0f, 10.0f, 0.0f);
     fix(c.supersample, 1, 4, d.supersample);
-    fix(c.fp64, 0, 2, d.fp64);
+    fix(c.fp64, 0, 3, d.fp64);
     fix(c.colorDensity, 1e-3f, 1e3f, d.colorDensity);
     fix(c.insideMode, 0, 2, d.insideMode);
     fixColor(c.insideColor, d.insideColor, 1.0f);

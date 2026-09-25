@@ -97,3 +97,4 @@ inline const char* kColoringModes[] = {"Escape time",     "Binary decomposition"
                                        "Orbit trap: cross", "Orbit trap: point",   "Biomorph"};
 inline constexpr int kColoringModeCount = 7;
 inline constexpr int kMaxIterations = 1 << 22;  // progressive rendering keeps even this safe
+inline constexpr double kMinHeight = 1e-290;     // deepest 2D zoom (perturbation keeps it sharp)

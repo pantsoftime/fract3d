@@ -11,6 +11,7 @@ endif()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GLFW REQUIRED IMPORTED_TARGET glfw3)
 pkg_check_modules(EPOXY REQUIRED IMPORTED_TARGET epoxy)
+pkg_check_modules(MPFR REQUIRED IMPORTED_TARGET mpfr gmp)
 
 set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/third_party/imgui)
 add_library(imgui STATIC
@@ -39,10 +40,11 @@ add_executable(fract3d
   src/bluenoise.cpp
   src/formula.cpp
   src/pngmeta.cpp
-  src/animation.cpp)
+  src/animation.cpp
+  src/deepzoom.cpp)
 target_include_directories(fract3d PRIVATE src)
 target_include_directories(fract3d SYSTEM PRIVATE third_party/stb)
-target_link_libraries(fract3d PRIVATE imgui PkgConfig::GLFW PkgConfig::EPOXY)
+target_link_libraries(fract3d PRIVATE imgui PkgConfig::GLFW PkgConfig::EPOXY PkgConfig::MPFR)
 target_compile_options(fract3d PRIVATE -Wall -Wextra -Wno-unused-parameter)
 
 option(FRACT3D_SANITIZE "Build with AddressSanitizer + UndefinedBehaviorSanitizer" OFF)
@@ -149,6 +151,14 @@ if(FRACT3D_TESTS)
   endif()
   add_test(NAME ui.path-window COMMAND fract3d --fractal menger --path ${CMAKE_SOURCE_DIR}/tests/menger-twist.f3dpath
                                        --open path --ui-shot ${TEST_OUT}/ui-path.png --size 1600x900 --frames 20)
+
+  # deep zoom: perturbation must agree with plain doubles where both work (the
+  # tolerance allows the per-pixel rounding noise along chaotic filaments)
+  add_test(NAME deep.fp64-reference
+           COMMAND fract3d --par ${CMAKE_SOURCE_DIR}/tests/deep-seahorse-fp64.par --render ${TEST_OUT}/deep-fp64.png --size 240x135)
+  add_test(NAME deep.matches-fp64
+           COMMAND ${CMAKE_COMMAND} -E env sh -c "$<TARGET_FILE:fract3d> --par ${CMAKE_SOURCE_DIR}/tests/deep-seahorse-perturb.par --render ${TEST_OUT}/deep-perturb.png --size 240x135 >/dev/null && $<TARGET_FILE:imgdiff> ${TEST_OUT}/deep-fp64.png ${TEST_OUT}/deep-perturb.png --max-mean 6 --max-bad-fraction 0.08")
+  set_tests_properties(deep.matches-fp64 PROPERTIES DEPENDS deep.fp64-reference)
 
   # an impossible render must fail cleanly with a non-zero exit code
   add_test(NAME oversize_render_fails

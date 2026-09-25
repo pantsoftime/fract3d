@@ -1,5 +1,6 @@
 #pragma once
 #include "camera.h"
+#include "deepzoom.h"
 #include "formula.h"
 #include "fractal_lib.h"
 #include "palettes.h"
@@ -59,6 +60,10 @@ struct ViewState {
     std::string formulaName = "Mandel";
     std::string formulaSource;
     int fn[4] = {0, 0, 0, 0};  // fn1..fn4: indexes into kFormulaFunctions
+    // The 2D center in full precision (decimal) for deep zooms. cs.cx/cy hold the
+    // nearest doubles; when those are changed directly, this is re-derived.
+    std::string hpRe, hpIm;
+    double hpShadow[2] = {1e300, 1e300};  // the cs.cx/cy values hpRe/hpIm correspond to
 };
 
 // Where things live, how the app was started, and UI preferences that persist
@@ -271,6 +276,14 @@ public:
     bool gamepadActive = false;
     GLFWgamepadstate prevPad{};
     double savedMandel[3] = {-0.6, 0.0, 3.0};  // view to return to from a Julia set
+    std::string savedMandelHP[2];
+    // deep zoom
+    RefOrbitWorker refWorker;
+    int refUploaded = -1;
+    bool refPending = false;
+    void syncCenter();                        // make hpRe/hpIm agree with cs.cx/cy
+    void moveCenter(double dx, double dy);    // pan by a (tiny) amount without losing precision
+    bool ensureReference(int targetH, bool wait);
     struct CamAnim {
         bool active = false;
         float start = 0, yaw0 = 0, pitch0 = 0, dist0 = 1, yaw1 = 0, pitch1 = 0, dist1 = 1;

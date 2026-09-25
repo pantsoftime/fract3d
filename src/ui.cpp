@@ -721,12 +721,46 @@ void App::drawClassicPanel() {
     ImGui::InputDouble("Center imag", &view.cs.cy, 0, 0, "%.15f");
     double mag = 3.0 / view.cs.height;
     if (ImGui::InputDouble("Magnification", &mag, 0, 0, "%.6g") && mag > 0) view.cs.height = 3.0 / mag;
-    bool fp64 = rend.classicUsesFp64(view.cs, fbH);
-    const char* prec[] = {"Single (fast)", "Double", "Auto"};
-    ImGui::Combo("Precision", &view.cs.fp64, prec, 3);
-    helpTip("32-bit floats have about 7 significant digits, so past roughly 100,000x zoom the image turns blocky. Doubles give about 16 digits (deep zooms to around 10^13x) at lower speed. Fractint used clever integer math for the same reason, hence the 'int' in its name.");
+    bool fp64 = rend.classicUsesFp64(view.cs, fbH), deep = rend.classicUsesDeep(view.cs, fbH);
+    const char* prec[] = {"Single (fast)", "Double", "Auto", "Perturbation (deep zoom)"};
+    ImGui::Combo("Precision", &view.cs.fp64, prec, 4);
+    helpTip("32-bit floats have about 7 significant digits, so past roughly 100,000x zoom the image turns blocky. "
+            "Doubles give about 16 digits (to around 10^13x). Beyond that, perturbation theory takes over: one "
+            "reference orbit is computed in arbitrary precision on the CPU and every pixel only tracks its tiny "
+            "difference from it on the GPU - zooms to 10^100x and far beyond. Auto picks whichever is needed. "
+            "(Fractint used clever integer math for the same reason, hence the 'int' in its name.)");
     ImGui::SameLine();
-    ImGui::TextDisabled(fp64 ? "(fp64)" : "(fp32)");
+    char precLabel[48];
+    if (deep) snprintf(precLabel, sizeof precLabel, "(deep, %d bits)", hp::bitsForPixel(view.cs.height / fbH));
+    else snprintf(precLabel, sizeof precLabel, fp64 ? "(fp64)" : "(fp32)");
+    ImGui::TextDisabled("%s", precLabel);
+    if (deep && (refPending || !refWorker.ready()))
+        ImGui::ProgressBar(refWorker.progress(), ImVec2(-1, 0), "reference orbit (high precision)...");
+    if (view.cs.formula != 0 && view.cs.height / fbH < 1e-13)
+        ImGui::TextWrapped("Past the limit of double precision - deep zoom (perturbation) works for the Mandelbrot formula "
+                           "and its Julia sets.");
+    if (ImGui::TreeNode("Exact center (deep zoom)")) {
+        syncCenter();
+        static std::string editRe, editIm;
+        static std::string lastRe, lastIm;
+        if (lastRe != view.hpRe || lastIm != view.hpIm) editRe = lastRe = view.hpRe, editIm = lastIm = view.hpIm;
+        ImGui::PushFont(ui.fontMono, 0.0f);
+        bool ch = ImGui::InputText("re", &editRe, ImGuiInputTextFlags_EnterReturnsTrue);
+        ch |= ImGui::InputText("im", &editIm, ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::PopFont();
+        if (ch) {
+            if (hp::valid(editRe) && hp::valid(editIm)) {
+                view.hpRe = editRe;
+                view.hpIm = editIm;
+                view.cs.cx = view.hpShadow[0] = hp::toDouble(editRe);
+                view.cs.cy = view.hpShadow[1] = hp::toDouble(editIm);
+            } else {
+                toast("That isn't a number (use digits, '.', '-' and e.g. e-40)", 3);
+            }
+        }
+        ImGui::TextDisabled("All digits are kept. Paste a coordinate and press Enter.");
+        ImGui::TreePop();
+    }
     if (ImGui::Button("Reset view (Home)")) {
         view.cs.julia = 0;
         view.cs.cx = view.cs.formula == 4 ? 0.0 : -0.6;
@@ -1314,8 +1348,9 @@ void App::drawHud() {
                 double px = view.cs.cx + (io.MousePos.x * sx - fbW * 0.5) * ps, py = view.cs.cy + (fbH * 0.5 - io.MousePos.y * sy) * ps;
                 snprintf(where, sizeof where, "cursor %.12f %+.12fi", px, py);
             }
-            ImGui::Text("%s  |  zoom %.4gx  |  %d iter  |  %s", where, 3.0 / view.cs.height, view.cs.maxIter,
-                        rend.classicUsesFp64(view.cs, fbH) ? "fp64" : "fp32");
+            const char* prec = rend.classicUsesDeep(view.cs, fbH) ? (refPending ? "deep zoom (computing reference...)" : "deep zoom")
+                               : rend.classicUsesFp64(view.cs, fbH) ? "fp64" : "fp32";
+            ImGui::Text("%s  |  zoom %.4gx  |  %d iter  |  %s", where, 3.0 / view.cs.height, view.cs.maxIter, prec);
             ImGui::TextDisabled("F1 help  |  Tab hide UI  |  O orbits  |  C color cycling  |  M 3D mode");
         }
     }

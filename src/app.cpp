@@ -19,6 +19,7 @@
 #include <ctime>
 #include <fstream>
 #include <sstream>
+#include <thread>
 #include <algorithm>
 
 namespace fs = std::filesystem;
@@ -479,6 +480,21 @@ int App::selfTest() {
     selectFormula("Mandel");
     loadParText(withFormula, "formula", true);
     check(view.formulaName == "Spider" && rend.hasCustomFormula(), "a PAR restores its custom formula");
+    // deep zoom: panning keeps every digit of the center, and PARs save them
+    setMode(ViewMode::Classic2D);
+    view.cs.formula = 0;
+    view.cs.julia = false;
+    view.cs.cx = 0, view.cs.cy = 1, view.cs.height = 1e-60;
+    view.hpRe.clear();
+    moveCenter(3e-61, -2e-61);
+    check(view.hpRe.find("3") != std::string::npos && hp::diffOver(view.hpRe, "0", 1e-61, 400) > 2.99 &&
+              hp::diffOver(view.hpIm, "1", 1e-61, 400) < -1.99,
+          "panning at 1e-60 moves the exact center by 1e-61 steps");
+    std::string deepPar = parText(), keepRe = view.hpRe;
+    view.hpRe = "0";
+    view.cs.cx = 5;
+    loadParText(deepPar, "deep", true);
+    check(view.hpRe == keepRe, "PAR files keep every digit of a deep-zoom center");
     // hostile values are repaired
     loadParText("mode = 2d\nclassic.formula = 99\nclassic.maxIter = -3\npost.tonemap = 7\n", "bad", true);
     check(view.cs.formula < kClassicFormulaCount && view.cs.maxIter >= 1 && view.rs.tonemap <= 2, "hostile PAR values are sanitized");
@@ -966,9 +982,8 @@ void App::inputGamepad(float dt) {
             selectFractal((view.fractal + (int)lib_.all().size() - 1) % (int)lib_.all().size(), true);
     } else {
         // 2D: left stick pans (a quarter screen per second), right stick up/down zooms
-        view.cs.cx += lx * view.cs.height * 0.5 * boost * dt;
-        view.cs.cy -= ly * view.cs.height * 0.5 * boost * dt;
-        if (ry != 0.0f) view.cs.height = std::clamp(view.cs.height * std::pow(2.0, ry * 1.5 * boost * dt), 1e-15, 50.0);
+        moveCenter(lx * view.cs.height * 0.5 * boost * dt, -ly * view.cs.height * 0.5 * boost * dt);
+        if (ry != 0.0f) view.cs.height = std::clamp(view.cs.height * std::pow(2.0, ry * 1.5 * boost * dt), kMinHeight, 50.0);
     }
     if (pressed(GLFW_GAMEPAD_BUTTON_B)) ui.showUI = !ui.showUI;
     if (pressed(GLFW_GAMEPAD_BUTTON_X)) takeScreenshot();
@@ -994,8 +1009,7 @@ void App::input2D(float dt) {
             pressY = io.MousePos.y;
         }
     if (dragButton == 0 || dragButton == 2) {
-        view.cs.cx -= io.MouseDelta.x * sx * ps;
-        view.cs.cy += io.MouseDelta.y * sy * ps;
+        if (io.MouseDelta.x != 0 || io.MouseDelta.y != 0) moveCenter(-io.MouseDelta.x * sx * ps, io.MouseDelta.y * sy * ps);
     }
     auto toggleJulia = [&]() {
         if (view.cs.formula == 4) {
@@ -1003,8 +1017,11 @@ void App::input2D(float dt) {
             return;
         }
         if (!view.cs.julia) {
+            syncCenter();
             savedMandel[0] = view.cs.cx;
             savedMandel[1] = view.cs.cy;
+            savedMandelHP[0] = view.hpRe;
+            savedMandelHP[1] = view.hpIm;
             savedMandel[2] = view.cs.height;
             view.cs.jx = px;
             view.cs.jy = view.cs.formula == 1 ? -py : py;
@@ -1019,6 +1036,12 @@ void App::input2D(float dt) {
             view.cs.julia = 0;
             view.cs.cx = savedMandel[0];
             view.cs.cy = savedMandel[1];
+            if (!savedMandelHP[0].empty()) {  // back to the exact deep-zoom center
+                view.hpRe = savedMandelHP[0];
+                view.hpIm = savedMandelHP[1];
+                view.hpShadow[0] = view.cs.cx;
+                view.hpShadow[1] = view.cs.cy;
+            }
             view.cs.height = savedMandel[2];
             toast("Back to the parameter plane");
         }
@@ -1036,10 +1059,13 @@ void App::input2D(float dt) {
     }
     if (wheel != 0.0f) {
         // clamp the zoom factor first, so hitting a limit doesn't slide the view
-        double newH = std::clamp(view.cs.height * std::pow(0.8, wheel), 1e-15, 50.0);
+        double newH = std::clamp(view.cs.height * std::pow(0.8, wheel), kMinHeight, 50.0);
         double f = newH / view.cs.height;
-        view.cs.cx = px + (view.cs.cx - px) * f;
-        view.cs.cy = py + (view.cs.cy - py) * f;
+        // the point under the cursor stays put: move the center toward it by (1 - f)
+        // of the offset - a relative amount, so deep zooms keep full precision
+        double offX = ImGui::IsMousePosValid() ? (mx - fbW * 0.5) * ps : 0.0;
+        double offY = ImGui::IsMousePosValid() ? (fbH * 0.5 - my) * ps : 0.0;
+        moveCenter(offX * (1 - f), offY * (1 - f));
         view.cs.height = newH;
     }
 }
@@ -1252,6 +1278,10 @@ void App::render2D() {
     std::vector<uint8_t> sig;
     appendFields(sig, c, kCompute2D, [](Classic2DSettings& x, auto&& f) { visitClassic(x, f); });
     appendBytes(sig, formulaGeneration);
+    syncCenter();  // at deep zooms the doubles don't change when you pan: sign the exact center
+    sig.insert(sig.end(), view.hpRe.begin(), view.hpRe.end());
+    sig.push_back(0);
+    sig.insert(sig.end(), view.hpIm.begin(), view.hpIm.end());
     appendBytes(sig, fbW);
     appendBytes(sig, fbH);
     appendBytes(sig, generation);
@@ -1263,6 +1293,14 @@ void App::render2D() {
     int ss = interactive ? 1 : std::clamp(view.cs.supersample, 1, 4);
     appendBytes(sig, ss);
     int tw = fbW * ss, th = fbH * ss;
+    refPending = false;
+    if (rend.classicUsesDeep(view.cs, th)) {
+        if (!ensureReference(th, false)) {  // keep showing the old image until the reference is ready
+            refPending = true;
+            return;
+        }
+        appendBytes(sig, refUploaded);
+    }
 
     // (re)start a job when the wanted image differs from what's shown or being rendered
     bool wantNew = job2D.active ? job2D.sig != sig : shownSig2D != sig;
@@ -1298,6 +1336,67 @@ void App::render2D() {
         }
         shownSig2D = job2D.sig;
     }
+}
+
+// ------------------------------------------------------------------ deep zoom
+void App::syncCenter() {
+    if (view.hpRe.empty() || view.cs.cx != view.hpShadow[0] || view.cs.cy != view.hpShadow[1]) {
+        view.hpRe = hp::fromDouble(view.cs.cx);
+        view.hpIm = hp::fromDouble(view.cs.cy);
+        view.hpShadow[0] = view.cs.cx;
+        view.hpShadow[1] = view.cs.cy;
+    }
+}
+
+void App::moveCenter(double dx, double dy) {
+    syncCenter();
+    int bits = hp::bitsForPixel(view.cs.height / std::max(fbH, 1));
+    if (bits <= 64) {  // shallow: doubles are exact enough
+        view.cs.cx += dx;
+        view.cs.cy += dy;
+        return;  // (syncCenter re-derives the decimal form next time)
+    }
+    view.hpRe = hp::add(view.hpRe, dx, bits);
+    view.hpIm = hp::add(view.hpIm, dy, bits);
+    view.cs.cx = view.hpShadow[0] = hp::toDouble(view.hpRe);
+    view.cs.cy = view.hpShadow[1] = hp::toDouble(view.hpIm);
+}
+
+// Makes sure a reference orbit for the current view is on the GPU. A finished
+// reference is reused while it's close enough (panning just shifts it); otherwise
+// a new one starts on the worker thread. `wait` blocks (offline renders).
+bool App::ensureReference(int targetH, bool wait) {
+    syncCenter();
+    const auto& cs = view.cs;
+    double pixel = cs.height / std::max(targetH, 1);
+    RefOrbitRequest want;
+    want.re = view.hpRe;
+    want.im = view.hpIm;
+    want.julia = cs.julia;
+    want.jre = cs.jx;
+    want.jim = cs.jy;
+    want.maxIter = cs.maxIter;
+    want.bits = hp::bitsForPixel(pixel);
+    want.bailout = cs.banded ? std::max(cs.bailout, 2.0f) : std::max(cs.bailout, 64.0f);  // as the shader uses
+    const RefOrbitRequest& cur = refWorker.current();
+    bool compatible = cur.julia == want.julia && cur.jre == want.jre && cur.jim == want.jim &&
+                      cur.maxIter >= want.maxIter && cur.bits >= want.bits && cur.bailout == want.bailout;
+    bool reuse = false;
+    if (compatible && !cur.re.empty()) {
+        double ox = hp::diffOver(want.re, cur.re, pixel, want.bits), oy = hp::diffOver(want.im, cur.im, pixel, want.bits);
+        reuse = std::abs(ox) < 4.0 * targetH && std::abs(oy) < 4.0 * targetH;  // within a few screens
+    }
+    if (!reuse) refWorker.request(want);
+    if (wait)
+        while (!refWorker.ready()) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    if (!refWorker.ready()) return false;
+    if (refWorker.version() != refUploaded) {
+        rend.setReferenceOrbit(refWorker.orbit());
+        refUploaded = refWorker.version();
+    }
+    const RefOrbitRequest& ref = refWorker.current();
+    rend.setDeepOffset(hp::diffOver(view.hpRe, ref.re, 1.0, ref.bits), hp::diffOver(view.hpIm, ref.im, 1.0, ref.bits));
+    return true;
 }
 
 // ------------------------------------------------------------------ Julia inset
@@ -1383,6 +1482,7 @@ void App::startPoster(int w, int h, int nSamples) {
     } else {
         if (poster.cs.formula == kCustomFormula && !rend.hasCustomFormula()) poster.cs.formula = view.cs.formula = 0;
         int ss = poster.cs.supersample;
+        if (rend.classicUsesDeep(poster.cs, h * ss)) ensureReference(h * ss, true);  // offline: just wait for it
         ok = poster.index.ensure(w * ss, h * ss);
         if (ok) {
             poster.index.clear();

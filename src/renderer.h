@@ -63,6 +63,13 @@ public:
     bool dispatch2D(IndexTarget& out, const Classic2DSettings& cs, int y0, int rows, int chunk, bool first, int stateSlot = 0);
     int bandRowsFor(int width) const;  // rows per band so the orbit state stays small
     bool classicUsesFp64(const Classic2DSettings& cs, int targetH) const;
+    // Deep zoom (perturbation, see deepzoom.h): used for the Mandelbrot set and its
+    // Julia sets when a pixel is smaller than doubles can resolve, or when forced.
+    bool classicUsesDeep(const Classic2DSettings& cs, int targetH) const;
+    void setReferenceOrbit(const std::vector<float>& xy);  // uploads Z_0..Z_n
+    // (view center - reference point), in plane units
+    void setDeepOffset(double dx, double dy) { deepOffset_[0] = dx, deepOffset_[1] = dy; }
+    int referenceLength() const { return refLen_; }
     // Transpiled user formula (see formula.h); empty to clear. Rebuilds the custom programs.
     void setCustomFormula(const std::string& glsl);
     const std::string& customFormulaError() const { return customError_; }
@@ -97,6 +104,11 @@ private:
     Program displayProg_;
     Program classic_[2][2];  // [fp64][custom formula]
     bool classicBuilt_[2][2] = {};
+    Program classicDeep_;
+    bool classicDeepBuilt_ = false;
+    GLuint refSsbo_ = 0;
+    int refLen_ = 0;
+    double deepOffset_[2] = {0, 0};
     std::string customGlsl_, customError_;
     float formulaP_[6] = {0, 0, 0, 0, 0, 0};
     std::unordered_map<std::string, std::unique_ptr<FractalPrograms>> progs_;

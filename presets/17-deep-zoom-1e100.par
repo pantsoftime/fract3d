@@ -1,0 +1,10 @@
+; A 10^100x zoom into c = i: perturbation theory keeps it sharp, where doubles gave up 87 zeros ago.
+mode = 2d
+color.palette = Twilight
+classic.banded = 0
+classic.colorDensity = 4
+classic.fp64 = 3
+classic.center = 0 1
+classic.centerHP = 0 1
+classic.height = 1e-100
+classic.maxIter = 50000
