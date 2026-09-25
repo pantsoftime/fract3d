@@ -1,0 +1,7 @@
+mode = 2d
+classic.formula = 12
+classic.coloring = 40
+classic.maxIter = -7
+classic.height = nan
+post.tonemap = 99
+classic.insideMode = 9

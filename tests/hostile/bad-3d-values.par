@@ -1,0 +1,9 @@
+fractal = kifs
+param.fold = 99
+param.scale = inf
+render.maxSteps = -5
+render.bounces = 1000
+color.mode = 17
+camera.pos = nan 1 2
+camera.distance = -3
+post.retro = 5

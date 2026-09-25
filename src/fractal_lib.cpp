@@ -121,6 +121,7 @@ static bool parseParam(const std::string& line, Param& p, std::string& err) {
         std::replace(r.begin(), r.end(), ',', ' ');
         std::istringstream rs(r);
         rs >> p.minV >> p.maxV;
+        if (p.maxV < p.minV) std::swap(p.minV, p.maxV);  // tolerate a reversed [max, min]
     }
     std::string beforeLabel = rest.substr(0, rest.find('"'));
     if (beforeLabel.find(" log") != std::string::npos) p.logScale = true;

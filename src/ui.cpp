@@ -262,7 +262,7 @@ void App::drawMenuBar() {
                 cat = f.category;
                 ImGui::SeparatorText(cat.c_str());
             }
-            char key[8] = "";
+            char key[16] = "";
             if (i < 9) snprintf(key, sizeof key, "%d", i + 1);
             if (ImGui::MenuItem(f.name.c_str(), key, mode == ViewMode::Fractal3D && i == current_)) {
                 selectFractal(i, true);

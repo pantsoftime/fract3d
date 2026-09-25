@@ -592,7 +592,7 @@ void App::render3D() {
         perSampleMsFull = perSampleMsFull * 0.7f + est * 0.3f;
     }
     float targetMs = 1000.0f / std::max(rs.targetFps, 10.0f) * 0.8f;
-    if (rs.adaptiveRes) motionScale = std::clamp(std::sqrt(targetMs / std::max(perSampleMsFull, 0.01f)), 0.2f, rs.stillScale);
+    if (rs.adaptiveRes) motionScale = std::clamp(std::sqrt(targetMs / std::max(perSampleMsFull, 0.01f)), std::min(0.2f, rs.stillScale), rs.stillScale);
     else motionScale = rs.stillScale;
 
     float scale = interactive ? motionScale : rs.stillScale;
@@ -696,7 +696,7 @@ bool App::stepJob2D(Job2D& job, IndexTarget& target, double budgetMs) {
         job.itersDone += std::max(k, 1);
         // aim each pass at a third of the budget; pixels that finish make later passes cheaper
         double f = std::clamp(budgetMs / 3.0 / std::max(ms, 0.01), 0.25, 4.0);
-        job.chunk = (int)std::clamp(job.chunk * f, 16.0, (double)maxIter);
+        job.chunk = (int)std::clamp(job.chunk * f, std::min(16.0, (double)maxIter), (double)maxIter);
         if (job.itersDone >= maxIter) {  // every orbit in the band has escaped or hit the limit
             job.row += job.bandRows;
             job.bandRows = 0;
