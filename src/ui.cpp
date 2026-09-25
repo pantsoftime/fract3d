@@ -776,6 +776,14 @@ void App::drawClassicPanel() {
                           "can be replaced by one linear step (bivariate linear approximation). Near a deep minibrot "
                           "that's 5x faster, and the picture is the same: the approximation is only used where its error "
                           "is below double precision.");
+    ImGui::BeginDisabled(!deep);
+    ImGui::Checkbox("Series approximation", &view.cs.series);
+    ImGui::EndDisabled();
+    ImGui::SetItemTooltip("Deep zoom only. For a long stretch at the start of every orbit the whole picture moves almost "
+                          "exactly with the center's orbit, and a short polynomial in the pixel's position describes it. "
+                          "Every pixel starts where that stretch ends (checked against exactly iterated probe points), "
+                          "often skipping most of its iterations. Used only where it saves work that skip-ahead "
+                          "doesn't already, and not for colorings that look at every iteration.");
     if (view.cs.formula != 0 && view.cs.height / fbH < 1e-13)
         ImGui::TextWrapped("Past the limit of double precision - deep zoom (perturbation) works for the Mandelbrot formula "
                            "and its Julia sets.");

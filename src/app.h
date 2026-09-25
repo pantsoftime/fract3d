@@ -316,7 +316,9 @@ public:
     bool refPending = false;
     void syncCenter();                        // make hpRe/hpIm agree with cs.cx/cy
     void moveCenter(double dx, double dy);    // pan by a (tiny) amount without losing precision
-    bool ensureReference(int targetH, bool wait);
+    bool ensureReference(int targetW, int targetH, bool wait);
+    SeriesWorker seriesWorker;
+    bool seriesSupported(const Classic2DSettings& cs) const;
     struct CamAnim {
         bool active = false;
         float start = 0, yaw0 = 0, pitch0 = 0, dist0 = 1, yaw1 = 0, pitch1 = 0, dist1 = 1;

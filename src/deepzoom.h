@@ -23,6 +23,7 @@
 // m, merging pairs level by level; the GPU then jumps over long stretches of the
 // orbit in one step.
 #include <atomic>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -81,9 +82,11 @@ public:
     float progress() const { return progress_; }
     const RefOrbitRequest& current() const { return req_; }
     // Takes the finished orbit (x, y doubles, Z_0 first). Only valid when ready().
-    const std::vector<double>& orbit() const { return orbit_; }
+    const std::vector<double>& orbit() const { return *orbit_; }
+    std::shared_ptr<const std::vector<double>> orbitPtr() const { return orbit_; }
     int version() const { return version_; }  // bumped whenever a new orbit is ready
-    const BlaTable& bla() const { return bla_; }  // only valid when ready()
+    const BlaTable& bla() const { return *bla_; }  // only valid when ready()
+    std::shared_ptr<const BlaTable> blaPtr() const { return bla_; }
 
 private:
     void stop();
@@ -91,8 +94,66 @@ private:
     std::thread thread_;
     std::atomic<bool> cancel_{false}, ready_{false};
     std::atomic<float> progress_{0};
-    std::vector<double> orbit_;
-    BlaTable bla_;
+    std::shared_ptr<const std::vector<double>> orbit_ = std::make_shared<std::vector<double>>();
+    std::shared_ptr<const BlaTable> bla_ = std::make_shared<BlaTable>();
     std::atomic<int> version_{0};
+    bool running_ = false;
+};
+
+// ---- series approximation: skipping the stretch every pixel shares
+//
+// Deep views have a long start (often 95% of each pixel's iterations) during which
+// every pixel's orbit moves almost exactly with the view center's. There, a pixel's
+// offset from the center's orbit is a power series in the pixel's position,
+//
+//   eta_n(u) = c_1 u + c_2 u^2 + ... + c_K u^K,   u = (pixel - center) / R,
+//
+// R the distance from the center to the image's corners. The worker advances the
+// coefficients one iteration at a time (eta' = 2 z eta + eta^2 + R u for the
+// Mandelbrot set) and checks them against probe points iterated exactly (the corners,
+// edge middles and half-way points: where the series is least accurate); the skip
+// ends at the last iteration where every probe agrees to kSeriesTolerance and no
+// pixel can have escaped yet. Every pixel then starts there by evaluating the
+// polynomial. (Kalles Fraktaler made this popular for deep zooms.)
+inline constexpr int kSeriesTerms = 24;
+inline constexpr double kSeriesTolerance = 1e-12;
+inline constexpr double kSeriesMinSaving = 0.75;  // used only if the kernel's work drops below this share
+
+struct SeriesRequest {
+    std::shared_ptr<const std::vector<double>> orbit;  // the reference orbit Z_n
+    std::shared_ptr<const BlaTable> bla;               // its skip-ahead table (may be empty)
+    int orbitVersion = -1;
+    bool julia = false;
+    double dc0[2] = {0, 0};   // view center - reference point (plane units)
+    double half[2] = {0, 0};  // half the image's width and height (plane units)
+    int maxIter = 0;
+    double bailout = 2;
+    bool sameView(const SeriesRequest& o) const {
+        return orbitVersion == o.orbitVersion && julia == o.julia && dc0[0] == o.dc0[0] && dc0[1] == o.dc0[1] &&
+               half[0] == o.half[0] && half[1] == o.half[1] && maxIter == o.maxIter && bailout == o.bailout;
+    }
+};
+struct SeriesResult {
+    int skip = 0;                // iterations every pixel skips (0: no series)
+    double half[2] = {0, 0};     // the image the series was made for (half width, half height, plane units)
+    double invR = 0;             // 1 / R
+    double base[2] = {0, 0};     // the view center's delta after the skip
+    std::vector<double> coef;    // c_1 .. c_K (re, im)
+};
+
+class SeriesWorker {
+public:
+    ~SeriesWorker();
+    void request(const SeriesRequest& r);  // restarts unless it's the same view
+    // The result for exactly this view, or nullptr (not ready, or a different view).
+    const SeriesResult* resultFor(const SeriesRequest& r) const;
+    void wait() const;
+
+private:
+    void stop();
+    SeriesRequest req_;
+    SeriesResult result_;
+    std::thread thread_;
+    std::atomic<bool> cancel_{false}, ready_{false};
     bool running_ = false;
 };

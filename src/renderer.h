@@ -73,6 +73,8 @@ public:
     bool classicUsesDeep(const Classic2DSettings& cs, int targetH) const;
     void setReferenceOrbit(const std::vector<double>& xy);  // uploads Z_0..Z_n
     void setBlaTable(const BlaTable& t);                      // the skip-ahead table that goes with it
+    void setSeries(const SeriesResult* s);                    // series approximation for the current view (or none)
+    int seriesSkip(const Classic2DSettings& cs, int w, int h) const;  // iterations every pixel starts at (0: none)
     // (view center - reference point), in plane units
     void setDeepOffset(double dx, double dy) { deepOffset_[0] = dx, deepOffset_[1] = dy; }
     int referenceLength() const { return refLen_; }
@@ -121,6 +123,9 @@ private:
     void prepareLandscape(Program& p, const Fractal& f);  // its deep-zoom reference orbit (see landscape.glsl)
     int refLen_ = 0;
     std::vector<int> blaOffset_, blaCount_;
+    GLuint seriesSsbo_ = 0;
+    SeriesResult series_;  // skip = 0: none
+    const SeriesResult* seriesUploaded_ = nullptr;
     double deepOffset_[2] = {0, 0};
     std::string customGlsl_[2], customError_[2];
     std::unordered_map<std::string, std::unique_ptr<FractalPrograms>> progs_;

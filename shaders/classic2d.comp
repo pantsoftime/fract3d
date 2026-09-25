@@ -192,6 +192,14 @@ uniform dvec2 uRefOffsetPx;  // (view center - reference point) in pixels
 struct BlaStep { dvec2 A, B; double r2, pad; };
 layout(std430, binding = 1) readonly buffer Bla { BlaStep bla[]; };
 uniform int uBlaLevels;  // 0: no skipping
+
+// Series approximation (see src/deepzoom.h): every pixel starts at iteration
+// uSaSkip with delta = base + sum c_p u^p, u = (sample - view center) / R.
+layout(std430, binding = 3) readonly buffer Series { dvec2 saCoef[]; };
+uniform int    uSaSkip;   // 0: start from the beginning
+uniform int    uSaTerms;
+uniform double uSaInvR;
+uniform dvec2  uSaBase;
 uniform int uBlaOffset[31], uBlaCount[31];
 
 dvec2 dcmul(dvec2 a, dvec2 b) { return dvec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
@@ -209,6 +217,13 @@ void mainPerturb() {
         m = 0;
         i = 0;
         flags = 0u;
+        if (uSaSkip > 0) {  // skip the shared start: evaluate the series (Horner)
+            dvec2 u = samplePos(pix) * uPixelSize * uSaInvR, eta = dvec2(0);
+            for (int p = uSaTerms - 1; p >= 0; p--) eta = dcmul(eta + saCoef[p], u);
+            eps = uSaBase + eta;
+            m = uSaSkip;
+            i = uSaSkip;
+        }
         g_accA = uColoring == 4 || uColoring == 5 ? 1e20 : 0.0;
         g_accB = 0.0;
     } else {

@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <complex>
 
 namespace hp {
 
@@ -192,11 +193,173 @@ void RefOrbitWorker::request(const RefOrbitRequest& r) {
         BlaTable bla;
         if (r.blaEps > 0 && out.size() / 2 <= (1u << 21) && !cancel_) bla = buildBla(out, r.blaEps, r.dcMax, cancel_);
         if (!cancel_) {
-            bla_ = std::move(bla);
-            orbit_ = std::move(out);
+            bla_ = std::make_shared<const BlaTable>(std::move(bla));
+            orbit_ = std::make_shared<const std::vector<double>>(std::move(out));
             progress_ = 1;
             version_++;
             ready_ = true;
         }
+    });
+}
+
+// ------------------------------------------------------------------ series approximation
+// The perturbation kernel's loop in doubles: how many trips (single steps and skip-ahead
+// jumps) a pixel at delta_c = dc takes from (m, i, eps) until iteration `until`, escape or
+// the limit. Used to judge whether the series saves work that skip-ahead didn't already.
+static long orbitTrips(const std::vector<double>& z, const BlaTable& t, bool julia, std::complex<double> dc,
+                       std::complex<double> eps, int m, int i, int until, int maxIter, double bail) {
+    using C = std::complex<double>;
+    int refLen = (int)(z.size() / 2), levels = std::min(t.levels(), 30);
+    C cD = julia ? C(0) : dc;
+    double bail2 = bail * bail;
+    auto Z = [&](int k) { return C(z[2 * k], z[2 * k + 1]); };
+    long trips = 0;
+    for (; i < until; i++) {
+        trips++;
+        if (levels > 0 && m >= 1) {
+            int mm = m - 1;
+            double d2 = std::norm(eps);
+            int jmax = std::min(mm == 0 ? levels : __builtin_ctz(mm), levels), best = 0;
+            const double* bs = nullptr;
+            for (int j = 1; j <= jmax; j++) {
+                int l = 1 << j, k = mm >> j;
+                if (k >= t.levelCount[j] || m + l >= refLen - 1 || i + l >= maxIter) break;
+                const double* s = &t.data[6 * (size_t)(t.levelOffset[j] + k)];
+                if (d2 >= s[4]) break;
+                best = j;
+                bs = s;
+            }
+            if (best > 0) {
+                int l = 1 << best;
+                eps = C(bs[0], bs[1]) * eps + C(bs[2], bs[3]) * cD;
+                m += l;
+                i += l - 1;
+                continue;
+            }
+        }
+        eps = (2.0 * Z(m) + eps) * eps + cD;
+        m++;
+        C zf = Z(m) + eps;
+        if (std::norm(zf) > bail2) break;
+        if (m >= refLen - 1 || std::norm(zf) < std::norm(eps)) {
+            eps = zf - Z(0);
+            m = 0;
+        }
+    }
+    return trips;
+}
+
+SeriesWorker::~SeriesWorker() { stop(); }
+
+void SeriesWorker::stop() {
+    if (running_) {
+        cancel_ = true;
+        thread_.join();
+        running_ = false;
+    }
+}
+
+const SeriesResult* SeriesWorker::resultFor(const SeriesRequest& r) const {
+    return ready_ && req_.sameView(r) ? &result_ : nullptr;
+}
+
+void SeriesWorker::wait() const {
+    while (running_ && !ready_) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+}
+
+void SeriesWorker::request(const SeriesRequest& r) {
+    if (running_ && req_.sameView(r)) return;
+    stop();
+    req_ = r;
+    ready_ = false;
+    cancel_ = false;
+    running_ = true;
+    thread_ = std::thread([this, r] {
+        using C = std::complex<double>;
+        const std::vector<double>& z = *r.orbit;
+        int L = (int)(z.size() / 2);
+        const int K = kSeriesTerms;
+        double R = std::hypot(r.half[0], r.half[1]);
+        SeriesResult out;
+        if (R <= 0 || L < 3) {
+            result_ = out;
+            ready_ = true;
+            return;
+        }
+        out.invR = 1.0 / R;
+        out.half[0] = r.half[0], out.half[1] = r.half[1];
+        const bool mandel = !r.julia;
+        const C dc0(r.dc0[0], r.dc0[1]);
+        // the view center's own delta, and the series around it (c[p-1] is c_p)
+        C W = r.julia ? dc0 : C(0);
+        std::vector<C> c(K, C(0)), nc(K);
+        if (r.julia) c[0] = R;  // eta_0 = v = R u
+        // probes: corners, edge middles, half-way to the corners; their eta iterated exactly
+        std::vector<C> pv, peta;
+        for (double fx : {-1.0, 0.0, 1.0})
+            for (double fy : {-1.0, 0.0, 1.0})
+                if (fx != 0 || fy != 0) pv.push_back(C(fx * r.half[0], fy * r.half[1]));
+        for (double fx : {-0.5, 0.5})
+            for (double fy : {-0.5, 0.5}) pv.push_back(C(fx * r.half[0], fy * r.half[1]));
+        for (auto& v : pv) peta.push_back(r.julia ? v : C(0));
+        std::vector<C> saved = c;
+        C savedW = W;
+        int best = 0;
+        double bail = std::max(r.bailout, 2.0);
+        int limit = std::min(L - 2, r.maxIter - 1);
+        for (int n = 0; n < limit && !cancel_; n++) {
+            C Z(z[2 * n], z[2 * n + 1]), zc = Z + W;
+            // eta' = 2 zc eta + eta^2 (+ v): coefficient by coefficient
+            for (int p = 0; p < K; p++) {
+                C s = 2.0 * zc * c[p];
+                for (int i = 0; i < p; i++) s += c[i] * c[p - 1 - i];  // powers (i+1) + (p-i) = p+1
+                nc[p] = s;
+            }
+            if (mandel) nc[0] += R;
+            c.swap(nc);
+            for (size_t k = 0; k < pv.size(); k++) peta[k] = 2.0 * zc * peta[k] + peta[k] * peta[k] + (mandel ? pv[k] : C(0));
+            W = 2.0 * Z * W + W * W + (mandel ? dc0 : C(0));
+            // valid after n+1 iterations? every probe must agree, and no pixel may have escaped
+            bool ok = true;
+            double bound = 0;
+            for (auto& cp : c) {
+                bound += std::abs(cp);
+                if (!std::isfinite(cp.real()) || !std::isfinite(cp.imag())) ok = false;
+            }
+            C Zn(z[2 * (n + 1)], z[2 * (n + 1) + 1]);
+            if (std::abs(Zn + W) + bound >= bail) ok = false;
+            for (size_t k = 0; k < pv.size() && ok; k++) {
+                C u = pv[k] / R, e(0), up = u;
+                for (int p = 0; p < K; p++, up *= u) e += c[p] * up;
+                double err = std::abs(e - peta[k]);
+                if (!(err <= kSeriesTolerance * std::abs(peta[k]) + 1e-300)) ok = false;
+            }
+            if (!ok) break;
+            best = n + 1;
+            saved = c;
+            savedW = W;
+        }
+        if (cancel_) return;
+        // Worth it? Skip-ahead may already cover the shared start cheaply (near a
+        // minibrot, jumps span most of a period from the first iteration). Count the
+        // kernel's loop trips for the probes both ways and keep the series only when
+        // it removes a good share of them; the polynomial costs about K trips.
+        if (best > 0 && r.bla && r.bla->levels() > 0) {
+            double without = 0, with = 0;
+            for (auto& v : pv) {
+                C dc = dc0 + v, u = v / R, e(0), up = u;
+                for (int p = 0; p < K; p++, up *= u) e += saved[p] * up;
+                C eps0 = r.julia ? dc : C(0);
+                without += (double)orbitTrips(z, *r.bla, r.julia, dc, eps0, 0, 0, r.maxIter, r.maxIter, bail);
+                with += K + (double)orbitTrips(z, *r.bla, r.julia, dc, savedW + e, best, best, r.maxIter, r.maxIter, bail);
+            }
+            if (!(with < kSeriesMinSaving * without)) best = 0;
+        }
+        out.skip = best;
+        out.base[0] = savedW.real();
+        out.base[1] = savedW.imag();
+        for (auto& cp : saved) out.coef.insert(out.coef.end(), {cp.real(), cp.imag()});
+        result_ = out;
+        ready_ = true;
     });
 }

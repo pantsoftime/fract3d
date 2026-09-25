@@ -36,7 +36,7 @@ Mandelbulb, Mandelbox, Menger sponge, Sierpinski tetrahedron, Kaleidoscopic IFS,
 - seven coloring methods: escape time, binary decomposition, escape angle, stripe average, two orbit traps, biomorphs
 - right-click any point for its Julia set, or press J for a live Julia preview under the cursor
 - an orbit viewer that draws z0, z1, z2 ... under the cursor
-- **deep zoom**: floats, then doubles, then perturbation theory with an arbitrary-precision reference orbit and linear skip-ahead (BLA) - zooms to 10^290x, checked pixel by pixel against exact arithmetic
+- **deep zoom**: floats, then doubles, then perturbation theory with an arbitrary-precision reference orbit and linear skip-ahead (BLA) and series approximation - zooms to 10^290x, checked pixel by pixel against exact arithmetic; periodicity checking for the inside, and the anti-aliased render reuses the preview
 - progressive rendering in resumable chunks (Fractint's scanline reveal), so even millions of iterations never stall the desktop
 - **Lift into 3D** turns the current view into a landscape - sharp to about 10^11x, thanks to its own double-precision reference orbit
 

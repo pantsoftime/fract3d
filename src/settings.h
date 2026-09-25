@@ -92,6 +92,7 @@ void visitClassic(Classic2DSettings& c, F&& f) {
     f("classic.fp64", nullptr, &c.fp64, 1, C);
     f("classic.bla", nullptr, &c.bla, 1, C);
     f("classic.periodicity", nullptr, &c.periodicity, 1, C);
+    f("classic.series", nullptr, &c.series, 1, C);
     f("classic.banded", nullptr, &c.banded, 1, C);
     f("classic.coloring", nullptr, &c.coloring, 1, C);
     f("classic.trapSize", nullptr, &c.trapSize, 1, C);

@@ -1517,7 +1517,9 @@ bool App::stepJob2D(Job2D& job, IndexTarget& target, double budgetMs, int stateS
         // didn't, and the band stayed black).
         bool first = job.bandRows == 0;
         int bandRows = first ? std::min(rend.bandRowsFor(tw), th - job.row) : job.bandRows;
-        int itersDone = first ? 0 : job.itersDone;
+        // With the series approximation every pixel starts at the skip: count from there,
+        // or the band would run (and budget) passes with nothing left to do.
+        int itersDone = first ? std::min(rend.seriesSkip(job.cs, tw, th), maxIter) : job.itersDone;
         int k = std::max(std::min(job.chunk, maxIter - itersDone), 1);
         double est = pt.msPerWork * k;
         if (passes > 0 && spent + est > budgetMs) break;
@@ -1575,7 +1577,7 @@ void App::render2D() {
     int tw = fbW * ss, th = fbH * ss;
     refPending = false;
     if (rend.classicUsesDeep(view.cs, th)) {
-        if (!ensureReference(th, false)) {  // keep showing the old image until the reference is ready
+        if (!ensureReference(tw, th, false)) {  // keep showing the old image until the reference is ready
             refPending = true;
             return;
         }
@@ -1657,7 +1659,7 @@ void App::moveCenter(double dx, double dy) {
 // Makes sure a reference orbit for the current view is on the GPU. A finished
 // reference is reused while it's close enough (panning just shifts it); otherwise
 // a new one starts on the worker thread. `wait` blocks (offline renders).
-bool App::ensureReference(int targetH, bool wait) {
+bool App::ensureReference(int targetW, int targetH, bool wait) {
     syncCenter();
     const auto& cs = view.cs;
     double pixel = cs.height / std::max(targetH, 1);
@@ -1693,9 +1695,31 @@ bool App::ensureReference(int targetH, bool wait) {
         refUploaded = refWorker.version();
     }
     const RefOrbitRequest& ref = refWorker.current();
-    rend.setDeepOffset(hp::diffOver(view.hpRe, ref.re, 1.0, ref.bits), hp::diffOver(view.hpIm, ref.im, 1.0, ref.bits));
+    double off[2] = {hp::diffOver(view.hpRe, ref.re, 1.0, ref.bits), hp::diffOver(view.hpIm, ref.im, 1.0, ref.bits)};
+    rend.setDeepOffset(off[0], off[1]);
+    // the series that lets every pixel skip the shared start of its orbit - only ever
+    // used for exactly the view it was computed for
+    const SeriesResult* series = nullptr;
+    if (cs.series && seriesSupported(cs)) {
+        SeriesRequest sr;
+        sr.orbit = refWorker.orbitPtr();
+        sr.bla = refWorker.blaPtr();
+        sr.orbitVersion = refWorker.version();
+        sr.julia = cs.julia;
+        sr.dc0[0] = off[0], sr.dc0[1] = off[1];
+        sr.half[0] = 0.5 * targetW * pixel, sr.half[1] = 0.5 * targetH * pixel;
+        sr.maxIter = cs.maxIter;
+        sr.bailout = want.bailout;
+        seriesWorker.request(sr);
+        if (wait) seriesWorker.wait();
+        series = seriesWorker.resultFor(sr);
+    }
+    rend.setSeries(series);
     return true;
 }
+
+// Colorings that look at every iterate (stripes, traps) and biomorphs need the whole orbit.
+bool App::seriesSupported(const Classic2DSettings& cs) const { return cs.coloring < 3; }
 
 // ------------------------------------------------------------------ Julia inset
 // Fractint could show the Julia set belonging to the point under the cursor
@@ -1806,7 +1830,7 @@ void App::startPoster(int w, int h, int nSamples) {
     } else {
         if (poster.cs.formula == kCustomFormula && !rend.hasCustomFormula()) poster.cs.formula = view.cs.formula = 0;
         int ss = poster.cs.supersample;
-        if (rend.classicUsesDeep(poster.cs, h * ss)) ensureReference(h * ss, true);  // offline: just wait for it
+        if (rend.classicUsesDeep(poster.cs, h * ss)) ensureReference(w * ss, h * ss, true);  // offline: just wait for it
         ok = poster.index.ensure(w * ss, h * ss);
         if (ok) {
             poster.index.clear();
