@@ -61,6 +61,15 @@ int main(int argc, char** argv) {
     CHECK(tr("NoInit { z = sqr(z) + pixel, |z| <= 4 }").ok, "formula without an init section");
     CHECK(tr("Case { Z = 0, C = PIXEL: Z = Z*Z + C, |Z| <= 4 }").ok, "case-insensitive like Fractint");
 
+    // smooth coloring: the escape radius comes from the bailout test (|z| is the squared modulus)
+    CHECK(tr("M { z = 0: z = z*z + pixel, |z| <= 4 }").bailout == 2.0, "|z| <= 4 means radius 2");
+    CHECK(tr("M { z = 0: z = z*z + pixel, cabs(z) < 10 }").bailout == 10.0, "cabs(z) < 10 means radius 10");
+    CHECK(tr("M { z = 0: z = exp(z) + pixel, |real(z)| < 50 }").bailout == 0.0, "other tests: radius unknown");
+    CHECK(tr("M { z = 0: z = z*z + pixel, |z| <= 4 && |z - 1| > 0.01 }").bailout == 0.0, "compound tests: unknown");
+    CHECK(tr("M { ; @power = 3\n z = 0: z = z*z*z + pixel, |z| <= 4 }").power == 3.0, "@power annotation");
+    CHECK(tr("M { ; @bailout = 8\n z = 0: z = exp(z) + pixel, |real(z)| < 50 }").bailout == 8.0, "@bailout annotation");
+    CHECK(tr("M { ; @smooth = 0\n z = 0: z = z*z + pixel, |z| <= 4 }").bailout == 0.0, "@smooth = 0");
+
     // helpful errors
     CHECK(errorContains("M { z = 0: z = foo(z), |z| < 4 }", "unknown function 'foo'"), "unknown function");
     CHECK(errorContains("M { z = 0: z = w*z, |z| < 4 }", "'w' is used but never assigned"), "unassigned variable");

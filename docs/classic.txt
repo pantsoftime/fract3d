@@ -60,6 +60,12 @@ Everything before the colon runs once per pixel; after it comes the loop, and it
 * "Lift into 3D landscape" works with your formula too.
 * Put your own .frm files in ~/.config/fract3d/formulas, or drop one onto the window.
 
+# Smooth colors for your formula
+Smooth coloring needs to know how far out the escape circle is and how fast z grows. The circle is read from a test like |z| <= 4 (radius 2). For other tests, or maps that aren't squares, add comment lines inside the formula:
+$ ; @bailout = 8     escape radius (|z| > 8 counts as escaped)
+$ ; @power = 3       z grows like z^3
+$ ; @smooth = 0      keep whole-number bands
+
 @@ Coloring: Binary decomposition
 # Which half-plane did z escape into?
 At the moment z escapes, look at the sign of its imaginary part and shift the color by half a palette when it's positive. The bands split into a checkerboard of cells.

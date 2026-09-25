@@ -801,6 +801,8 @@ void App::drawClassicPanel() {
         ImGui::SliderFloat("Trap size", &view.cs.trapSize, 0.1f, 20.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
     ImGui::Checkbox("Fractint bands (B)", &view.cs.banded);
     helpTip("On: one palette entry per whole iteration, the classic 1990 look. Off: the smooth (continuous) iteration count blends the colors.");
+    if (!view.cs.banded && view.cs.formula == kCustomFormula && formulaInfo.bailout <= 0)
+        ImGui::TextDisabled("(this formula's test isn't |z| <= N, so its colors stay\n in bands - add  ; @bailout = R  to the formula)");
     ImGui::SliderFloat("Color density", &view.cs.colorDensity, 0.05f, 16.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
     const char* ins[] = {"Black", "zmag (Fractint)", "Solid color"};
     ImGui::Combo("Inside", &view.cs.insideMode, ins, 3);

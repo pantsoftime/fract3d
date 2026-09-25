@@ -16,6 +16,10 @@
 // from the UI), z (what gets colored) and any names you assign. Functions: sin
 // cos tan cotan sinh cosh tanh exp log sqr sqrt abs cabs conj real imag flip
 // ident recip, and fn1..fn4, whose meaning is chosen in the UI.
+//
+// Smooth coloring uses the escape radius read from a "|z| <= N" or "cabs(z) < R"
+// test; comment annotations inside the formula override it: "; @bailout = R",
+// "; @power = 3" (degree of the map, default 2), "; @smooth = 0".
 #include <string>
 #include <vector>
 
@@ -42,6 +46,8 @@ struct TranspiledFormula {
     bool usesFn[4] = {false, false, false, false};
     bool usesP[3] = {false, false, false};
     int stateVars = 0;  // complex variables carried between iterations
+    double bailout = 0;  // escape radius for smooth coloring (0: unknown - colors stay in whole bands)
+    double power = 2;    // degree of the map, for smooth coloring
 };
 
 inline const char* kFormulaFunctions[] = {"sin",  "cos", "tan",  "cotan", "sinh", "cosh", "tanh",

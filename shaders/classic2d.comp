@@ -254,7 +254,14 @@ void main() {
         bool keepGoing = frm_step(i);
         z = CPLX(frm_z());
         accumulate(z);
-        if (!keepGoing) { escaped(z, i, 2.0, REAL(max(length(vec2(z)), 1.0001))); return; }
+        if (!keepGoing) {
+            // With a known escape radius (see formula.cpp) the smooth count works as for the
+            // built-ins; otherwise passing |z| itself as the radius makes the fraction 0.
+            float r = length(vec2(z));
+            if (FRM_BAILOUT > 0.0 && r > FRM_BAILOUT) escaped(z, i, FRM_POWER, REAL(FRM_BAILOUT));
+            else escaped(z, i, 2.0, REAL(max(r, 1.0001)));
+            return;
+        }
         continue;
 #endif
         if (uFormula == 4) {                                    // Newton's method for z^3 - 1

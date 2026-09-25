@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <cstdio>
 #include <map>
 #include <set>
 #include <sstream>
@@ -97,6 +99,7 @@ struct Parser {
     std::set<std::string> assigned, used;
     bool usesFn[4] = {false, false, false, false};
     bool usesP[3] = {false, false, false};
+    std::vector<size_t> stmtStart;  // token index where each statement began
 
     const Tok& peek() {
         // inside parentheses and |...| newlines are just whitespace
@@ -277,6 +280,7 @@ struct Parser {
                 sawColon = true;
                 return out;
             }
+            stmtStart.push_back(p);
             out.push_back(expression());
             const Tok& n = peek();
             if (n.type == T::End) throw ParseError(n.line, "missing '}' at the end of the formula");
@@ -397,6 +401,40 @@ std::vector<FormulaDef> parseFormulaFile(const std::string& text) {
     return out;
 }
 
+// The escape radius, when the bailout test is the usual  |z| <= N  (Fractint's |z|
+// is the squared modulus, so the radius is sqrt(N)) or  cabs(z) <= R.  0 if it isn't.
+static double detectBailout(const std::vector<Tok>& t, size_t s) {
+    auto op = [&](size_t i, const char* o) { return i < t.size() && t[i].type == T::Op && t[i].text == o; };
+    auto id = [&](size_t i, const char* n) { return i < t.size() && t[i].type == T::Ident && t[i].text == n; };
+    auto cmp = [&](size_t i) { return op(i, "<=") || op(i, "<"); };
+    auto ends = [&](size_t i) { return i >= t.size() || t[i].type != T::Op || t[i].text == ","; };
+    if (op(s, "|") && id(s + 1, "z") && op(s + 2, "|") && cmp(s + 3) && s + 4 < t.size() && t[s + 4].type == T::Num &&
+        ends(s + 5) && t[s + 4].num > 0)
+        return std::sqrt(t[s + 4].num);
+    if (id(s, "cabs") && op(s + 1, "(") && id(s + 2, "z") && op(s + 3, ")") && cmp(s + 4) && s + 5 < t.size() &&
+        t[s + 5].type == T::Num && ends(s + 6) && t[s + 5].num > 0)
+        return t[s + 5].num;
+    return 0;
+}
+
+// "; @power = 3", "; @bailout = 8", "; @smooth = 0" anywhere in the formula text
+static bool findAnnotation(const std::string& src, const char* key, double& out) {
+    std::string k = std::string("@") + key;
+    for (size_t at = src.find(k); at != std::string::npos; at = src.find(k, at + 1)) {
+        size_t semi = src.rfind(';', at), nl = src.rfind('\n', at);
+        if (semi == std::string::npos || (nl != std::string::npos && nl > semi)) continue;  // only inside comments
+        size_t e = src.find_first_not_of(" \t", at + k.size());
+        if (e == std::string::npos || src[e] != '=') continue;
+        char* end = nullptr;
+        double v = strtod(src.c_str() + e + 1, &end);
+        if (end != src.c_str() + e + 1 && std::isfinite(v)) {
+            out = v;
+            return true;
+        }
+    }
+    return false;
+}
+
 TranspiledFormula transpileFormula(const std::string& source, const int fnChoice[4]) {
     TranspiledFormula r;
     try {
@@ -416,6 +454,13 @@ TranspiledFormula transpileFormula(const std::string& source, const int fnChoice
             init.clear();
         }
         if (loop.empty()) throw ParseError(ps.t[ps.p].line, "the loop needs at least a bailout test, e.g. |z| <= 4");
+        // Smooth coloring needs the escape radius and the degree of the map: the radius
+        // comes from a standard bailout test (or @bailout), the degree from @power (default 2).
+        r.bailout = detectBailout(ps.t, ps.stmtStart.back());
+        double v;
+        if (findAnnotation(source, "bailout", v) && v > 1) r.bailout = v;
+        if (findAnnotation(source, "power", v) && v > 1) r.power = v;
+        if (findAnnotation(source, "smooth", v) && v == 0) r.bailout = 0;
 
         // Variables used but never assigned would silently be zero: report them.
         for (auto& u : ps.used)
@@ -428,7 +473,10 @@ TranspiledFormula transpileFormula(const std::string& source, const int fnChoice
                                     std::to_string(vars.size()) + ")");
 
         std::ostringstream g;
-        g << "// transpiled formula\nuniform vec2 uP1, uP2, uP3;\nvec2 v_pixel;\n";
+        char consts[160];
+        snprintf(consts, sizeof consts, "const float FRM_BAILOUT = %.9g;  // escape radius (0: unknown, no smooth coloring)\nconst float FRM_POWER = %.9g;\n",
+                 r.bailout, r.power);
+        g << "// transpiled formula\nuniform vec2 uP1, uP2, uP3;\nvec2 v_pixel;\n" << consts;
         for (auto& v : vars) g << "vec2 v_" << v << " = vec2(0.0);\n";
         for (int i = 0; i < 4; i++) {
             int c = std::clamp(fnChoice ? fnChoice[i] : 0, 0, kFormulaFunctionCount - 1);

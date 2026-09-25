@@ -38,8 +38,9 @@ float landHeight(vec2 xz, out float smoothIter, out bool inside) {
         for (int i = 0; i < iterations; i++) {
             if (!frm_step(i)) {
                 vec2 zz = frm_z();
-                float lr = 0.5 * log(max(dot(zz, zz), 1.0001));
-                smoothIter = max(float(i) + 1.0 - clamp(log2(max(lr / log(2.0), 1e-6)), 0.0, 1.0), 0.0);
+                float r = length(zz);
+                float nu = FRM_BAILOUT > 0.0 && r > FRM_BAILOUT ? log(log(r) / log(FRM_BAILOUT)) / log(FRM_POWER) : 0.0;
+                smoothIter = max(float(i) + 1.0 - nu, 0.0);
                 inside = false;
                 return heightScale * pow(log(1.0 + smoothIter) / log(1.0 + float(iterations)), curve);
             }

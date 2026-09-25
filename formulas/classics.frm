@@ -8,6 +8,8 @@
 ; true (non-zero), iteration continues. |x| means the squared modulus x*x+y*y,
 ; just as in Fractint. pixel is the point being drawn; p1, p2, p3 are
 ; parameters you can set in the panel; fn1..fn4 are functions you choose there.
+; For smooth colors, a formula whose test isn't |z| <= N can say "; @bailout = R"
+; (and "; @power = 3" for maps that grow like z^3) on a comment line inside it.
 ;
 ; Copy any of these into the formula editor, change them, and press Compile.
 ; Your own formulas can go in ~/.config/fract3d/formulas/*.frm.
