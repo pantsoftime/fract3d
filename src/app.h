@@ -13,6 +13,8 @@
 
 struct GLFWwindow;
 struct GLFWmonitor;
+#define GLFW_INCLUDE_NONE
+#include <GLFW/glfw3.h>  // GLFWgamepadstate
 struct ImFont;
 
 struct CliOptions {
@@ -247,6 +249,12 @@ public:
     int dragButton = -1;
     double pressX = 0, pressY = 0;
     bool flying = false;
+    bool mouseCaptured = false;
+    double captureLast[2] = {0, 0};
+    void setMouseCapture(bool on);
+    void inputGamepad(float dt);
+    bool gamepadActive = false;
+    GLFWgamepadstate prevPad{};
     double savedMandel[3] = {-0.6, 0.0, 3.0};  // view to return to from a Julia set
     struct CamAnim {
         bool active = false;

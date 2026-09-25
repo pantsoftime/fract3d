@@ -612,6 +612,10 @@ void App::toggleFullscreen() {
 }
 
 void App::setMode(ViewMode m) {
+    if (m != view.mode) {
+        setMouseCapture(false);
+        dragButton = -1;
+    }
     view.mode = m;
     shownSig2D.clear();
     job2D.active = false;
@@ -646,6 +650,7 @@ void App::frame() {
     droppedFiles.clear();
     if (view.mode == ViewMode::Fractal3D) input3D(dt);
     else input2D(dt);
+    inputGamepad(dt);
     if (camAnim.active) {
         float t = std::min((float)(now - camAnim.start) / 0.45f, 1.0f);
         float s = t * t * (3.0f - 2.0f * t);
@@ -716,7 +721,9 @@ void App::frame() {
 
 bool App::computeIdle() {
     if (session.cli.hidden) return false;  // headless renders and tests run flat out
-    if (poster.active || job2D.active || camAnim.active || dragButton >= 0 || flying) return false;
+    if (poster.active || job2D.active || camAnim.active || dragButton >= 0 || flying || gamepadActive) return false;
+    for (int j = GLFW_JOYSTICK_1; j <= GLFW_JOYSTICK_LAST; j++)
+        if (glfwJoystickIsGamepad(j)) return false;  // gamepads are polled, not event-driven
     if (view.rs.cycleSpeed != 0.0f || glfwGetTime() < ui.toastUntil) return false;
     if (!animPaused)
         for (auto& p : fractal().params)
@@ -785,23 +792,59 @@ void App::handleKeys() {
 }
 
 // ------------------------------------------------------------------ 3D input
+// While orbiting or looking, the cursor is hidden and locked (with raw motion
+// when available), so a drag isn't stopped by the edge of the screen. Deltas
+// then come straight from GLFW, and ImGui ignores the mouse until release.
+void App::setMouseCapture(bool on) {
+    if (on == mouseCaptured) return;
+    mouseCaptured = on;
+    ImGuiIO& io = ImGui::GetIO();
+    if (on) {
+        glfwGetCursorPos(win, &captureLast[0], &captureLast[1]);
+        glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        if (glfwRawMouseMotionSupported()) glfwSetInputMode(win, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+        glfwGetCursorPos(win, &captureLast[0], &captureLast[1]);
+        io.ConfigFlags |= ImGuiConfigFlags_NoMouse;
+    } else {
+        if (glfwRawMouseMotionSupported()) glfwSetInputMode(win, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
+        glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        io.ConfigFlags &= ~ImGuiConfigFlags_NoMouse;
+    }
+}
+
 void App::input3D(float dt) {
     ImGuiIO& io = ImGui::GetIO();
     bool overUI = io.WantCaptureMouse;
-    for (int b = 0; b < 3; b++)
-        if (ImGui::IsMouseClicked(b) && !overUI && dragButton < 0) {
-            dragButton = b;
-            pressX = io.MousePos.x;
-            pressY = io.MousePos.y;
-        }
-    if (dragButton >= 0 && !ImGui::IsMouseDown(dragButton)) dragButton = -1;
-    if (ImGui::IsMouseDoubleClicked(0) && !overUI) {
+    if (!mouseCaptured)
+        for (int b = 0; b < 3; b++)
+            if (ImGui::IsMouseClicked(b) && !overUI && dragButton < 0) {
+                dragButton = b;
+                pressX = io.MousePos.x;
+                pressY = io.MousePos.y;
+            }
+    // releases are read from GLFW, because ImGui doesn't see the mouse while it's captured
+    if (dragButton >= 0 && glfwGetMouseButton(win, dragButton) != GLFW_PRESS && !ImGui::IsMouseDown(dragButton)) {
+        dragButton = -1;
+        setMouseCapture(false);
+    }
+    if (!mouseCaptured && ImGui::IsMouseDoubleClicked(0) && !overUI) {
         pickRequested = true;
         pickX = io.MousePos.x;
         pickY = io.MousePos.y;
     }
 
     float dx = io.MouseDelta.x, dy = io.MouseDelta.y;
+    if (mouseCaptured) {
+        double x, y;
+        glfwGetCursorPos(win, &x, &y);
+        dx = (float)(x - captureLast[0]);
+        dy = (float)(y - captureLast[1]);
+        captureLast[0] = x;
+        captureLast[1] = y;
+    } else if ((dragButton == 0 && !io.KeyShift) || dragButton == 1) {
+        // start capturing once the drag really moves (so double-clicks still work)
+        if (std::abs(io.MousePos.x - pressX) + std::abs(io.MousePos.y - pressY) > 4 && !session.cli.hidden) setMouseCapture(true);
+    }
     if (std::abs(dx) > 500 || std::abs(dy) > 500) dx = dy = 0;  // first frame after focus
     float tanHalf = std::tan(view.rs.fov * 0.5f * 0.0174533f);
     if (dragButton == 0 && !io.KeyShift) view.cam.orbit(dx * 0.006f, -dy * 0.006f);
@@ -832,6 +875,57 @@ void App::input3D(float dt) {
             if (centerHitT > 0) view.cam.setTargetDistance(view.cam.distance + (centerHitT - view.cam.distance) * std::min(dt * 4.0f, 1.0f));
         }
     }
+}
+
+// ------------------------------------------------------------------ gamepad
+// Any controller GLFW knows (Xbox layout names): left stick moves, right stick
+// looks, triggers go down/up, bumpers slow/fast. A: path tracing, B: hide UI,
+// X: screenshot, Y: next tour stop, D-pad left/right: switch fractal.
+void App::inputGamepad(float dt) {
+    GLFWgamepadstate st{};
+    int pad = -1;
+    for (int j = GLFW_JOYSTICK_1; j <= GLFW_JOYSTICK_LAST && pad < 0; j++)
+        if (glfwJoystickIsGamepad(j) && glfwGetGamepadState(j, &st)) pad = j;
+    if (pad < 0) {
+        gamepadActive = false;
+        return;
+    }
+    auto axis = [&](int a) {
+        float v = st.axes[a];
+        return std::abs(v) < 0.15f ? 0.0f : (v - std::copysign(0.15f, v)) / 0.85f;  // dead zone
+    };
+    auto pressed = [&](int b) { return st.buttons[b] == GLFW_PRESS && prevPad.buttons[b] != GLFW_PRESS; };
+    float lx = axis(GLFW_GAMEPAD_AXIS_LEFT_X), ly = axis(GLFW_GAMEPAD_AXIS_LEFT_Y);
+    float rx = axis(GLFW_GAMEPAD_AXIS_RIGHT_X), ry = axis(GLFW_GAMEPAD_AXIS_RIGHT_Y);
+    float up = (st.axes[GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER] + 1) * 0.5f, down = (st.axes[GLFW_GAMEPAD_AXIS_LEFT_TRIGGER] + 1) * 0.5f;
+    float boost = st.buttons[GLFW_GAMEPAD_BUTTON_RIGHT_BUMPER] ? 4.0f : st.buttons[GLFW_GAMEPAD_BUTTON_LEFT_BUMPER] ? 0.25f : 1.0f;
+    gamepadActive = lx || ly || rx || ry || up > 0.05f || down > 0.05f;
+
+    if (view.mode == ViewMode::Fractal3D) {
+        view.cam.look(rx * 2.2f * dt, -ry * 2.2f * dt);
+        Vec3 d(lx, up - down, -ly);
+        if (d.length() > 0.01f) {
+            flying = true;
+            float base = deAtCam > 0 ? deAtCam : view.cam.distance * 0.01f;
+            base = std::max(base, view.cam.distance * 1e-4f);
+            view.cam.move(d, base * session.flySpeed * boost * dt);
+            if (centerHitT > 0) view.cam.setTargetDistance(view.cam.distance + (centerHitT - view.cam.distance) * std::min(dt * 4.0f, 1.0f));
+        }
+        if (pressed(GLFW_GAMEPAD_BUTTON_A)) view.rs.renderMode = 1 - view.rs.renderMode;
+        if (pressed(GLFW_GAMEPAD_BUTTON_DPAD_RIGHT)) selectFractal((view.fractal + 1) % (int)lib_.all().size(), true);
+        if (pressed(GLFW_GAMEPAD_BUTTON_DPAD_LEFT))
+            selectFractal((view.fractal + (int)lib_.all().size() - 1) % (int)lib_.all().size(), true);
+    } else {
+        // 2D: left stick pans (a quarter screen per second), right stick up/down zooms
+        view.cs.cx += lx * view.cs.height * 0.5 * boost * dt;
+        view.cs.cy -= ly * view.cs.height * 0.5 * boost * dt;
+        if (ry != 0.0f) view.cs.height = std::clamp(view.cs.height * std::pow(2.0, ry * 1.5 * boost * dt), 1e-15, 50.0);
+    }
+    if (pressed(GLFW_GAMEPAD_BUTTON_B)) ui.showUI = !ui.showUI;
+    if (pressed(GLFW_GAMEPAD_BUTTON_X)) takeScreenshot();
+    if (pressed(GLFW_GAMEPAD_BUTTON_Y)) tourStep(1);
+    if (pressed(GLFW_GAMEPAD_BUTTON_START)) setMode(view.mode == ViewMode::Fractal3D ? ViewMode::Classic2D : ViewMode::Fractal3D);
+    prevPad = st;
 }
 
 // ------------------------------------------------------------------ 2D input

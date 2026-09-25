@@ -1085,7 +1085,7 @@ void App::drawHelp() {
         }
     };
     ImGui::SeparatorText("3D");
-    table("h3d", {{"Left drag", "orbit around the target"},
+    table("h3d", {{"Left drag", "orbit around the target (the cursor hides so you can keep going)"},
                   {"Right drag", "look around (turn in place)"},
                   {"Middle drag / Shift+left drag", "pan"},
                   {"Mouse wheel", "zoom toward the target"},
@@ -1107,6 +1107,14 @@ void App::drawHelp() {
                   {"B", "toggle Fractint bands / smooth color"},
                   {"+ / -", "double / halve max iterations"},
                   {"Home", "reset view"}});
+    ImGui::SeparatorText("Gamepad");
+    table("hpad", {{"Left stick / triggers", "fly (2D: pan) / down and up"},
+                   {"Right stick", "look around (2D: up/down zooms)"},
+                   {"LB / RB", "slow / fast"},
+                   {"A  /  B", "path tracing  /  hide UI"},
+                   {"X  /  Y", "screenshot  /  next tour stop"},
+                   {"D-pad left/right", "previous / next fractal"},
+                   {"Start", "switch 3D / Classic 2D"}});
     ImGui::SeparatorText("Everywhere");
     table("hall", {{"Tab", "hide or show all UI"},
                    {"M", "switch between 3D and Classic 2D"},
