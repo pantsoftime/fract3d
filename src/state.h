@@ -84,10 +84,19 @@ struct Classic2DSettings {
     float insideColor[3] = {0.0f, 0.0f, 0.0f};
     float rootSpread = 85.0f;
     int showOrbit = 0;
-    int reserved_ = 0;  // keeps sizeof a multiple of 8 (no tail padding)
+    int coloring = 0;       // outside coloring mode, see kColoringModes
+    float trapSize = 4.0f;  // stripe density / orbit trap scale
+    float p1[2] = {0, 0}, p2[2] = {0, 0}, p3[2] = {0, 0};  // user formula parameters
+    int reserved_ = 0;  // keeps sizeof a multiple of 8 (no tail padding) for the bytewise signature
 };
 static_assert(sizeof(Classic2DSettings) % 8 == 0);
 
 inline const char* kClassicFormulas[] = {"Mandelbrot", "Burning Ship", "Tricorn (Mandelbar)", "Multibrot",
-                                         "Newton (z^3 - 1)", "Phoenix", "Lambda", "Magnet I"};
-inline constexpr int kClassicFormulaCount = 8;
+                                         "Newton (z^3 - 1)", "Phoenix", "Lambda", "Magnet I",
+                                         "Custom formula"};
+inline constexpr int kClassicFormulaCount = 9;
+inline constexpr int kCustomFormula = 8;
+inline const char* kColoringModes[] = {"Escape time",     "Binary decomposition", "Escape angle", "Stripe average",
+                                       "Orbit trap: cross", "Orbit trap: point",   "Biomorph"};
+inline constexpr int kColoringModeCount = 7;
+inline constexpr int kMaxIterations = 1 << 22;  // progressive rendering keeps even this safe

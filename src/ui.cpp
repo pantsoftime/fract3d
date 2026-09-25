@@ -684,7 +684,13 @@ void App::drawClassicPanel() {
     helpTip("Turn the escape time into height and fly over the result in 3D. Works for Mandelbrot, Burning Ship, Tricorn, Multibrot and Mandelbrot-Julia.");
 
     ImGui::SeparatorText("Iteration");
-    ImGui::SliderInt("Max iterations", &cs.maxIter, 16, 200000, "%d", ImGuiSliderFlags_Logarithmic);
+    ImGui::SliderInt("Max iterations", &cs.maxIter, 16, kMaxIterations, "%d", ImGuiSliderFlags_Logarithmic);
+    if (job2D.active) {
+        float th = (float)(job2D.offscreen ? work2D.h : rend.index2D.h);
+        float bandFrac = job2D.bandRows > 0 ? (float)job2D.itersDone / std::max(job2D.cs.maxIter, 1) : 0.0f;
+        float prog = th > 0 ? (job2D.row + job2D.bandRows * bandFrac) / th : 0.0f;
+        ImGui::ProgressBar(prog, ImVec2(-1, 0), "drawing...");
+    }
     helpTip("Points still bounded after this many steps are declared 'inside'. Deeper zooms need more. Keys: + and - double or halve it.");
     ImGui::SliderFloat("Bailout", &cs.bailout, 2.0f, 1000.0f, "%.1f", ImGuiSliderFlags_Logarithmic);
     helpTip("Escape radius: once |z| passes it, the point is counted as escaped. 2 is Fractint's value and is enough to prove escape for the Mandelbrot set. It changes the color bands, not the set itself. Smooth coloring always uses at least 64.");
@@ -966,8 +972,13 @@ void App::drawPosterDialog() {
     }
     if (!open) showPoster = false;
     if (poster.active) {
-        int tilesX = (poster.target.w + 1023) / 1024, tilesY = (poster.target.h + 1023) / 1024;
-        float prog = (poster.done * tilesX * tilesY + poster.tile) / (float)(poster.samples * tilesX * tilesY);
+        float prog;
+        if (poster.mode == ViewMode::Fractal3D) {
+            int tilesX = (poster.target.w + 1023) / 1024, tilesY = (poster.target.h + 1023) / 1024;
+            prog = (poster.done * tilesX * tilesY + poster.tile) / (float)(poster.samples * tilesX * tilesY);
+        } else {
+            prog = poster.index.h > 0 ? (float)poster.job.row / poster.index.h : 0.0f;
+        }
         ImGui::Text("Rendering %d x %d, %d samples...", poster.w, poster.h, poster.samples);
         ImGui::ProgressBar(prog, ImVec2(ImGui::GetFontSize() * 20, 0));
         double el = glfwGetTime() - poster.started;
@@ -975,8 +986,9 @@ void App::drawPosterDialog() {
         if (ImGui::Button("Cancel")) {
             poster.active = false;
             poster.target.release();
+            poster.index.release();
             lastSig3D.clear();
-            lastSig2D.clear();
+            shownSig2D.clear();
         }
     } else {
         struct Preset { const char* name; int w, h; };

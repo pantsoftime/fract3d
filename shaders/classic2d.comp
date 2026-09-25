@@ -1,0 +1,221 @@
+// classic2d.comp — flat escape-time fractals, Fractint style, computed resumably.
+//
+// Each pixel keeps its orbit (z, previous z, iteration count, flags) in state
+// images, and every dispatch runs at most uChunk more iterations. So no single
+// GPU call can run for long, however large the iteration limit: the host keeps
+// issuing passes under a time budget until every pixel has finished. Pixels
+// publish their result the moment they finish, so fast regions appear first.
+//
+// Output is the (smooth) iteration count, NOT a color: the display pass maps it
+// through the palette. That makes palette cycling free, like Fractint rotating
+// the VGA DAC registers.
+//   value: iteration value (>= 0 escaped, -1 inside)
+//   aux:   0..1 — Newton/Magnet root, inside |z| (zmag), or the coloring mode's value
+//
+// Compiled with and without FP64 (double precision for deep zooms), and with
+// CUSTOM_FORMULA when a user formula (formula parser output) is spliced in.
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(rgba32ui, binding = 0) uniform uimage2D uState0;  // z
+layout(rgba32ui, binding = 1) uniform uimage2D uState1;  // previous z (Phoenix) / formula variables
+layout(rgba32ui, binding = 2) uniform uimage2D uState2;  // x: iterations, y: flags, z/w: coloring accumulators
+layout(rgba32ui, binding = 3) uniform uimage2D uState3;  // formula variables
+layout(r32f, binding = 4) uniform writeonly image2D uOutValue;
+layout(r8, binding = 5) uniform writeonly image2D uOutAux;
+
+uniform ivec2  uBandOrigin;    // band position in the output image (pixels)
+uniform ivec2  uBandSize;
+uniform int    uFirstPass;
+uniform int    uChunk;         // iterations to run in this pass
+uniform vec2   uResolution;    // whole output image
+uniform dvec2  uCenter;
+uniform double uPixelSize;     // complex-plane units per pixel
+uniform dvec2  uJuliaC;
+uniform int    uJulia;
+uniform int    uFormula;       // index into kClassicFormulas (8 = custom formula)
+uniform int    uMaxIter;
+uniform float  uBailout;
+uniform int    uPower;
+uniform vec2   uPhoenixP;
+uniform int    uBanded;        // 1: whole iteration counts (Fractint bands), 0: smooth count
+uniform int    uColoring;      // outside coloring mode, see kColoringModes
+uniform float  uTrapSize;      // orbit trap / stripe parameter
+
+#ifdef FP64
+  #define REAL double
+  #define CPLX dvec2
+  uvec4 packC(CPLX z) { return uvec4(unpackDouble2x32(z.x), unpackDouble2x32(z.y)); }
+  CPLX unpackC(uvec4 u) { return CPLX(packDouble2x32(u.xy), packDouble2x32(u.zw)); }
+#else
+  #define REAL float
+  #define CPLX vec2
+  uvec4 packC(CPLX z) { return uvec4(floatBitsToUint(z), 0u, 0u); }
+  CPLX unpackC(uvec4 u) { return uintBitsToFloat(u.xy); }
+#endif
+
+const uint F_DONE = 1u;
+
+CPLX cm(CPLX a, CPLX b) { return CPLX(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
+CPLX cd(CPLX a, CPLX b) { return CPLX(a.x * b.x + a.y * b.y, a.y * b.x - a.x * b.y) / dot(b, b); }
+CPLX cpowi(CPLX z, int n) { CPLX r = z; for (int i = 1; i < n; i++) r = cm(r, z); return r; }
+
+// ---- coloring accumulators (updated every iteration, kept in state2.zw)
+float g_accA, g_accB;
+void accumulate(CPLX z) {
+    vec2 zf = vec2(z);
+    if (uColoring == 3) {                      // stripe average: mean of sin(k*arg z)
+        g_accB = g_accA;                       // previous mean, for interpolation
+        g_accA += 0.5 + 0.5 * sin(uTrapSize * atan(zf.y, zf.x));
+    } else if (uColoring == 4) {               // orbit trap: distance to the cross x=0 / y=0
+        g_accA = min(g_accA, min(abs(zf.x), abs(zf.y)));
+    } else if (uColoring == 5) {               // orbit trap: distance to a point
+        g_accA = min(g_accA, length(zf - vec2(uTrapSize * 0.1, 0.0)));
+    }
+}
+
+// With CUSTOM_FORMULA defined, the host has placed the transpiled user formula
+// before this file: frm_init(pixel), frm_step(i) -> bool keepGoing, frm_z(),
+// frm_save(...), frm_load(...).
+
+ivec2 g_local;
+void finish(float value, float aux, int iter, uint flags) {
+    ivec2 pix = uBandOrigin + g_local;
+    imageStore(uOutValue, pix, vec4(value));
+    imageStore(uOutAux, pix, vec4(clamp(aux, 0.0, 1.0)));
+    imageStore(uState2, g_local, uvec4(uint(iter), flags | F_DONE, floatBitsToUint(g_accA), floatBitsToUint(g_accB)));
+}
+
+// Biomorphs escape when EITHER component passes the limit (Pickover used 10).
+float biomorphLimit() { return max(uBailout, 10.0); }
+bool hasEscaped(CPLX z, REAL bail) {
+    if (uColoring == 6) return max(abs(float(z.x)), abs(float(z.y))) > biomorphLimit();
+    return dot(z, z) > bail * bail;
+}
+
+// Called when z escaped at loop index i.
+void escaped(CPLX z, int i, float powerF, REAL bail) {
+    vec2 zf = vec2(z);
+    float lr = log(float(dot(z, z))) * 0.5;
+    float nu = log(max(lr / log(float(bail)), 1e-6)) / log(powerF);  // fractional escape
+    float smoothV = max(float(i) + 1.0 - nu, 0.0);
+    float value = uBanded != 0 ? float(i) + 0.5 : smoothV;
+    float aux = 0.0;
+    if (uColoring == 1) {                       // binary decomposition: which half-plane z escaped into
+        aux = zf.y > 0.0 ? 1.0 : 0.0;
+    } else if (uColoring == 2) {                // escape angle
+        aux = atan(zf.y, zf.x) / TAU + 0.5;
+    } else if (uColoring == 3) {                // stripe average, interpolated by the fractional count
+        float n = float(i + 1);
+        float last = g_accA / n, prev = n > 1.0 ? g_accB / (n - 1.0) : last;
+        aux = mix(last, prev, clamp(nu, 0.0, 1.0));
+    } else if (uColoring == 4 || uColoring == 5) {
+        aux = 1.0 - exp(-g_accA * 8.0 / max(uTrapSize, 1e-3));
+    } else if (uColoring == 6) {                // biomorph (Pickover, 1986): escaped with one small component
+        if (min(abs(zf.x), abs(zf.y)) < biomorphLimit()) {
+            finish(-1.0, 0.0, i, 0u);
+            return;
+        }
+    }
+    finish(value, aux, i, 0u);
+}
+
+void main() {
+    g_local = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(g_local, uBandSize))) return;
+    ivec2 pix = uBandOrigin + g_local;
+
+    CPLX z, zprev;
+    int i;
+    uint flags;
+    dvec2 pd = uCenter + (dvec2(pix) + 0.5 - 0.5 * dvec2(uResolution)) * uPixelSize;
+    CPLX pixel = CPLX(pd);
+    CPLX c = uJulia != 0 ? CPLX(uJuliaC) : pixel;
+    if (uFormula == 1 && uJulia == 0) c.y = -c.y;          // Burning Ship is traditionally shown upright
+
+    if (uFirstPass != 0) {
+        z = uJulia != 0 ? pixel : CPLX(0);
+        if (uFormula == 6 && uJulia == 0) z = CPLX(0.5, 0.0);  // Lambda: start at the critical point
+        if (uFormula == 4) z = pixel;                          // Newton: every point is a starting guess
+        zprev = CPLX(0);
+        i = 0;
+        flags = 0u;
+        g_accA = uColoring == 4 || uColoring == 5 ? 1e20 : 0.0;
+        g_accB = 0.0;
+#ifdef CUSTOM_FORMULA
+        frm_init(vec2(pixel));
+        z = CPLX(frm_z());
+#endif
+    } else {
+        uvec4 s2 = imageLoad(uState2, g_local);
+        flags = s2.y;
+        if ((flags & F_DONE) != 0u) return;
+        i = int(s2.x);
+        g_accA = uintBitsToFloat(s2.z);
+        g_accB = uintBitsToFloat(s2.w);
+        z = unpackC(imageLoad(uState0, g_local));
+        zprev = unpackC(imageLoad(uState1, g_local));
+#ifdef CUSTOM_FORMULA
+        frm_load(imageLoad(uState0, g_local), imageLoad(uState1, g_local), imageLoad(uState3, g_local));
+#endif
+    }
+
+    REAL bail = REAL(uBailout);
+    float powerF = uFormula == 3 ? float(uPower) : 2.0;
+    int end = min(i + uChunk, uMaxIter);
+    for (; i < end; i++) {
+#ifdef CUSTOM_FORMULA
+        bool keepGoing = frm_step(i);
+        z = CPLX(frm_z());
+        accumulate(z);
+        if (!keepGoing) { escaped(z, i, 2.0, REAL(max(length(vec2(z)), 1.0001))); return; }
+        continue;
+#endif
+        if (uFormula == 4) {                                    // Newton's method for z^3 - 1
+            CPLX z2 = cm(z, z);
+            CPLX f = cm(z2, z) - CPLX(1, 0);
+            if (dot(f, f) < REAL(1e-10)) {
+                float root = mod(round(atan(float(z.y), float(z.x)) / (TAU / 3.0)) + 3.0, 3.0);
+                finish(float(i), (root + 0.5) / 4.0, i, 0u);
+                return;
+            }
+            z -= cd(f, REAL(3) * z2);
+            continue;
+        }
+        switch (uFormula) {
+        case 0: z = cm(z, z) + c; break;                                  // Mandelbrot
+        case 1: z = abs(z); z = cm(z, z) + c; break;                      // Burning Ship
+        case 2: z = cm(CPLX(z.x, -z.y), CPLX(z.x, -z.y)) + c; break;      // Tricorn (Mandelbar)
+        case 3: z = cpowi(z, uPower) + c; break;                          // Multibrot
+        case 5: {                                                         // Phoenix
+            CPLX zn = cm(z, z) + CPLX(c.x, 0) + cm(CPLX(uPhoenixP), zprev) + CPLX(0, c.y);
+            zprev = z; z = zn; break; }
+        case 6: z = cm(c, cm(z, CPLX(1, 0) - z)); break;                  // Lambda (logistic map)
+        case 7: {                                                         // Magnet I
+            CPLX num = cm(z, z) + c - CPLX(1, 0);
+            CPLX den = REAL(2) * z + c - CPLX(2, 0);
+            z = cd(num, den); z = cm(z, z);
+            CPLX dz = z - CPLX(1, 0);
+            if (dot(dz, dz) < REAL(1e-8)) { finish(float(i), (1.0 + 0.5) / 4.0, i, 0u); return; }
+            break; }
+        }
+        accumulate(z);
+        if (hasEscaped(z, bail)) { escaped(z, i, powerF, bail); return; }
+    }
+
+    if (i >= uMaxIter) {                                        // never escaped: inside the set
+        finish(-1.0, sqrt(float(dot(z, z))) * 0.5, i, 0u);
+        return;
+    }
+    imageStore(uState2, g_local, uvec4(uint(i), flags, floatBitsToUint(g_accA), floatBitsToUint(g_accB)));
+#ifdef CUSTOM_FORMULA
+    uvec4 s0, s1, s3;
+    frm_save(s0, s1, s3);
+    imageStore(uState0, g_local, s0);
+    imageStore(uState1, g_local, s1);
+    imageStore(uState3, g_local, s3);
+#else
+    imageStore(uState0, g_local, packC(z));
+    imageStore(uState1, g_local, packC(zprev));
+#endif
+}

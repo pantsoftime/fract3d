@@ -37,12 +37,16 @@ public:
 
     void setPalette(const Palette& p);
 
+    // Fractal programs build asynchronously (parallel shader compile).
+    enum class ProgStatus { Compiling, Ready, Error };
     struct FractalPrograms {
         Program trace, probe;
         std::string error;
-        bool attempted = false;
+        bool started = false;
     };
-    FractalPrograms& programs(const Fractal& f);
+    FractalPrograms& programs(const Fractal& f);  // starts the build if needed
+    ProgStatus status(const Fractal& f);
+    void warmUp(const std::vector<Fractal>& all);  // start every build at startup
     void dropPrograms(const std::string& key) { progs_.erase(key); }
     void dropAllPrograms() { progs_.clear(); }
 
@@ -51,35 +55,48 @@ public:
     bool renderSample3D(RenderTarget& target, int sampleIndex, const Fractal& f, const RenderSettings& rs,
                         const View3D& v, const int* scissor = nullptr);
 
-    // ---- 2D: iteration buffer at (w*ss) x (h*ss)
-    bool render2D(RenderTarget& target, const Classic2DSettings& cs, int outW, int outH, const int* scissor = nullptr);
-    bool classicUsesFp64(const Classic2DSettings& cs, int outH) const;
+    // ---- 2D: resumable escape-time compute. One call runs up to `chunk` more
+    // iterations for every pixel of rows [y0, y0 + rows) of `out` (target pixels).
+    // `first` starts the band's orbits. Pixels write `out` when they finish.
+    bool dispatch2D(IndexTarget& out, const Classic2DSettings& cs, int y0, int rows, int chunk, bool first);
+    int bandRowsFor(int width) const;  // rows per band so the orbit state stays small
+    bool classicUsesFp64(const Classic2DSettings& cs, int targetH) const;
+    // Transpiled user formula (see formula.h); empty to clear. Rebuilds the custom programs.
+    void setCustomFormula(const std::string& glsl);
+    const std::string& customFormulaError() const { return customError_; }
 
-    // ---- final image
-    void display(ViewMode mode, const RenderTarget& src, const RenderSettings& rs, const Classic2DSettings& cs,
-                 float cycleOffset, int outW, int outH, GLuint fbo);
+    // ---- final image: 3D accumulation or 2D iteration buffer -> fbo
+    void display(ViewMode mode, const RenderTarget* accum, const IndexTarget* index, const RenderSettings& rs,
+                 const Classic2DSettings& cs, float cycleOffset, int outW, int outH, GLuint fbo);
 
     // ---- probe: async readback of DE at camera and hit distance along a ray
     bool probe(const Fractal& f, const RenderSettings& rs, const View3D& v, const Vec3& dir, float pixelAngle);
     bool fetchProbe(float& deAtCam, float& hitT);  // oldest pending result, in issue order
 
-    bool writePng(const std::string& path, ViewMode mode, const RenderTarget& src, const RenderSettings& rs,
-                  const Classic2DSettings& cs, float cycleOffset, int w, int h);
+    // Renders the display pass at w x h and reads it back (RGBA, bottom-up).
+    bool readImage(ViewMode mode, const RenderTarget* accum, const IndexTarget* index, const RenderSettings& rs,
+                   const Classic2DSettings& cs, float cycleOffset, int w, int h, std::vector<uint8_t>& rgba);
 
-    RenderTarget accum;   // interactive 3D accumulation
-    RenderTarget index2D; // interactive 2D iteration buffer
+    RenderTarget accum;    // interactive 3D accumulation
+    IndexTarget index2D;   // interactive 2D iteration buffer
     GpuTimer timer;
 
 private:
     bool loadCore(std::string& err);
+    Program* classicProgram(bool fp64, bool custom);
     std::filesystem::file_time_type newestShaderTime() const;
+    void buildRetroLuts();
 
     std::filesystem::path dataDir_;
     std::filesystem::file_time_type coreTime_{};
-    std::string vert_, common_, raymarch_, probeSrc_, classic_, display_;
-    Program displayProg_, classic32_, classic64_;
+    std::string vert_, common_, raymarch_, probeSrc_, classicSrc_;
+    Program displayProg_;
+    Program classic_[2][2];  // [fp64][custom formula]
+    bool classicBuilt_[2][2] = {};
+    std::string customGlsl_, customError_;
     std::unordered_map<std::string, std::unique_ptr<FractalPrograms>> progs_;
-    GLuint vao_ = 0, paletteTex_ = 0, retroTex_ = 0;
+    GLuint vao_ = 0, paletteTex_ = 0, retroLut_[2] = {0, 0};
+    StateImages state2D_;
     RenderTarget probeRT_, shotRT_;
     GLuint probePbo_[2] = {0, 0};
     GLsync probeFence_[2] = {nullptr, nullptr};

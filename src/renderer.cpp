@@ -39,12 +39,7 @@ bool Renderer::init(const fs::path& dataDir, std::string& err) {
     glTextureParameteri(paletteTex_, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTextureParameteri(paletteTex_, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-    Palette vga = vgaDefaultPalette();
-    glCreateTextures(GL_TEXTURE_2D, 1, &retroTex_);
-    glTextureStorage2D(retroTex_, 1, GL_RGBA8, 256, 1);
-    glTextureSubImage2D(retroTex_, 0, 0, 0, 256, 1, GL_RGBA, GL_UNSIGNED_BYTE, vga.rgba.data());
-    glTextureParameteri(retroTex_, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTextureParameteri(retroTex_, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    buildRetroLuts();
 
     probeRT_.ensure(2, 1, GL_RG32F, GL_NEAREST);
     glCreateBuffers(2, probePbo_);
@@ -55,21 +50,58 @@ bool Renderer::init(const fs::path& dataDir, std::string& err) {
     return true;
 }
 
+// The retro filter snaps colors to the VGA (or EGA) palette. Instead of searching
+// 248 entries per pixel, precompute the nearest entry for a 32^3 grid of colors.
+void Renderer::buildRetroLuts() {
+    const int N = 32;
+    Palette vga = vgaDefaultPalette();
+    for (int which = 0; which < 2; which++) {
+        int count = which == 0 ? 248 : 16;
+        std::vector<uint8_t> lut((size_t)N * N * N * 4);
+        for (int b = 0; b < N; b++)
+            for (int g = 0; g < N; g++)
+                for (int r = 0; r < N; r++) {
+                    float c[3] = {(r + 0.5f) / N, (g + 0.5f) / N, (b + 0.5f) / N};
+                    int best = 0;
+                    float bestD = 1e9f;
+                    for (int i = 0; i < count; i++) {
+                        float d = 0;
+                        const float wts[3] = {0.30f, 0.59f, 0.11f};
+                        for (int k = 0; k < 3; k++) {
+                            float e = (c[k] - vga.rgba[i * 4 + k] / 255.0f) * wts[k];
+                            d += e * e;
+                        }
+                        if (d < bestD) bestD = d, best = i;
+                    }
+                    size_t o = (((size_t)b * N + g) * N + r) * 4;
+                    for (int k = 0; k < 4; k++) lut[o + k] = vga.rgba[best * 4 + k];
+                }
+        glCreateTextures(GL_TEXTURE_3D, 1, &retroLut_[which]);
+        glTextureStorage3D(retroLut_[which], 1, GL_RGBA8, N, N, N);
+        glTextureSubImage3D(retroLut_[which], 0, 0, 0, 0, N, N, N, GL_RGBA, GL_UNSIGNED_BYTE, lut.data());
+        glTextureParameteri(retroLut_[which], GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTextureParameteri(retroLut_[which], GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        for (GLenum wrap : {GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T, GL_TEXTURE_WRAP_R})
+            glTextureParameteri(retroLut_[which], wrap, GL_CLAMP_TO_EDGE);
+    }
+}
+
 void Renderer::shutdown() {
     // GL objects must go while the context still exists (move-assign swaps, the temporary deletes)
     progs_.clear();
     displayProg_ = Program();
-    classic32_ = Program();
-    classic64_ = Program();
+    for (auto& row : classic_)
+        for (auto& p : row) p = Program();
     accum.release();
     index2D.release();
+    state2D_.release();
     probeRT_.release();
     shotRT_.release();
     for (auto& f : probeFence_)
         if (f) glDeleteSync(f), f = nullptr;
     glDeleteBuffers(2, probePbo_);
     glDeleteTextures(1, &paletteTex_);
-    glDeleteTextures(1, &retroTex_);
+    glDeleteTextures(2, retroLut_);
     glDeleteVertexArrays(1, &vao_);
 }
 
@@ -96,33 +128,59 @@ bool Renderer::loadCore(std::string& err) {
     };
     std::string vert, common, raymarch, probe, classic, display;
     if (!rd("fullscreen.vert", vert) || !rd("common.glsl", common) || !rd("raymarch.frag", raymarch) ||
-        !rd("probe.frag", probe) || !rd("classic2d.frag", classic) || !rd("display.frag", display))
+        !rd("probe.frag", probe) || !rd("classic2d.comp", classic) || !rd("display.frag", display))
         return false;
 
-    Program disp, c32, c64;
-    if (!disp.build(vert, {{"header", "#version 460\n"}, {"display.frag", display}})) {
+    Program disp;
+    if (!disp.build(vert, {{"header", "#version 460\n"}, {"common.glsl", common}, {"display.frag", display}})) {
         err += disp.error();
         return false;
     }
-    if (!c32.build(vert, {{"header", "#version 460\n"}, {"common.glsl", common}, {"classic2d.frag", classic}})) {
+    // Check the classic compute shader compiles before accepting the new sources.
+    Program c32;
+    if (!c32.buildCompute({{"header", "#version 460\n"}, {"common.glsl", common}, {"classic2d.comp", classic}})) {
         err += c32.error();
-        return false;
-    }
-    if (!c64.build(vert, {{"header", "#version 460\n#define FP64\n"}, {"common.glsl", common}, {"classic2d.frag", classic}})) {
-        err += c64.error();
         return false;
     }
     // swap in only after everything compiled, so a typo during live editing keeps the old shaders running
     std::swap(displayProg_, disp);
-    std::swap(classic32_, c32);
-    std::swap(classic64_, c64);
+    for (auto& row : classic_)
+        for (auto& p : row) p = Program();
+    std::memset(classicBuilt_, 0, sizeof classicBuilt_);
+    classic_[0][0] = std::move(c32);
+    classicBuilt_[0][0] = true;
     vert_ = vert;
     common_ = common;
     raymarch_ = raymarch;
     probeSrc_ = probe;
-    classic_ = classic;
-    display_ = display;
+    classicSrc_ = classic;
     return true;
+}
+
+Program* Renderer::classicProgram(bool fp64, bool custom) {
+    if (custom && customGlsl_.empty()) return nullptr;
+    Program& p = classic_[fp64][custom];
+    if (!classicBuilt_[fp64][custom]) {
+        classicBuilt_[fp64][custom] = true;
+        std::string header = "#version 460\n";
+        if (fp64) header += "#define FP64\n";
+        if (custom) header += "#define CUSTOM_FORMULA\n";
+        std::vector<ShaderChunk> chunks = {{"header", header}, {"common.glsl", common_}};
+        if (custom) chunks.push_back({"(your formula)", customGlsl_});
+        chunks.push_back({"classic2d.comp", classicSrc_});
+        if (!p.buildCompute(chunks) && custom) customError_ = p.error();
+    }
+    return p.valid() ? &p : nullptr;
+}
+
+void Renderer::setCustomFormula(const std::string& glsl) {
+    customGlsl_ = glsl;
+    customError_.clear();
+    for (int fp = 0; fp < 2; fp++) {
+        classic_[fp][1] = Program();
+        classicBuilt_[fp][1] = false;
+    }
+    if (!glsl.empty()) classicProgram(false, true);  // compile now so errors show immediately
 }
 
 bool Renderer::reloadCoreIfChanged() {
@@ -143,12 +201,13 @@ void Renderer::setPalette(const Palette& p) {
     glTextureSubImage2D(paletteTex_, 0, 0, 0, 256, 1, GL_RGBA, GL_UNSIGNED_BYTE, p.rgba.data());
 }
 
+// ------------------------------------------------------------------ fractal programs
 Renderer::FractalPrograms& Renderer::programs(const Fractal& f) {
     auto& slot = progs_[f.key];
     if (!slot) slot = std::make_unique<FractalPrograms>();
     FractalPrograms& fp = *slot;
-    if (fp.attempted) return fp;
-    fp.attempted = true;
+    if (fp.started) return fp;
+    fp.started = true;
     fp.error.clear();
     std::string fname = f.path.filename().string();
     std::vector<ShaderChunk> trace = {{"header", "#version 460\n"},
@@ -156,14 +215,26 @@ Renderer::FractalPrograms& Renderer::programs(const Fractal& f) {
                                       {"(parameters of " + fname + ")", f.uniformDecls()},
                                       {fname, f.code},
                                       {"raymarch.frag", raymarch_}};
-    if (!fp.trace.build(vert_, trace)) {
-        fp.error = fp.trace.error();
-        return fp;
-    }
+    fp.trace.buildAsync(vert_, trace);
     auto probe = trace;
     probe.back() = {"probe.frag", probeSrc_};
-    if (!fp.probe.build(vert_, probe)) fp.error = fp.probe.error();
+    fp.probe.buildAsync(vert_, probe);
     return fp;
+}
+
+Renderer::ProgStatus Renderer::status(const Fractal& f) {
+    FractalPrograms& fp = programs(f);
+    BuildState a = fp.trace.poll(), b = fp.probe.poll();
+    if (a == BuildState::Pending || b == BuildState::Pending) return ProgStatus::Compiling;
+    if (a == BuildState::Failed || b == BuildState::Failed) {
+        fp.error = a == BuildState::Failed ? fp.trace.error() : fp.probe.error();
+        return ProgStatus::Error;
+    }
+    return ProgStatus::Ready;
+}
+
+void Renderer::warmUp(const std::vector<Fractal>& all) {
+    for (auto& f : all) programs(f);
 }
 
 // ------------------------------------------------------------------ 3D
@@ -198,9 +269,8 @@ void Renderer::clear3D(RenderTarget& t) {
 
 bool Renderer::renderSample3D(RenderTarget& target, int sampleIndex, const Fractal& f, const RenderSettings& rs,
                               const View3D& v, const int* scissor) {
-    FractalPrograms& fp = programs(f);
-    if (!fp.trace.valid() || !fp.error.empty()) return false;
-    Program& p = fp.trace;
+    if (status(f) != ProgStatus::Ready) return false;
+    Program& p = programs(f).trace;
 
     p.set("uResolution", (float)v.fullW, (float)v.fullH);
     p.set("uFrame", sampleIndex);
@@ -223,7 +293,7 @@ bool Renderer::renderSample3D(RenderTarget& target, int sampleIndex, const Fract
     p.set3("uSunDir", sd.data());
     p.set("uSunColor", rs.sunColor[0] * rs.sunIntensity, rs.sunColor[1] * rs.sunIntensity, rs.sunColor[2] * rs.sunIntensity);
     p.set("uSunSize", rs.sunSize * 0.0174533f);
-    p.set("uShadows", rs.shadows);
+    p.set("uShadows", (int)rs.shadows);
     p.set3("uSkyZenith", rs.skyZenith);
     p.set3("uSkyHorizon", rs.skyHorizon);
     p.set("uSkyIntensity", rs.skyIntensity);
@@ -234,7 +304,7 @@ bool Renderer::renderSample3D(RenderTarget& target, int sampleIndex, const Fract
     p.set3("uFogColor", rs.fogColor);
     p.set("uGlowStrength", rs.glowStrength);
     p.set3("uGlowColor", rs.glowColor);
-    p.set("uFloor", rs.floorOn);
+    p.set("uFloor", (int)rs.floorOn);
     p.set("uFloorY", rs.floorY);
     p.set3("uFloorColor", rs.floorColor);
     p.set("uColorScale", rs.colorScale);
@@ -265,62 +335,80 @@ bool Renderer::renderSample3D(RenderTarget& target, int sampleIndex, const Fract
 }
 
 // ------------------------------------------------------------------ 2D
-bool Renderer::classicUsesFp64(const Classic2DSettings& cs, int outH) const {
+bool Renderer::classicUsesFp64(const Classic2DSettings& cs, int targetH) const {
+    if (cs.formula == kCustomFormula) return false;  // user formulas use transcendental functions: float only
     if (cs.fp64 == 0) return false;
     if (cs.fp64 == 1) return true;
-    double pixel = cs.height / std::max(outH, 1);
-    return pixel < 2e-6;  // float runs out of mantissa around here
+    double pixel = cs.height / std::max(targetH, 1);
+    // A float has 24 mantissa bits; near |c| ~ 2 its spacing is ~2.4e-7. Switch
+    // while a pixel still spans a couple of float steps.
+    return pixel < 4e-7;
 }
 
-bool Renderer::render2D(RenderTarget& target, const Classic2DSettings& cs, int outW, int outH, const int* scissor) {
-    Program& p = classicUsesFp64(cs, outH) ? classic64_ : classic32_;
-    if (!p.valid()) return false;
-    int ss = std::clamp(cs.supersample, 1, 4);
-    p.set("uResolution", (float)(outW * ss), (float)(outH * ss));
+int Renderer::bandRowsFor(int width) const {
+    const int kBandPixels = 1 << 20;  // 1M pixels of orbit state = 64 MB
+    return std::max(1, kBandPixels / std::max(width, 1));
+}
+
+bool Renderer::dispatch2D(IndexTarget& out, const Classic2DSettings& cs, int y0, int rows, int chunk, bool first) {
+    bool custom = cs.formula == kCustomFormula;
+    Program* pp = classicProgram(classicUsesFp64(cs, out.h), custom);
+    if (!pp) return false;
+    Program& p = *pp;
+    if (!state2D_.ensure(out.w, bandRowsFor(out.w))) return false;
+    p.set("uBandOrigin", 0, y0);
+    p.set("uBandSize", out.w, rows);
+    p.set("uFirstPass", first ? 1 : 0);
+    p.set("uChunk", std::max(chunk, 1));
+    p.set("uResolution", (float)out.w, (float)out.h);
     p.setd("uCenter", cs.cx, cs.cy);
-    p.setd("uPixelSize", cs.height / (outH * ss));
+    p.setd("uPixelSize", cs.height / out.h);
     p.setd("uJuliaC", cs.jx, cs.jy);
-    p.set("uJulia", cs.julia);
+    p.set("uJulia", (int)cs.julia);
     p.set("uFormula", cs.formula);
     p.set("uMaxIter", cs.maxIter);
     // Bands use the bailout as given (Fractint's |z| > 2); smooth coloring needs a big radius to look smooth.
     float bail = std::max(cs.bailout, 2.0f);
     if (!cs.banded) bail = std::max(bail, 64.0f);
     p.set("uBailout", bail);
-    p.set("uBanded", cs.banded);
+    p.set("uBanded", (int)cs.banded);
     p.set("uPower", cs.power);
     p.set("uPhoenixP", cs.phoenixP[0], cs.phoenixP[1]);
-    glBindFramebuffer(GL_FRAMEBUFFER, target.fbo);
-    glViewport(0, 0, target.w, target.h);
-    if (scissor) {
-        glEnable(GL_SCISSOR_TEST);
-        glScissor(scissor[0], scissor[1], scissor[2], scissor[3]);
-    }
-    glBindVertexArray(vao_);
+    p.set("uColoring", cs.coloring);
+    p.set("uTrapSize", cs.trapSize);
+    p.set("uP1", cs.p1[0], cs.p1[1]);
+    p.set("uP2", cs.p2[0], cs.p2[1]);
+    p.set("uP3", cs.p3[0], cs.p3[1]);
+    for (int i = 0; i < 4; i++) glBindImageTexture(i, state2D_.tex[i], 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA32UI);
+    glBindImageTexture(4, out.value, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_R32F);
+    glBindImageTexture(5, out.aux, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_R8);
     p.use();
-    glDrawArrays(GL_TRIANGLES, 0, 3);
-    glDisable(GL_SCISSOR_TEST);
+    glDispatchCompute((out.w + 15) / 16, (rows + 15) / 16, 1);
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
     return true;
 }
 
 // ------------------------------------------------------------------ display
-void Renderer::display(ViewMode mode, const RenderTarget& src, const RenderSettings& rs, const Classic2DSettings& cs,
-                       float cycleOffset, int outW, int outH, GLuint fbo) {
+void Renderer::display(ViewMode mode, const RenderTarget* accum, const IndexTarget* index, const RenderSettings& rs,
+                       const Classic2DSettings& cs, float cycleOffset, int outW, int outH, GLuint fbo) {
     Program& p = displayProg_;
     if (!p.valid()) return;
     bool m2d = mode == ViewMode::Classic2D;
+    int ss = m2d && index && index->w > 0 ? std::max(index->w / std::max(outW, 1), 1) : 1;
     p.set("uMode", m2d ? 1 : 0);
     p.set("uAccum", 0);
     p.set("uIndex", 1);
     p.set("uPalette", 2);
-    p.set("uRetroPalette", 3);
+    p.set("uRetroLut", 3);
+    p.set("uAux", 4);
     p.set("uOutSize", (float)outW, (float)outH);
     p.set("uExposure", rs.exposure);
     p.set("uTonemap", rs.tonemap);
     p.set("uVignette", rs.vignette);
     p.set("uSaturation", rs.saturation);
-    p.set("uSS", std::clamp(cs.supersample, 1, 4));
-    p.set("uBanded", cs.banded);
+    p.set("uSS", ss);
+    p.set("uBanded", (int)cs.banded);
+    p.set("uColoring", cs.coloring);
     p.set("uCycleOffset", cycleOffset);
     p.set("uColorDensity", cs.colorDensity);
     p.set("uInsideMode", cs.insideMode);
@@ -332,10 +420,11 @@ void Renderer::display(ViewMode mode, const RenderTarget& src, const RenderSetti
 
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
     glViewport(0, 0, outW, outH);
-    glBindTextureUnit(0, m2d ? 0 : src.tex);
-    glBindTextureUnit(1, m2d ? src.tex : 0);
+    glBindTextureUnit(0, !m2d && accum ? accum->tex : 0);
+    glBindTextureUnit(1, m2d && index ? index->value : 0);
+    glBindTextureUnit(4, m2d && index ? index->aux : 0);
     glBindTextureUnit(2, paletteTex_);
-    glBindTextureUnit(3, retroTex_);
+    glBindTextureUnit(3, retroLut_[rs.retro == 2 ? 1 : 0]);
     glBindVertexArray(vao_);
     p.use();
     glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -343,10 +432,10 @@ void Renderer::display(ViewMode mode, const RenderTarget& src, const RenderSetti
 
 // ------------------------------------------------------------------ probe
 bool Renderer::probe(const Fractal& f, const RenderSettings& rs, const View3D& v, const Vec3& dir, float pixelAngle) {
+    if (status(f) != ProgStatus::Ready) return false;
     FractalPrograms& fp = programs(f);
-    if (!fp.probe.valid() || !fp.error.empty()) return false;
     int slot = probeIdx_;
-    if (probeFence_[slot]) return false;  // both slots still in flight  // previous readback in this slot not consumed yet
+    if (probeFence_[slot]) return false;  // both slots still in flight
     Program& p = fp.probe;
     p.set3("uCamPos", v.pos.data());
     p.set3("uProbeDir", dir.data());
@@ -355,6 +444,8 @@ bool Renderer::probe(const Fractal& f, const RenderSettings& rs, const View3D& v
     p.set("uStepFactor", rs.stepFactor);
     p.set("uMaxSteps", rs.maxSteps);
     p.set("uMaxT", rs.maxDist * v.sceneScale);
+    p.set("uFloor", (int)rs.floorOn);
+    p.set("uFloorY", rs.floorY);
     setFractalParams(p, f, v.animTime);
     glBindFramebuffer(GL_FRAMEBUFFER, probeRT_.fbo);
     glViewport(0, 0, 2, 1);
@@ -389,17 +480,16 @@ bool Renderer::fetchProbe(float& deAtCam, float& hitT) {
 }
 
 // ------------------------------------------------------------------ screenshots
-bool Renderer::writePng(const std::string& path, ViewMode mode, const RenderTarget& src, const RenderSettings& rs,
-                        const Classic2DSettings& cs, float cycleOffset, int w, int h) {
-    shotRT_.ensure(w, h, GL_RGBA8, GL_NEAREST);
-    display(mode, src, rs, cs, cycleOffset, w, h, shotRT_.fbo);
-    std::vector<uint8_t> px((size_t)w * h * 4);
+bool Renderer::readImage(ViewMode mode, const RenderTarget* accum, const IndexTarget* index, const RenderSettings& rs,
+                         const Classic2DSettings& cs, float cycleOffset, int w, int h, std::vector<uint8_t>& px) {
+    if (!shotRT_.ensure(w, h, GL_RGBA8, GL_NEAREST)) return false;
+    display(mode, accum, index, rs, cs, cycleOffset, w, h, shotRT_.fbo);
+    px.resize((size_t)w * h * 4);
     glBindFramebuffer(GL_FRAMEBUFFER, shotRT_.fbo);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     shotRT_.release();  // posters can be huge; don't keep the memory
     for (size_t i = 3; i < px.size(); i += 4) px[i] = 255;
-    stbi_flip_vertically_on_write(1);
-    return stbi_write_png(path.c_str(), w, h, 4, px.data(), w * 4) != 0;
+    return true;
 }

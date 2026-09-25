@@ -256,7 +256,8 @@ void App::resetView() {
 
 void App::setMode(ViewMode m) {
     mode = m;
-    lastSig2D.clear();
+    shownSig2D.clear();
+    job2D.active = false;
     lastSig3D.clear();
 }
 
@@ -312,10 +313,7 @@ void App::frame() {
         uiShotRT.ensure(fbW, fbH, GL_RGBA8, GL_NEAREST);
         target = uiShotRT.fbo;
     }
-    static Classic2DSettings shown;
-    shown = cs;
-    if (mode == ViewMode::Classic2D && rend.index2D.w > 0) shown.supersample = std::max(rend.index2D.w / std::max(fbW, 1), 1);
-    rend.display(mode, mode == ViewMode::Fractal3D ? rend.accum : rend.index2D, rs, shown, cycleOffset, fbW, fbH, target);
+    rend.display(mode, &rend.accum, &rend.index2D, rs, cs, cycleOffset, fbW, fbH, target);
 
     drawUI();
     ImGui::Render();
@@ -394,7 +392,7 @@ void App::handleKeys() {
             cs.cy = 0;
             cs.height = 3.0;
         }
-        if (pressed(ImGuiKey_Equal) || pressed(ImGuiKey_KeypadAdd)) cs.maxIter = std::min(cs.maxIter * 2, 1 << 20);
+        if (pressed(ImGuiKey_Equal) || pressed(ImGuiKey_KeypadAdd)) cs.maxIter = std::min(cs.maxIter * 2, kMaxIterations);
         if (pressed(ImGuiKey_Minus) || pressed(ImGuiKey_KeypadSubtract)) cs.maxIter = std::max(cs.maxIter / 2, 16);
     }
 }
@@ -577,6 +575,7 @@ void App::render3D() {
     if (sig != lastSig3D) {
         lastSig3D = std::move(sig);
         samples = 0;
+        band3DRow = 0;
         lastChange = now;
     }
     interactive = now - lastChange < 0.25;
@@ -598,18 +597,36 @@ void App::render3D() {
     if (rend.accum.w != rw || rend.accum.h != rh) {
         rend.accum.ensure(rw, rh, GL_RGBA32F, GL_LINEAR);
         samples = 0;
+        band3DRow = 0;
     }
     int maxS = rs.renderMode ? rs.maxSamplesPT : rs.maxSamplesRT;
     if (samples >= maxS) return;  // converged: GPU idles
-    if (samples == 0) rend.clear3D(rend.accum);
+    if (samples == 0 && band3DRow == 0) rend.clear3D(rend.accum);
 
+    View3D v = makeView(rw, rh);
+    float perSample = perSampleMsFull * scale * scale;
+    if (!interactive && perSample > targetMs * 2.0f) {
+        // A full sample would stall the desktop: render it in bands over several frames.
+        // Each pixel's alpha counts its own samples, so a partly finished pass is fine.
+        int rows = std::clamp((int)(targetMs / (perSample / rh)), 1, rh - band3DRow);
+        int sc[4] = {0, rh - band3DRow - rows, rw, rows};
+        rend.timer.begin(scale, (float)rows / rh);
+        bool ok = rend.renderSample3D(rend.accum, samples, f, rs, v, sc);
+        rend.timer.end();
+        if (!ok) return;
+        band3DRow += rows;
+        if (band3DRow >= rh) {
+            band3DRow = 0;
+            samples++;
+        }
+        return;
+    }
+    band3DRow = 0;
     int n = 1;
     if (!interactive) {
-        float perSample = perSampleMsFull * scale * scale;
         n = std::clamp((int)(targetMs / std::max(perSample, 0.01f)), 1, 16);
         n = std::min(n, maxS - samples);
     }
-    View3D v = makeView(rw, rh);
     rend.timer.begin(scale, (float)n);
     for (int i = 0; i < n; i++)
         if (rend.renderSample3D(rend.accum, samples, f, rs, v)) samples++;
@@ -651,6 +668,44 @@ void App::updateProbe() {
 }
 
 // ------------------------------------------------------------------ 2D rendering
+bool App::stepJob2D(Job2D& job, IndexTarget& target, double budgetMs) {
+    int tw = target.w, th = target.h;
+    int maxIter = std::max(job.cs.maxIter, 1);
+    glFinish();  // drain earlier work so pass timings measure only ours
+    auto t0 = std::chrono::steady_clock::now();
+    while (job.active) {
+        bool first = job.bandRows == 0;
+        if (first) {
+            job.bandRows = std::min(rend.bandRowsFor(tw), th - job.row);
+            job.itersDone = 0;
+        }
+        int k = std::min(job.chunk, maxIter - job.itersDone);
+        int y0 = th - job.row - job.bandRows;  // bands run top-down (GL rows count up)
+        auto b0 = std::chrono::steady_clock::now();
+        if (!rend.dispatch2D(target, job.cs, y0, job.bandRows, std::max(k, 1), first)) {
+            job.active = false;
+            return false;
+        }
+        glFinish();
+        double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - b0).count();
+        job.itersDone += std::max(k, 1);
+        // aim each pass at a third of the budget; pixels that finish make later passes cheaper
+        double f = std::clamp(budgetMs / 3.0 / std::max(ms, 0.01), 0.25, 4.0);
+        job.chunk = (int)std::clamp(job.chunk * f, 16.0, (double)maxIter);
+        if (job.itersDone >= maxIter) {  // every orbit in the band has escaped or hit the limit
+            job.row += job.bandRows;
+            job.bandRows = 0;
+            if (job.row >= th) {
+                job.active = false;
+                return true;
+            }
+        }
+        double total = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        if (total > budgetMs) break;
+    }
+    return false;
+}
+
 void App::render2D() {
     Classic2DSettings c = cs;
     // display-only fields don't need a recompute
@@ -661,20 +716,49 @@ void App::render2D() {
     appendBytes(sig, fbW);
     appendBytes(sig, fbH);
     appendBytes(sig, generation);
-    static std::vector<uint8_t> coreSig;
-    if (sig != coreSig) {
-        coreSig = sig;
+    if (sig != coreSig2D) {
+        coreSig2D = sig;
         lastChange = now;
     }
     interactive = now - lastChange < 0.2;
     int ss = interactive ? 1 : std::clamp(cs.supersample, 1, 4);
     appendBytes(sig, ss);
-    if (sig == lastSig2D && rend.index2D.w == fbW * ss && rend.index2D.h == fbH * ss) return;
-    lastSig2D = sig;
-    rend.index2D.ensure(fbW * ss, fbH * ss, GL_RG32F, GL_NEAREST);
-    Classic2DSettings e = cs;
-    e.supersample = ss;
-    rend.render2D(rend.index2D, e, fbW, fbH);
+    int tw = fbW * ss, th = fbH * ss;
+
+    // (re)start a job when the wanted image differs from what's shown or being rendered
+    bool wantNew = job2D.active ? job2D.sig != sig : shownSig2D != sig;
+    if (wantNew) {
+        job2D.active = true;
+        job2D.row = 0;
+        job2D.bandRows = 0;
+        job2D.sig = sig;
+        job2D.cs = cs;
+        job2D.cs.supersample = ss;
+        job2D.chunk = std::min(std::max(cs.maxIter, 1), 512);
+        // If index2D holds a complete image for this window (at any supersampling), keep
+        // showing it: draw over it when the size matches (the reveal), otherwise render
+        // offscreen and swap when done. After a resize there's nothing valid to keep.
+        bool shownValid = rend.index2D.w > 0 && rend.index2D.w % fbW == 0 && rend.index2D.h == fbH * (rend.index2D.w / fbW);
+        job2D.offscreen = shownValid && (rend.index2D.w != tw || rend.index2D.h != th);
+        IndexTarget& t = job2D.offscreen ? work2D : rend.index2D;
+        if (t.w != tw || t.h != th) {
+            if (!t.ensure(tw, th)) {
+                job2D.active = false;
+                toast("Not enough video memory for this image size");
+                return;
+            }
+            t.clear();
+        }
+    }
+    if (!job2D.active) return;
+    IndexTarget& target = job2D.offscreen ? work2D : rend.index2D;
+    if (stepJob2D(job2D, target, frameBudgetMs)) {
+        if (job2D.offscreen) {
+            rend.index2D.swap(work2D);
+            work2D.release();
+        }
+        shownSig2D = job2D.sig;
+    }
 }
 
 // ------------------------------------------------------------------ screenshots & posters
@@ -682,10 +766,9 @@ void App::takeScreenshot() {
     std::error_code ec;
     fs::create_directories(picturesDir, ec);
     std::string base = (picturesDir / ("fract3d-" + timestampName())).string();
-    Classic2DSettings shown = cs;
-    if (mode == ViewMode::Classic2D) shown.supersample = std::max(rend.index2D.w / std::max(fbW, 1), 1);
-    bool ok = rend.writePng(base + ".png", mode, mode == ViewMode::Fractal3D ? rend.accum : rend.index2D, rs, shown,
-                            cycleOffset, fbW, fbH);
+    std::vector<uint8_t> px;
+    bool ok = rend.readImage(mode, &rend.accum, &rend.index2D, rs, cs, cycleOffset, fbW, fbH, px) &&
+              writePngRaw(base + ".png", fbW, fbH, px.data());
     savePar(base + ".par");
     toast(ok ? "Saved " + base + ".png (+ .par to recreate it)" : "Screenshot failed", 4);
 }
@@ -705,58 +788,92 @@ void App::startPoster(int w, int h, int nSamples) {
     std::error_code ec;
     fs::create_directories(picturesDir, ec);
     poster.path = (picturesDir / ("fract3d-" + timestampName() + "-" + std::to_string(w) + "x" + std::to_string(h) + ".png")).string();
+    bool ok;
     if (mode == ViewMode::Fractal3D) {
-        poster.target.ensure(w, h, GL_RGBA32F, GL_LINEAR);
-        rend.clear3D(poster.target);
+        ok = poster.target.ensure(w, h, GL_RGBA32F, GL_LINEAR);
+        if (ok) rend.clear3D(poster.target);
     } else {
-        int ss = std::clamp(cs.supersample, 1, 4);
-        poster.target.ensure(w * ss, h * ss, GL_RG32F, GL_NEAREST);
+        int ss = poster.cs.supersample;
+        ok = poster.index.ensure(w * ss, h * ss);
+        if (ok) {
+            poster.index.clear();
+            poster.job = Job2D();
+            poster.job.active = true;
+            poster.job.cs = poster.cs;
+            poster.job.chunk = std::min(std::max(cs.maxIter, 1), 512);
+        }
+    }
+    if (!ok) {
+        char buf[160];
+        snprintf(buf, sizeof buf, "Can't render %dx%d: too large for this GPU (max %d per side, including anti-aliasing)",
+                 w, h, maxTextureSize());
+        toast(buf, 6);
+        poster.active = false;
+        exitCode = 1;
+        if (!cli.shotPath.empty()) quit = true;
     }
 }
 
 void App::updatePoster() {
     const int T = 1024;
     bool is3D = poster.mode == ViewMode::Fractal3D;
-    int ss = is3D ? 1 : poster.cs.supersample;
-    int tw = poster.target.w, th = poster.target.h;
-    int tilesX = (tw + T - 1) / T, tilesY = (th + T - 1) / T, tiles = tilesX * tilesY;
-    const View3D& v = poster.view;
-    // Work in small tiles and call glFinish to measure: keeps the desktop responsive during long renders.
-    auto t0 = std::chrono::steady_clock::now();
-    while (poster.done < poster.samples) {
-        int tx = poster.tile % tilesX, ty = poster.tile / tilesX;
-        int sc[4] = {tx * T, ty * T, std::min(T, tw - tx * T), std::min(T, th - ty * T)};
-        bool ok = is3D ? rend.renderSample3D(poster.target, poster.done, fractal(), rs, v, sc)
-                       : rend.render2D(poster.target, poster.cs, poster.w, poster.h, sc);
-        if (!ok) {
+    double budget = cli.shotPath.empty() ? 30.0 : 500.0;
+    bool finished = false;
+    if (is3D) {
+        if (rend.status(fractal()) == Renderer::ProgStatus::Compiling) return;  // wait for the shaders
+        int tw = poster.target.w, th = poster.target.h;
+        int tilesX = (tw + T - 1) / T, tilesY = (th + T - 1) / T, tiles = tilesX * tilesY;
+        const View3D& v = poster.view;
+        // Tiles + glFinish keep each GPU submission short, so the desktop stays responsive.
+        auto t0 = std::chrono::steady_clock::now();
+        while (poster.done < poster.samples) {
+            int tx = poster.tile % tilesX, ty = poster.tile / tilesX;
+            int sc[4] = {tx * T, ty * T, std::min(T, tw - tx * T), std::min(T, th - ty * T)};
+            if (!rend.renderSample3D(poster.target, poster.done, fractal(), rs, v, sc)) {
+                toast("Render failed (shader error)");
+                poster.active = false;
+                poster.target.release();
+                exitCode = 1;
+                if (!cli.shotPath.empty()) quit = true;
+                return;
+            }
+            if (++poster.tile >= tiles) {
+                poster.tile = 0;
+                poster.done++;
+            }
+            glFinish();
+            double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            if (ms > budget) break;
+        }
+        finished = poster.done >= poster.samples;
+    } else {
+        finished = stepJob2D(poster.job, poster.index, budget);
+        poster.done = finished ? 1 : 0;
+        if (!finished && !poster.job.active) {  // dispatch failed
             toast("Render failed (shader error)");
             poster.active = false;
-            poster.target.release();
+            poster.index.release();
+            exitCode = 1;
             if (!cli.shotPath.empty()) quit = true;
             return;
         }
-        if (++poster.tile >= tiles) {
-            poster.tile = 0;
-            poster.done++;
-        }
-        glFinish();
-        double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-        if (ms > (cli.shotPath.empty() ? 30.0 : 500.0)) break;
     }
-    if (poster.done >= poster.samples) {
-        Classic2DSettings shown = cs;  // current display settings (palette etc.), iteration data from the snapshot
-        shown.supersample = ss;
-        bool ok = rend.writePng(poster.path, poster.mode, poster.target, rs, shown, cycleOffset, poster.w, poster.h);
+    if (finished) {
+        std::vector<uint8_t> px;
+        bool ok = rend.readImage(poster.mode, &poster.target, &poster.index, rs, cs, cycleOffset, poster.w, poster.h, px) &&
+                  writePngRaw(poster.path, poster.w, poster.h, px.data());
         fs::path parPath = fs::path(poster.path).replace_extension(".par");
         savePar(parPath);
         double secs = glfwGetTime() - poster.started;
         char buf[512];
         snprintf(buf, sizeof buf, "%s %s (%.1fs)", ok ? "Saved" : "FAILED to save", poster.path.c_str(), secs);
         toast(buf, 6);
+        if (!ok) exitCode = 1;
         poster.active = false;
         poster.target.release();
+        poster.index.release();
         lastSig3D.clear();
-        lastSig2D.clear();
+        shownSig2D.clear();
         if (!cli.shotPath.empty()) quit = true;
     }
 }

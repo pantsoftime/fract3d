@@ -52,7 +52,7 @@ int main(int argc, char** argv) {
 
     App app;
     if (!app.init(o)) return 1;
-    int rc = app.run();
+    app.run();
     app.shutdown();
-    return rc;
+    return app.exitCode;
 }

@@ -1,6 +1,6 @@
 // display.frag — turns the render buffer into screen pixels.
 //   mode 0 (3D): accumulated radiance / sample count -> exposure -> tonemap -> sRGB
-//   mode 1 (2D): iteration buffer -> palette (with cycling) -> supersample resolve
+//   mode 1 (2D): iteration buffer (value + aux) -> palette (with cycling) -> supersample resolve
 // Then the optional retro filter: pixelate, quantize to the VGA/EGA palette with
 // ordered dithering, and CRT scanlines.
 in vec2 vUV;
@@ -8,9 +8,10 @@ layout(location = 0) out vec4 outColor;
 
 uniform int   uMode;
 uniform sampler2D uAccum;        // mode 0: RGBA32F, rgb = sum, a = sample count
-uniform sampler2D uIndex;        // mode 1: RG32F iteration buffer at uSS x resolution
+uniform sampler2D uIndex;        // mode 1: R32F iteration values at uSS x resolution
+uniform sampler2D uAux;          // mode 1: R8 aux values (root, zmag, angle, stripe, trap)
 uniform sampler2D uPalette;      // 256x1 sRGB texture (sampled as linear)
-uniform sampler2D uRetroPalette; // 256x1 raw VGA palette
+uniform sampler3D uRetroLut;     // 32^3 nearest-VGA/EGA-color table
 uniform vec2  uOutSize;          // output size in pixels
 uniform float uExposure;
 uniform int   uTonemap;          // 0 ACES, 1 Reinhard, 2 none
@@ -20,6 +21,7 @@ uniform float uSaturation;
 // 2D
 uniform int   uSS;
 uniform int   uBanded;           // 1 = classic integer iteration bands (nearest palette entry)
+uniform int   uColoring;         // outside coloring mode (see kColoringModes)
 uniform float uCycleOffset;      // palette rotation, in palette entries
 uniform float uColorDensity;     // palette entries per iteration
 uniform int   uInsideMode;       // 0 black, 1 zmag, 2 solid color
@@ -39,15 +41,25 @@ vec3 aces(vec3 x) {
     return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
 }
 
-vec3 paletteColor(vec2 v) {
-    if (v.x < 0.0) {
+vec3 paletteColor(float v, float aux) {
+    if (v < -1.5) return vec3(0);                       // not computed yet (progressive render)
+    if (v < 0.0) {
         if (uInsideMode == 0) return vec3(0);
         if (uInsideMode == 2) return srgbToLinear(uInsideColor);
-        float e = v.y * 128.0 + uCycleOffset;           // Fractint "zmag" inside coloring
+        float e = aux * 256.0 + uCycleOffset;           // Fractint "zmag" inside coloring
         return texelFetch(uPalette, ivec2(int(mod(floor(e), 256.0)), 0), 0).rgb;
     }
-    float e = v.x * uColorDensity + v.y * uRootSpread + uCycleOffset;
-    if (uBanded == 1) {
+    float e;
+    bool bands = uBanded == 1;
+    if (uColoring == 0 || uColoring == 6) {             // escape time (+ Newton root offset)
+        e = v * uColorDensity + floor(aux * 4.0) * uRootSpread + uCycleOffset;
+    } else if (uColoring == 1) {                        // decomposition: half a palette apart
+        e = v * uColorDensity + aux * 128.0 + uCycleOffset;
+    } else {                                            // angle / stripes / traps: aux spans the palette
+        e = aux * 255.0 * uColorDensity + uCycleOffset;
+        bands = false;
+    }
+    if (bands) {
         // index 0 is reserved for "inside" in Fractint; escaped pixels start at 1
         int idx = int(mod(floor(e), 255.0)) + 1;  // e = escape iteration (0-based) when density = 1
         return texelFetch(uPalette, ivec2(idx, 0), 0).rgb;
@@ -69,7 +81,7 @@ vec3 sceneColor(vec2 fragPx) {
     vec3 sum = vec3(0);
     for (int j = 0; j < uSS; j++)
         for (int i = 0; i < uSS; i++)
-            sum += paletteColor(texelFetch(uIndex, base + ivec2(i, j), 0).rg);
+            sum += paletteColor(texelFetch(uIndex, base + ivec2(i, j), 0).r, texelFetch(uAux, base + ivec2(i, j), 0).r);
     return sum / float(uSS * uSS);
 }
 
@@ -78,15 +90,7 @@ const float bayer4[16] = float[](0., 8., 2., 10., 12., 4., 14., 6., 3., 11., 1.,
 vec3 retroQuantize(vec3 srgb, ivec2 cell) {
     float d = (bayer4[(cell.y & 3) * 4 + (cell.x & 3)] + 0.5) / 16.0 - 0.5;
     srgb += d * (uRetro == 2 ? 0.30 : 0.06);
-    int n = uRetro == 2 ? 16 : 248;
-    vec3 best = vec3(0); float bestD = 1e9;
-    for (int i = 0; i < n; i++) {
-        vec3 p = texelFetch(uRetroPalette, ivec2(i, 0), 0).rgb;
-        vec3 diff = (srgb - p) * vec3(0.30, 0.59, 0.11);
-        float dd = dot(diff, diff);
-        if (dd < bestD) { bestD = dd; best = p; }
-    }
-    return best;
+    return texture(uRetroLut, clamp(srgb, 0.0, 1.0)).rgb;   // nearest palette color, precomputed
 }
 
 void main() {

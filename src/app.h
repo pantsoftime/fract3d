@@ -107,7 +107,7 @@ public:
     Renderer rend;
 
     // accumulation bookkeeping
-    std::vector<uint8_t> lastSig3D, lastSig2D;
+    std::vector<uint8_t> lastSig3D;
     int samples = 0;
     double lastChange = -10.0;
     float motionScale = 0.6f;
@@ -116,6 +116,29 @@ public:
     float lastRenderScale = 1.0f;
     bool interactive = false;
     int generation = 0;  // bumped on shader reload to force re-render
+
+    // Progressive 2D rendering: the iteration buffer is filled in top-down bands
+    // under a per-frame time budget, so no single draw can stall the GPU (and it
+    // reproduces Fractint's scanline reveal).
+    // Each band's orbits are advanced a chunk of iterations per compute pass
+    // (see classic2d.comp), so even millions of iterations never block the GPU.
+    struct Job2D {
+        bool active = false;
+        int row = 0;             // rows finished, counted from the top of the target
+        int bandRows = 0;        // rows in the band being iterated (0 = start a new band)
+        int itersDone = 0;       // iterations run so far on the current band
+        int chunk = 4096;        // iterations per pass, adapted to the time budget
+        bool offscreen = false;  // rendering into work2D, swapped in when complete
+        Classic2DSettings cs;    // settings snapshot (supersample = the job's factor)
+        std::vector<uint8_t> sig;
+    } job2D;
+    IndexTarget work2D;
+    // Advances a 2D job on `target` for up to budgetMs; returns true once the image is complete.
+    bool stepJob2D(Job2D& job, IndexTarget& target, double budgetMs);
+    std::vector<uint8_t> coreSig2D;   // last compute signature (without supersampling)
+    std::vector<uint8_t> shownSig2D;  // signature of the complete image in index2D
+    int band3DRow = 0;                // rows of the current 3D sample already rendered (banded mode)
+    float frameBudgetMs = 12.0f;      // GPU time per frame for progressive work
 
     // probe results
     float deAtCam = 1.0f, centerHitT = -1.0f;
@@ -165,10 +188,13 @@ public:
         View3D view;           // snapshot: moving the camera mid-render must not affect the image
         Classic2DSettings cs;
         ViewMode mode = ViewMode::Fractal3D;
+        IndexTarget index;     // 2D posters
+        Job2D job;
     } poster;
 
     CliOptions cli;
     RenderTarget uiShotRT;
+    int exitCode = 0;
     int frameCount = 0;
     bool fullscreen = false;
     int savedWin[4] = {0, 0, 1600, 900};
