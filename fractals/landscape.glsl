@@ -4,7 +4,7 @@
 // @camera 0.9 1.5 -1.9   -0.15 0.0 0.1
 // @render stepFactor=0.4 detail=0.6 maxSteps=500 maxDist=8
 // @look palette="Ultra Fractal" colorScale=5.0 paletteMix=1.0 specular=0.04 roughness=0.7 sunAzimuth=150 sunElevation=28 sunSize=1.0 fov=50 fog=0.06 fogColor=0.66,0.70,0.80
-// @param choice formula = 0 {Mandelbrot, Burning Ship, Tricorn, Multibrot z^3, Julia} "Formula" -- The 2D escape-time formula that the terrain is made from.
+// @param choice formula = 0 {Mandelbrot, Burning Ship, Tricorn, Multibrot z^3, Julia, Custom formula} "Formula" -- The 2D escape-time formula that the terrain is made from. "Custom formula" uses the formula from Classic 2D mode's formula editor.
 // @param int iterations = 160 [10, 1500] "Iterations" -- Maximum iterations per point. Deeper zooms need more.
 // @param float heightScale = 0.35 [0.0, 2.0] "Height" -- How tall the terrain is. The height of each point comes from its escape time.
 // @param float curve = 1.8 [0.1, 4.0] "Height curve" -- Shapes the terrain. High values keep the plains flat and raise sharp ridges near the set. Low values lift everything into rolling hills.
@@ -32,6 +32,23 @@
 
 float landHeight(vec2 xz, out float smoothIter, out bool inside) {
     vec2 c = center + vec2(xz.x, xz.y) / zoom;
+#ifdef HAVE_CUSTOM_FORMULA
+    if (formula == 5) {  // the user's formula (spliced in by the host)
+        frm_init(c);
+        for (int i = 0; i < iterations; i++) {
+            if (!frm_step(i)) {
+                vec2 zz = frm_z();
+                float lr = 0.5 * log(max(dot(zz, zz), 1.0001));
+                smoothIter = max(float(i) + 1.0 - clamp(log2(max(lr / log(2.0), 1e-6)), 0.0, 1.0), 0.0);
+                inside = false;
+                return heightScale * pow(log(1.0 + smoothIter) / log(1.0 + float(iterations)), curve);
+            }
+        }
+        smoothIter = 0.0;
+        inside = true;
+        return insideStyle == 0 ? heightScale : -0.02 * heightScale;
+    }
+#endif
     vec2 z = vec2(0.0);
     if (formula == 4) { z = c; c = juliaC; }
     if (formula == 1) c.y = -c.y;

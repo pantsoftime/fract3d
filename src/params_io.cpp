@@ -5,6 +5,8 @@
 #include "settings.h"
 
 #include <algorithm>
+
+#include <algorithm>
 #include <cstdio>
 #include <fstream>
 #include <map>
@@ -72,6 +74,14 @@ std::string App::parText() const {
         for (auto* arr : {view.cosine.a, view.cosine.b, view.cosine.c, view.cosine.d})
             for (int k = 0; k < 3; k++) o << " " << arr[k];
         o << "\n";
+    }
+    if (view.mode == ViewMode::Classic2D && view.cs.formula == kCustomFormula) {
+        std::string src = view.formulaSource;  // one line: newlines become \n
+        std::string esc;
+        for (char ch : src) esc += ch == '\n' ? std::string("\\n") : ch == '\\' ? std::string("\\\\") : std::string(1, ch);
+        o << "formula.name = " << view.formulaName << "\n";
+        o << "formula.source = " << esc << "\n";
+        o << "formula.fn = " << view.fn[0] << " " << view.fn[1] << " " << view.fn[2] << " " << view.fn[3] << "\n";
     }
     for (auto& p : f.params) {
         o << "param." << p.id << " = ";
@@ -165,6 +175,28 @@ bool App::loadPar(const fs::path& path) {
     if (kv.count("color.palette")) {
         for (int i = 0; i < (int)palettes.size(); i++)
             if (palettes[i].name == kv["color.palette"]) view.rs.palette = i;
+    }
+    if (kv.count("formula.fn")) {
+        std::istringstream is(kv["formula.fn"]);
+        for (int& x : view.fn) is >> x;
+        for (int& x : view.fn) x = std::clamp(x, 0, kFormulaFunctionCount - 1);
+    }
+    if (kv.count("formula.source")) {
+        std::string src, esc = kv["formula.source"];
+        for (size_t i = 0; i < esc.size(); i++) {
+            if (esc[i] == '\\' && i + 1 < esc.size()) {
+                src += esc[i + 1] == 'n' ? '\n' : esc[i + 1];
+                i++;
+            } else {
+                src += esc[i];
+            }
+        }
+        view.formulaSource = src;
+        ui.formulaEdit = src;
+        if (kv.count("formula.name")) view.formulaName = kv["formula.name"];
+        if (!compileFormula()) toast("The formula in this PAR has an error: " + formulaError, 6);
+    } else if (kv.count("formula.name")) {
+        selectFormula(kv["formula.name"]);
     }
     // Everything above came from a file: repair anything out of range before use.
     sanitize(view.rs);

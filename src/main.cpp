@@ -17,10 +17,12 @@ static void usage() {
         "  --size WxH           image size for --render (default 1920x1080)\n"
         "  --samples N          samples per pixel for --render\n"
         "  --theme modern|fractint   UI theme\n"
-        "  --gl-debug           print OpenGL errors and performance warnings\n");
+        "  --gl-debug           print OpenGL errors and performance warnings\n"
+        "  --formula NAME       start in Classic 2D with a formula from formulas/*.frm\n");
 }
 
 int main(int argc, char** argv) {
+    setvbuf(stdout, nullptr, _IOLBF, 0);  // status lines appear promptly even when piped
     CliOptions o;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
@@ -47,6 +49,7 @@ int main(int argc, char** argv) {
         else if (a == "--frames") o.uiShotFrames = atoi(next().c_str());
         else if (a == "--theme") o.theme = next() == "fractint" ? 1 : 0;
         else if (a == "--gl-debug") o.glDebug = true;
+        else if (a == "--formula") o.formula = next();
         else if (a == "--gl-debug-verbose") o.glDebug = o.glDebugVerbose = true;
         else if (a.size() > 4 && a.substr(a.size() - 4) == ".par") o.parFile = a;
         else { fprintf(stderr, "unknown option %s\n", a.c_str()); usage(); return 2; }

@@ -36,7 +36,8 @@ add_executable(fract3d
   src/palettes.cpp
   src/params_io.cpp
   src/sanitize.cpp
-  src/bluenoise.cpp)
+  src/bluenoise.cpp
+  src/formula.cpp)
 target_include_directories(fract3d PRIVATE src)
 target_include_directories(fract3d SYSTEM PRIVATE third_party/stb)
 target_link_libraries(fract3d PRIVATE imgui PkgConfig::GLFW PkgConfig::EPOXY)
@@ -56,7 +57,7 @@ target_compile_definitions(fract3d PRIVATE FRACT3D_SOURCE_DIR="${CMAKE_SOURCE_DI
 # (shaders, fractals, presets, docs) in share/fract3d/, where the app looks for it.
 include(GNUInstallDirs)
 install(TARGETS fract3d RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(DIRECTORY shaders fractals presets palettes DESTINATION ${CMAKE_INSTALL_DATADIR}/fract3d)
+install(DIRECTORY shaders fractals presets palettes formulas DESTINATION ${CMAKE_INSTALL_DATADIR}/fract3d)
 install(DIRECTORY docs DESTINATION ${CMAKE_INSTALL_DATADIR}/fract3d PATTERN "images" EXCLUDE)
 install(FILES packaging/fract3d.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
 install(FILES packaging/fract3d.png DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps)
@@ -113,6 +114,19 @@ if(FRACT3D_TESTS)
     add_test(NAME hostile.${name}
              COMMAND fract3d --par ${p} --render ${TEST_OUT}/hostile-${name}.png --size 64x36 --samples 1)
   endforeach()
+
+  # formula parser/transpiler unit tests, and every shipped formula on the GPU
+  add_executable(formula_test tests/formula_test.cpp src/formula.cpp)
+  target_include_directories(formula_test PRIVATE src)
+  add_test(NAME formula.unit COMMAND formula_test ${CMAKE_SOURCE_DIR}/formulas/classics.frm)
+  file(STRINGS ${CMAKE_SOURCE_DIR}/formulas/classics.frm FRM_HEADERS REGEX "^[A-Za-z0-9_]+ *[({]")
+  foreach(h ${FRM_HEADERS})
+    string(REGEX MATCH "^[A-Za-z0-9_]+" fname "${h}")
+    add_test(NAME formula.${fname} COMMAND fract3d --formula ${fname} --render ${TEST_OUT}/formula-${fname}.png --size 96x54)
+  endforeach()
+  add_test(NAME formula.in-3d-landscape
+           COMMAND fract3d --par ${CMAKE_SOURCE_DIR}/tests/custom-landscape.par --render ${TEST_OUT}/formula-3d.png --size 96x54 --samples 1)
+  add_test(NAME ui.formula-2d COMMAND fract3d --formula Spider --ui-shot ${TEST_OUT}/ui-formula.png --size 1280x720 --frames 20)
 
   # the overlay UI (both themes, both modes) must draw without errors
   add_test(NAME ui.modern-3d COMMAND fract3d --fractal mandelbulb --ui-shot ${TEST_OUT}/ui-3d.png --size 1280x720 --frames 30)

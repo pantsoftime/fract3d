@@ -18,6 +18,7 @@
 #include <ctime>
 #include <fstream>
 #include <sstream>
+#include <algorithm>
 
 namespace fs = std::filesystem;
 
@@ -109,6 +110,11 @@ bool App::init(const CliOptions& opts) {
     palettes.push_back(makeCosinePalette("Custom (cosine editor)", view.cosine));
 
     refreshDocs();
+    // a user formula is always compiled, so "Custom formula" works from the start
+    if (!selectFormula(session.cli.formula.empty() ? "Mandel" : session.cli.formula) && !formulas.empty()) {
+        if (!session.cli.formula.empty()) fprintf(stderr, "fract3d: no formula named %s\n", session.cli.formula.c_str());
+        selectFormula(formulas.front().name);
+    }
 
     loadPrefs();
     if (session.cli.theme >= 0) session.uiTheme = session.cli.theme;
@@ -119,6 +125,10 @@ bool App::init(const CliOptions& opts) {
     if (!session.cli.parFile.empty() && !loadPar(session.cli.parFile))
         fprintf(stderr, "fract3d: could not load %s\n", session.cli.parFile.c_str());
     if (session.cli.mode2d) view.mode = ViewMode::Classic2D;
+    if (!session.cli.formula.empty()) {
+        view.mode = ViewMode::Classic2D;
+        view.cs.formula = kCustomFormula;
+    }
     if (session.cli.pathTrace >= 0) view.rs.renderMode = session.cli.pathTrace;
     sanitize(view.rs);
     sanitize(view.cs);
@@ -155,6 +165,25 @@ int App::run() {
 void App::refreshDocs() {
     std::error_code ec;
     fs::path docs = session.dataDir / "docs", presets = session.dataDir / "presets";
+    // formula files: built-in ones, then the user's own
+    {
+        fs::file_time_type ft = fs::file_time_type::min();  // NB: file_time_type{} is libstdc++'s epoch in 2174
+        std::vector<fs::path> files;
+        for (auto dir : {session.dataDir / "formulas", session.userDir / "formulas"}) {
+            ft = std::max(ft, fs::last_write_time(dir, ec));
+            std::vector<fs::path> here;
+            for (auto& e : fs::directory_iterator(dir, ec))
+                if (e.path().extension() == ".frm") here.push_back(e.path()), ft = std::max(ft, fs::last_write_time(e.path(), ec));
+            std::sort(here.begin(), here.end());
+            files.insert(files.end(), here.begin(), here.end());
+        }
+        if (ft != ui.formulasTime) {
+            ui.formulasTime = ft;
+            formulas.clear();
+            for (auto& f : files)
+                for (auto& d : parseFormulaFile(readTextFile(f.string()))) formulas.push_back(d);
+        }
+    }
     auto newest = [&](const fs::path& dir) {
         fs::file_time_type t = fs::last_write_time(dir, ec);  // changes when files are added/removed
         for (auto& e : fs::directory_iterator(dir, ec)) t = std::max(t, fs::last_write_time(e.path(), ec));
@@ -181,6 +210,59 @@ void App::refreshDocs() {
             ui.tourStops.push_back({f, first.rfind(";", 0) == 0 && s != std::string::npos ? first.substr(s) : ""});
         }
     }
+}
+
+// ------------------------------------------------------------------ user formulas
+const FormulaDef* App::findFormula(const std::string& name) const {
+    std::string want = name;
+    std::transform(want.begin(), want.end(), want.begin(), ::tolower);
+    for (auto& f : formulas) {
+        std::string n = f.name;
+        std::transform(n.begin(), n.end(), n.begin(), ::tolower);
+        if (n == want) return &f;
+    }
+    return nullptr;
+}
+
+bool App::selectFormula(const std::string& name) {
+    const FormulaDef* f = findFormula(name);
+    if (!f) return false;
+    view.formulaName = f->name;
+    view.formulaSource = f->source;
+    ui.formulaEdit = f->source;
+    // the formula's suggested parameters and view (see the @ lines in formulas/*.frm)
+    float* ps[3] = {view.cs.p1, view.cs.p2, view.cs.p3};
+    for (int i = 0; i < 3; i++) {
+        ps[i][0] = f->hasP[i] ? f->p[i][0] : 0.0f;
+        ps[i][1] = f->hasP[i] ? f->p[i][1] : 0.0f;
+    }
+    for (int i = 0; i < 4; i++)
+        if (f->fn[i] >= 0) view.fn[i] = f->fn[i];
+    if (f->hasView) {
+        view.cs.cx = f->view[0];
+        view.cs.cy = f->view[1];
+        view.cs.height = f->view[2];
+    }
+    return compileFormula();
+}
+
+bool App::compileFormula() {
+    TranspiledFormula t = transpileFormula(view.formulaSource, view.fn);
+    if (!t.ok) {
+        formulaError = t.error;
+        fprintf(stderr, "fract3d: formula %s: %s\n", view.formulaName.c_str(), formulaError.c_str());
+        return false;
+    }
+    rend.setCustomFormula(t.glsl);
+    if (!rend.customFormulaError().empty()) {  // shouldn't happen: the transpiler emits valid GLSL
+        formulaError = "GLSL: " + rend.customFormulaError();
+        fprintf(stderr, "fract3d: formula %s: %s\n", view.formulaName.c_str(), formulaError.c_str());
+        return false;
+    }
+    formulaError.clear();
+    formulaInfo = t;
+    formulaGeneration++;
+    return true;
 }
 
 // ------------------------------------------------------------------ preferences
@@ -397,6 +479,7 @@ void App::frame() {
     if (view.rs.cycleSpeed != 0.0f) cycleOffset = std::fmod(cycleOffset + view.rs.cycleSpeed * dt + 256.0f, 256.0f);
 
     rend.timer.poll();
+    rend.setFormulaParams(view.cs.p1, view.cs.p2, view.cs.p3);
     if (poster.active) updatePoster();
     else if (view.mode == ViewMode::Fractal3D) render3D();
     else render2D();
@@ -654,6 +737,7 @@ std::vector<uint8_t> App::signature3D(int w, int h) const {
     appendBytes(s, view.cam.distance);
     appendBytes(s, view.fractal);
     appendBytes(s, generation);
+    appendBytes(s, formulaGeneration);  // the landscape can use the user formula
     appendBytes(s, paletteVersion);
     appendBytes(s, w);
     appendBytes(s, h);
@@ -1000,8 +1084,10 @@ void App::updatePoster() {
 
 // ------------------------------------------------------------------ 2D <-> 3D bridge
 void App::liftTo3D() {
-    if (view.cs.formula > 3 || (view.cs.julia && view.cs.formula != 0)) {
-        toast("The 3D landscape supports Mandelbrot (and its Julia sets), Burning Ship, Tricorn and Multibrot z^3", 4);
+    bool custom = view.cs.formula == kCustomFormula;
+    if (!custom && (view.cs.formula > 3 || (view.cs.julia && view.cs.formula != 0))) {
+        toast("The 3D landscape supports Mandelbrot (and its Julia sets), Burning Ship, Tricorn, Multibrot z^3 "
+              "and custom formulas", 4);
         return;
     }
     int li = lib_.indexOf("landscape");
@@ -1018,6 +1104,7 @@ void App::liftTo3D() {
     default: formula = 0;
     }
     if (view.cs.julia && view.cs.formula == 0) formula = 4;
+    if (custom) formula = 5;
     if (auto* p = f.find("formula")) p->value[0] = (float)formula;
     if (auto* p = f.find("center")) { p->value[0] = (float)view.cs.cx; p->value[1] = (float)view.cs.cy; }
     if (auto* p = f.find("zoom")) p->value[0] = (float)(3.0 / view.cs.height);
@@ -1040,7 +1127,7 @@ void App::flattenTo2D() {
     Fractal& f = fractal();
     if (f.key == "landscape") {
         int formula = (int)f.find("formula")->value[0];
-        view.cs.formula = formula == 4 ? 0 : formula;
+        view.cs.formula = formula == 4 ? 0 : formula == 5 ? kCustomFormula : formula;
         view.cs.julia = formula == 4;
         if (formula == 3) view.cs.power = 3;
         view.cs.cx = f.find("center")->value[0];

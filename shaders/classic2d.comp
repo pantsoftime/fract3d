@@ -75,8 +75,8 @@ void accumulate(CPLX z) {
 }
 
 // With CUSTOM_FORMULA defined, the host has placed the transpiled user formula
-// before this file: frm_init(pixel), frm_step(i) -> bool keepGoing, frm_z(),
-// frm_save(...), frm_load(...).
+// (src/formula.cpp) before this file: frm_init(pixel), frm_step(i) -> keep going?,
+// frm_z(), frm_save(...) and frm_load(pixel, ...) for the orbit state.
 
 ivec2 g_local;
 void finish(float value, float aux, int iter, uint flags) {
@@ -156,7 +156,7 @@ void main() {
         z = unpackC(imageLoad(uState0, g_local));
         zprev = unpackC(imageLoad(uState1, g_local));
 #ifdef CUSTOM_FORMULA
-        frm_load(imageLoad(uState0, g_local), imageLoad(uState1, g_local), imageLoad(uState3, g_local));
+        frm_load(vec2(pixel), imageLoad(uState0, g_local), imageLoad(uState1, g_local), imageLoad(uState3, g_local));
 #endif
     }
 

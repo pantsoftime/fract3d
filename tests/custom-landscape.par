@@ -1,0 +1,4 @@
+; the landscape using a user formula (Spider)
+fractal = landscape
+param.formula = 5
+formula.name = Spider

@@ -65,6 +65,7 @@ public:
     void setCustomFormula(const std::string& glsl);
     const std::string& customFormulaError() const { return customError_; }
     bool hasCustomFormula() const { return !customGlsl_.empty() && customError_.empty(); }
+    void setFormulaParams(const float p1[2], const float p2[2], const float p3[2]);
 
     // ---- final image: 3D accumulation or 2D iteration buffer -> fbo
     void display(ViewMode mode, const RenderTarget* accum, const IndexTarget* index, const RenderSettings& rs,
@@ -95,6 +96,7 @@ private:
     Program classic_[2][2];  // [fp64][custom formula]
     bool classicBuilt_[2][2] = {};
     std::string customGlsl_, customError_;
+    float formulaP_[6] = {0, 0, 0, 0, 0, 0};
     std::unordered_map<std::string, std::unique_ptr<FractalPrograms>> progs_;
     GLuint vao_ = 0, paletteTex_ = 0, retroLut_[2] = {0, 0}, blueNoise_ = 0;
     StateImages state2D_;

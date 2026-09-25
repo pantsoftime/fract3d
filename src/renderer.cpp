@@ -118,7 +118,7 @@ void Renderer::shutdown() {
 }
 
 fs::file_time_type Renderer::newestShaderTime() const {
-    fs::file_time_type t{};
+    fs::file_time_type t = fs::file_time_type::min();  // NB: file_time_type{} is libstdc++'s epoch in 2174
     std::error_code ec;
     for (auto& e : fs::directory_iterator(dataDir_ / "shaders", ec)) {
         auto m = fs::last_write_time(e.path(), ec);
@@ -193,6 +193,12 @@ void Renderer::setCustomFormula(const std::string& glsl) {
         classicBuilt_[fp][1] = false;
     }
     if (!glsl.empty()) classicProgram(false, true);  // compile now so errors show immediately
+    progs_.erase("landscape");                       // it embeds the formula too
+}
+
+void Renderer::setFormulaParams(const float p1[2], const float p2[2], const float p3[2]) {
+    float v[6] = {p1[0], p1[1], p2[0], p2[1], p3[0], p3[1]};
+    std::copy(v, v + 6, formulaP_);
 }
 
 bool Renderer::reloadCoreIfChanged() {
@@ -222,11 +228,14 @@ Renderer::FractalPrograms& Renderer::programs(const Fractal& f) {
     fp.started = true;
     fp.error.clear();
     std::string fname = f.path.filename().string();
-    std::vector<ShaderChunk> trace = {{"header", "#version 460\n"},
-                                      {"common.glsl", common_},
-                                      {"(parameters of " + fname + ")", f.uniformDecls()},
-                                      {fname, f.code},
-                                      {"raymarch.frag", raymarch_}};
+    // The landscape can use the user's 2D formula: splice it in when there is one.
+    bool withFormula = f.key == "landscape" && hasCustomFormula();
+    std::vector<ShaderChunk> trace = {{"header", withFormula ? "#version 460\n#define HAVE_CUSTOM_FORMULA\n" : "#version 460\n"},
+                                      {"common.glsl", common_}};
+    if (withFormula) trace.push_back({"(your formula)", customGlsl_});
+    trace.push_back({"(parameters of " + fname + ")", f.uniformDecls()});
+    trace.push_back({fname, f.code});
+    trace.push_back({"raymarch.frag", raymarch_});
     fp.trace.buildAsync(vert_, trace);
     auto probe = trace;
     probe.back() = {"probe.frag", probeSrc_};
@@ -329,6 +338,9 @@ bool Renderer::renderSample3D(RenderTarget& target, int sampleIndex, const Fract
     p.set("uRoughness", rs.roughness);
     p.set("uPalette", 0);
     p.set("uBlueNoise", 5);
+    p.set("uP1", formulaP_[0], formulaP_[1]);  // only the landscape's custom formula uses these
+    p.set("uP2", formulaP_[2], formulaP_[3]);
+    p.set("uP3", formulaP_[4], formulaP_[5]);
     setFractalParams(p, f, v.animTime);
 
     glBindFramebuffer(GL_FRAMEBUFFER, target.fbo);
@@ -461,6 +473,9 @@ bool Renderer::probe(const Fractal& f, const RenderSettings& rs, const View3D& v
     p.set("uMaxT", rs.maxDist * v.sceneScale);
     p.set("uFloor", (int)rs.floorOn);
     p.set("uFloorY", rs.floorY);
+    p.set("uP1", formulaP_[0], formulaP_[1]);
+    p.set("uP2", formulaP_[2], formulaP_[3]);
+    p.set("uP3", formulaP_[4], formulaP_[5]);
     setFractalParams(p, f, v.animTime);
     glBindFramebuffer(GL_FRAMEBUFFER, probeRT_.fbo);
     glViewport(0, 0, 2, 1);

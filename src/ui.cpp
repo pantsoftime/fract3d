@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <random>
 #include <sstream>
+#include <fstream>
 #include <thread>
 
 #include <fcntl.h>
@@ -228,6 +229,7 @@ void App::drawUI() {
     if (ui.showHelp) drawHelp();
     if (ui.showPoster || poster.active) drawPosterDialog();
     if (ui.showDemo) ImGui::ShowDemoWindow(&ui.showDemo);
+    if (ui.showFormulaEditor) drawFormulaEditor();
     drawToast();
 }
 
@@ -668,7 +670,8 @@ void App::drawClassicPanel() {
     }
     ImGui::PushItemWidth(-fs_ * 8.5f);
     ImGui::Combo("Formula", &view.cs.formula, kClassicFormulas, kClassicFormulaCount);
-    if (view.cs.formula != 4) {
+    if (view.cs.formula == kCustomFormula) drawFormulaControls();
+    if (view.cs.formula != 4 && view.cs.formula != kCustomFormula) {
         ImGui::Checkbox("Julia set", &view.cs.julia);
         helpTip("Shortcut: right-click (or press Space) on any point of the Mandelbrot set to see the Julia set for that c. Do it again to go back.");
         if (view.cs.julia) {
@@ -697,13 +700,14 @@ void App::drawClassicPanel() {
         view.cs.height = 3.0;
     }
     ImGui::SameLine();
-    bool liftable = view.cs.formula <= 3 && !(view.cs.julia && view.cs.formula != 0) && !(view.cs.formula == 3 && view.cs.power != 3);
+    bool liftable = (view.cs.formula <= 3 && !(view.cs.julia && view.cs.formula != 0) && !(view.cs.formula == 3 && view.cs.power != 3)) ||
+                    view.cs.formula == kCustomFormula;
     ImGui::BeginDisabled(!liftable);
     if (ImGui::Button("Lift into 3D landscape")) liftTo3D();
     ImGui::EndDisabled();
     ImGui::SetItemTooltip(liftable ? "Turn the escape time into height and fly over the result in 3D."
-                                   : "The 3D landscape supports Mandelbrot (and its Julia sets), Burning Ship, Tricorn and "
-                                     "Multibrot z^3. Switch to one of those to lift this view into 3D.");
+                                   : "The 3D landscape supports Mandelbrot (and its Julia sets), Burning Ship, Tricorn, "
+                                     "Multibrot z^3 and custom formulas. Switch to one of those to lift this view into 3D.");
 
     ImGui::SeparatorText("Iteration");
     ImGui::SliderInt("Max iterations", &view.cs.maxIter, 16, kMaxIterations, "%d", ImGuiSliderFlags_Logarithmic);
@@ -747,6 +751,104 @@ void App::drawClassicPanel() {
     ImGui::PopItemWidth();
     ImGui::Spacing();
     ImGui::TextDisabled("Drag: pan  |  Wheel/PgUp/PgDn: zoom\nRight-click / Space: Julia <-> Mandelbrot");
+    ImGui::End();
+}
+
+// ------------------------------------------------------------------ formulas
+void App::drawFormulaControls() {
+    const FormulaDef* cur = findFormula(view.formulaName);
+    if (ImGui::BeginCombo("Formula file", view.formulaName.c_str(), ImGuiComboFlags_HeightLarge)) {
+        for (auto& f : formulas) {
+            if (ImGui::Selectable(f.name.c_str(), f.name == view.formulaName)) selectFormula(f.name);
+            if (!f.comment.empty()) helpTip(f.comment.c_str());
+        }
+        ImGui::EndCombo();
+    }
+    if (cur && !cur->comment.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("%s", cur->comment.c_str());
+        ImGui::PopStyleColor();
+    }
+    float* ps[3] = {view.cs.p1, view.cs.p2, view.cs.p3};
+    for (int i = 0; i < 3; i++)
+        if (formulaInfo.usesP[i]) {
+            char lbl[8];
+            snprintf(lbl, sizeof lbl, "p%d", i + 1);
+            ImGui::DragFloat2(lbl, ps[i], 0.001f, 0, 0, "%.4f");
+            helpTip("A complex parameter of the formula: real and imaginary part. Drag, or Ctrl+click to type.");
+        }
+    for (int i = 0; i < 4; i++)
+        if (formulaInfo.usesFn[i]) {
+            char lbl[8];
+            snprintf(lbl, sizeof lbl, "fn%d", i + 1);
+            if (ImGui::Combo(lbl, &view.fn[i], kFormulaFunctions, kFormulaFunctionCount)) compileFormula();
+            helpTip("Which function this formula's fn slot uses - Fractint's way of making one formula into many.");
+        }
+    if (ImGui::Button("Edit formula...")) {
+        ui.formulaEdit = view.formulaSource;
+        ui.showFormulaEditor = true;
+    }
+    if (!formulaError.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.45f, 0.4f, 1));
+        ImGui::TextWrapped("%s", formulaError.c_str());
+        ImGui::PopStyleColor();
+    }
+}
+
+void App::drawFormulaEditor() {
+    float fs_ = ImGui::GetFontSize();
+    ImGui::SetNextWindowSize(ImVec2(fs_ * 34, fs_ * 26), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Formula editor", &ui.showFormulaEditor)) {
+        ImGui::End();
+        return;
+    }
+    auto compile = [&] {
+        view.formulaSource = ui.formulaEdit;
+        auto defs = parseFormulaFile(ui.formulaEdit);
+        if (!defs.empty()) view.formulaName = defs.front().name;
+        view.cs.formula = kCustomFormula;
+        if (view.mode != ViewMode::Classic2D) setMode(ViewMode::Classic2D);
+        if (compileFormula()) toast("Formula compiled", 1.5f);
+    };
+    ImGui::PushFont(ui.fontMono, 0.0f);
+    bool ctrlEnter = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && ImGui::GetIO().KeyCtrl &&
+                     ImGui::IsKeyPressed(ImGuiKey_Enter, false);
+    ImGui::InputTextMultiline("##frm", &ui.formulaEdit, ImVec2(-1, -fs_ * 7.5f), ImGuiInputTextFlags_AllowTabInput);
+    ImGui::PopFont();
+    if (ImGui::Button("Compile (Ctrl+Enter)") || ctrlEnter) compile();
+    ImGui::SameLine();
+    if (ImGui::Button("Revert")) ui.formulaEdit = view.formulaSource;
+    ImGui::SameLine();
+    if (ImGui::Button("Save to my formulas")) {
+        auto defs = parseFormulaFile(ui.formulaEdit);
+        if (defs.empty()) {
+            toast("Nothing to save: a formula looks like  Name { ... }");
+        } else {
+            // replace a formula of the same name in the user's file, or append
+            std::error_code ec;
+            fs::create_directories(session.userDir / "formulas", ec);
+            fs::path file = session.userDir / "formulas" / "my-formulas.frm";
+            std::string out;
+            for (auto& d : parseFormulaFile(readTextFile(file.string())))
+                if (d.name != defs.front().name) out += d.source + "\n";
+            out += ui.formulaEdit;
+            if (out.back() != '\n') out += '\n';
+            std::ofstream(file) << out;
+            ui.formulasTime = {};  // reload the list now
+            refreshDocs();
+            toast("Saved " + defs.front().name + " to " + file.string(), 4);
+        }
+    }
+    if (!formulaError.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.45f, 0.4f, 1));
+        ImGui::TextWrapped("%s", formulaError.c_str());
+        ImGui::PopStyleColor();
+    } else {
+        ImGui::TextDisabled("Compiled OK - %d variable%s carried between iterations", formulaInfo.stateVars,
+                            formulaInfo.stateVars == 1 ? "" : "s");
+    }
+    ImGui::TextDisabled("Name { init : loop, test }   |z| = x*x+y*y   pixel p1 p2 p3 pi e");
+    ImGui::TextDisabled("sin cos tan cotan sinh cosh tanh exp log sqr sqrt abs cabs conj real imag flip recip fn1..fn4");
     ImGui::End();
 }
 
@@ -1086,6 +1188,7 @@ static int computeOrbit(const Classic2DSettings& c2, double px, double py, std::
 void App::drawOrbitOverlay() {
     ImGuiIO& io = ImGui::GetIO();
     if (io.WantCaptureMouse || !ImGui::IsMousePosValid()) return;
+    if (view.cs.formula == kCustomFormula) return;  // user formulas only exist as GPU code
     float sx = (float)fbW / std::max(winW, 1), sy = (float)fbH / std::max(winH, 1);
     double ps = view.cs.height / fbH;
     double px = view.cs.cx + (io.MousePos.x * sx - fbW * 0.5) * ps, py = view.cs.cy + (fbH * 0.5 - io.MousePos.y * sy) * ps;

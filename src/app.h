@@ -1,5 +1,6 @@
 #pragma once
 #include "camera.h"
+#include "formula.h"
 #include "fractal_lib.h"
 #include "palettes.h"
 #include "renderer.h"
@@ -26,6 +27,7 @@ struct CliOptions {
     std::string uiShotPath;  // render N frames with the UI into a PNG and exit (docs/testing)
     int uiShotFrames = 90;
     int theme = -1;          // override the saved UI theme
+    std::string formula;     // start in Classic 2D with this formula from the formula files
     bool glDebug = false;    // report OpenGL errors (always on in debug builds)
     bool glDebugVerbose = false;
 };
@@ -39,6 +41,10 @@ struct ViewState {
     RenderSettings rs;
     Classic2DSettings cs;
     CosinePalette cosine;  // the editable "Custom (cosine editor)" palette
+    // the user formula (Classic 2D "Custom formula", and the landscape's)
+    std::string formulaName = "Mandel";
+    std::string formulaSource;
+    int fn[4] = {0, 0, 0, 0};  // fn1..fn4: indexes into kFormulaFunctions
 };
 
 // Where things live, how the app was started, and UI preferences that persist
@@ -71,7 +77,9 @@ struct UiState {
     // Learn-panel content, reloaded when the files change (see refreshDocs)
     std::string conceptsText, classicText;
     std::vector<std::pair<std::filesystem::path, std::string>> tourStops;  // preset + its description
-    std::filesystem::file_time_type docsTime{}, presetsTime{};
+    std::filesystem::file_time_type docsTime{}, presetsTime{}, formulasTime{};
+    bool showFormulaEditor = false;
+    std::string formulaEdit;  // text in the editor (compiled on request)
 };
 
 class App {
@@ -101,6 +109,9 @@ public:
     std::vector<std::filesystem::path> listParFiles() const;
     void tourStep(int delta);
     void toggleFullscreen();
+    bool compileFormula();  // transpiles + compiles view.formulaSource; errors go to formulaError
+    bool selectFormula(const std::string& name);
+    const FormulaDef* findFormula(const std::string& name) const;
 
 private:
     // ---- loop
@@ -138,6 +149,8 @@ private:
     void drawOrbitOverlay();
     void drawToast();
     void drawLesson(const std::string& text);
+    void drawFormulaControls();
+    void drawFormulaEditor();
     bool paramWidget(Param& p);
 
 public:
@@ -155,6 +168,9 @@ public:
     float lastCycleSpeed = 24.0f;  // what C turns cycling back on to
     int paletteVersion = 0;
     Renderer rend;
+    std::vector<FormulaDef> formulas;  // formulas/*.frm (built-in, then the user's)
+    std::string formulaError;
+    TranspiledFormula formulaInfo;     // what the current formula uses (fn1..4, p1..3)
 
     // progressive 3D accumulation
     std::vector<uint8_t> lastSig3D;
