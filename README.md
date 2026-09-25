@@ -38,7 +38,7 @@ Mandelbulb, Mandelbox, Menger sponge, Sierpinski tetrahedron, Kaleidoscopic IFS,
 - an orbit viewer that draws z0, z1, z2 ... under the cursor
 - **deep zoom**: floats, then doubles, then perturbation theory with an arbitrary-precision reference orbit and linear skip-ahead (BLA) - zooms to 10^290x, checked pixel by pixel against exact arithmetic
 - progressive rendering in resumable chunks (Fractint's scanline reveal), so even millions of iterations never stall the desktop
-- **Lift into 3D** turns the current view into a landscape
+- **Lift into 3D** turns the current view into a landscape - sharp to about 10^11x, thanks to its own double-precision reference orbit
 
 **Formula files.** Fractint-style `.frm` formulas (`Name { init : loop, test }`, with `|z|`, `if/elseif/else/endif`, `fn1..fn4`, `p1..p5`, `maxit`, `whitesq` and Fractint's function list) are transpiled to GPU code; thirteen classics ship in `formulas/`, and the editor compiles yours with Ctrl+Enter. They work in 2D and as 3D landscapes, and a CPU interpreter of the same language drives the orbit viewer (and checks the GPU in the tests).
 
@@ -125,7 +125,7 @@ float DE(vec3 p, inout vec4 trap) {
 }
 ```
 
-Parameter types are `float`, `int`, `bool`, `vec2`, `vec3`, `vec4`, `color` and `choice`. Add `log` after the range for a logarithmic slider. Helpers such as folds, rotations, and complex and quaternion math are in `shaders/common.glsl`. Save the file and the app reloads it instantly; compile errors appear on the Fractal tab. The same goes for editing anything in `shaders/`.
+Parameter types are `float`, `int`, `bool`, `vec2`, `vec3`, `vec4`, `color` and `choice`. Add `log` after the range for a logarithmic slider, and `hires` to keep a value in double precision in PAR files (the landscape's center uses it). Helpers such as folds, rotations, and complex and quaternion math are in `shaders/common.glsl`. Save the file and the app reloads it instantly; compile errors appear on the Fractal tab. The same goes for editing anything in `shaders/`.
 
 ## Command line
 

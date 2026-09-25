@@ -98,7 +98,13 @@ std::string App::parText() const {
     }
     for (auto& p : f.params) {
         o << "param." << p.id << " = ";
-        writeVals(o, p.value, p.components());
+        if (p.hires) {  // every digit (see Param::precise)
+            double v[4];
+            for (int k = 0; k < 4; k++) v[k] = p.precise(k);
+            writeVals(o, v, p.components());
+        } else {
+            writeVals(o, p.value, p.components());
+        }
         o << "\n";
         if (p.animate) o << "param." << p.id << ".anim = " << p.animSpeed << " " << p.animDepth << "\n";
     }
@@ -213,7 +219,9 @@ bool App::loadParText(const std::string& text, const std::string& label, bool qu
         auto it = kv.find("param." + p.id);
         if (it != kv.end()) {
             std::istringstream is(it->second);
-            readVals(is, p.value, p.components());
+            double v[4] = {0, 0, 0, 0};
+            readVals(is, v, p.components());
+            for (int k = 0; k < p.components(); k++) p.setPrecise(k, v[k]);
         }
         auto an = kv.find("param." + p.id + ".anim");
         if (an != kv.end()) {

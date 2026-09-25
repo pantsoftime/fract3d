@@ -12,6 +12,13 @@ struct Param {
     float value[4] = {0, 0, 0, 0};
     float minV = 0.0f, maxV = 1.0f;
     bool logScale = false;
+    // "hires": the value is also kept in double precision (exact), for parameters like
+    // the landscape's center that deep zooms need to the last digit. Anything that sets
+    // only `value` (sliders, animation, camera paths) makes `value` win again - see precise().
+    bool hires = false;
+    double exact[4] = {0, 0, 0, 0};
+    double precise(int k) const { return hires && (float)exact[k] == value[k] ? exact[k] : (double)value[k]; }
+    void setPrecise(int k, double v) { exact[k] = v, value[k] = (float)v; }
     std::vector<std::string> choices;
     // animation: a slow sine sweep across the parameter's range
     bool animate = false;

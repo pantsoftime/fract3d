@@ -585,6 +585,17 @@ int App::selfTest() {
     double cx0 = view.cs.cx;
     toggleJulia(0.3, 0.3);
     check(view.formulaName == "Spider" && view.cs.cx == cx0, "a formula without a Julia partner keeps its view");
+    // Lift into 3D keeps the full-precision center, and Flatten brings it back
+    loadParText("mode = 2d\nclassic.center = -0.743643887037151 0.13182590420533\nclassic.height = 1e-9\n", "lift", true);
+    liftTo3D();
+    const Param* lc = fractal().find("center");
+    check(lc && lc->precise(0) == -0.743643887037151 && lc->precise(1) == 0.13182590420533, "Lift into 3D keeps every digit of the center");
+    std::string lifted = parText();
+    loadParText(lifted, "lifted", true);
+    lc = fractal().find("center");
+    check(lc && lc->precise(0) == -0.743643887037151, "...and so does its PAR");
+    flattenTo2D();
+    check(view.cs.cx == -0.743643887037151 && view.cs.cy == 0.13182590420533, "Flatten to 2D brings it back");
     // hostile values are repaired
     loadParText("mode = 2d\nclassic.formula = 99\nclassic.maxIter = -3\npost.tonemap = 7\n", "bad", true);
     check(view.cs.formula < kClassicFormulaCount && view.cs.maxIter >= 1 && view.rs.tonemap <= 2, "hostile PAR values are sanitized");
@@ -1803,7 +1814,7 @@ void App::liftTo3D() {
     if (view.cs.julia && view.cs.formula == 0) formula = 4;
     if (custom) formula = 5;
     if (auto* p = f.find("formula")) p->value[0] = (float)formula;
-    if (auto* p = f.find("center")) { p->value[0] = (float)view.cs.cx; p->value[1] = (float)view.cs.cy; }
+    if (auto* p = f.find("center")) p->setPrecise(0, view.cs.cx), p->setPrecise(1, view.cs.cy);  // every digit (deep lifts)
     if (auto* p = f.find("zoom")) p->value[0] = (float)(3.0 / view.cs.height);
     if (auto* p = f.find("iterations")) p->value[0] = (float)std::clamp(view.cs.maxIter, 10, 1500);
     if (auto* p = f.find("juliaC")) { p->value[0] = (float)view.cs.jx; p->value[1] = (float)view.cs.jy; }
@@ -1816,7 +1827,7 @@ void App::liftTo3D() {
     view.rs.colorScale = view.cs.colorDensity;  // landscape trap.x = iterations / 256, so density maps 1:1
     view.rs.colorOffset = 0;
     view.rs.paletteMix = 1.0f;
-    if (view.cs.height < 1e-4) toast("Note: 3D uses single precision; very deep zooms get blocky", 4);
+    if (view.cs.height < 1e-12) toast("Note: the 3D landscape computes in double precision at most; this deep it gets blocky", 5);
     else toast("Lifted into 3D: height = escape time");
 }
 
@@ -1829,8 +1840,8 @@ void App::flattenTo2D() {
         view.cs.formula = formula == 4 ? 0 : formula == 5 ? kCustomFormula : formula;
         view.cs.julia = formula == 4;
         if (formula == 3) view.cs.power = 3;
-        view.cs.cx = pc->value[0];
-        view.cs.cy = pc->value[1];
+        view.cs.cx = pc->precise(0);
+        view.cs.cy = pc->precise(1);
         view.cs.height = 3.0 / std::max(pz->value[0], 1e-6f);
         view.cs.jx = pj->value[0];
         view.cs.jy = pj->value[1];

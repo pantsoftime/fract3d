@@ -113,7 +113,10 @@ private:
     bool classicBuilt_[2][3] = {};
     Program classicDeep_;
     bool classicDeepBuilt_ = false;
-    GLuint refSsbo_ = 0, blaSsbo_ = 0;
+    GLuint refSsbo_ = 0, blaSsbo_ = 0, landRefSsbo_ = 0;
+    int landRefLen_ = 0;
+    std::vector<double> landRefKey_;
+    void prepareLandscape(Program& p, const Fractal& f);  // its deep-zoom reference orbit (see landscape.glsl)
     int refLen_ = 0;
     std::vector<int> blaOffset_, blaCount_;
     double deepOffset_[2] = {0, 0};

@@ -93,8 +93,8 @@ if(FRACT3D_TESTS)
              COMMAND fract3d --fractal ${name} --render ${TEST_OUT}/compile-${name}.png --size 64x36 --samples 1)
   endforeach()
 
-  # every preset against its golden image
-  file(GLOB PRESET_FILES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/presets/*.par)
+  # every preset (and every test view) against its golden image
+  file(GLOB PRESET_FILES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/presets/*.par ${CMAKE_SOURCE_DIR}/tests/views/*.par)
   set(update_cmds)
   foreach(p ${PRESET_FILES})
     get_filename_component(name ${p} NAME_WE)

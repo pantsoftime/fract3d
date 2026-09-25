@@ -8,7 +8,7 @@
 // @param int iterations = 160 [10, 1500] "Iterations" -- Maximum iterations per point. Deeper zooms need more.
 // @param float heightScale = 0.35 [0.0, 2.0] "Height" -- How tall the terrain is. The height of each point comes from its escape time.
 // @param float curve = 1.8 [0.1, 4.0] "Height curve" -- Shapes the terrain. High values keep the plains flat and raise sharp ridges near the set. Low values lift everything into rolling hills.
-// @param vec2 center = (-0.6, 0.0) [-2.0, 2.0] "Center" -- The point in the complex plane at the middle of the world.
+// @param vec2 center = (-0.6, 0.0) [-2.0, 2.0] hires "Center" -- The point in the complex plane at the middle of the world.
 // @param float zoom = 1.0 [0.05, 100000] log "Zoom" -- Magnification of the complex plane. At zoom 1, one world unit equals one unit in the complex plane.
 // @param vec2 juliaC = (-0.8, 0.156) [-2.0, 2.0] "Julia constant" -- The c used by the Julia formula.
 // @param choice insideStyle = 1 {Plateau, Lake} "Inside the set" -- Points that never escape (the set itself) can form a flat mesa on top, or a glassy lake at the bottom.
@@ -30,7 +30,59 @@
 // * Burning Ship makes a fantastic mountain range.
 // @end
 
+// Deep zooms (zoom >= 1000): the host computes one reference orbit Z_n at the exact
+// center in doubles (src/renderer.cpp, prepareLandscape), and each point iterates
+// only its difference d_n = z_n - Z_n, which floats resolve at any zoom - the same
+// perturbation idea as Classic 2D's deep zoom (see the Concepts tab).
+layout(std430, binding = 2) readonly buffer LandRef { vec2 landZ[]; };
+uniform int uLandRefLen;  // 0: iterate directly
+
+float landDiffAbs(float c, float d) {  // |c + d| - |c| without cancellation (Burning Ship)
+    float cd = c + d;
+    if (c >= 0.0) return cd >= 0.0 ? d : -(2.0 * c + d);
+    return cd > 0.0 ? 2.0 * c + d : -d;
+}
+
+float landHeightRef(vec2 dc, out float smoothIter, out bool inside) {
+    vec2 d = formula == 4 ? dc : vec2(0.0);  // Julia: the point is the starting z
+    vec2 dcc = formula == 4 ? vec2(0.0) : dc;
+    if (formula == 1) dcc.y = -dcc.y;
+    int m = 0;
+    float bail = 256.0;
+    for (int i = 0; i < iterations; i++) {
+        vec2 Z = landZ[m];
+        if (formula == 1) {        // Burning Ship: x' = x^2 - y^2 + cx, y' = 2|x y| + cy
+            float xy = Z.x * d.y + Z.y * d.x + d.x * d.y;
+            d = vec2((2.0 * Z.x + d.x) * d.x - (2.0 * Z.y + d.y) * d.y, 2.0 * landDiffAbs(Z.x * Z.y, xy)) + dcc;
+        } else if (formula == 2) { // Tricorn: z' = conj(z^2) + c
+            vec2 t = 2.0 * cmul(Z, d) + cmul(d, d);
+            d = vec2(t.x, -t.y) + dcc;
+        } else if (formula == 3) { // z^3 + c
+            d = 3.0 * cmul(cmul(Z, Z), d) + 3.0 * cmul(Z, cmul(d, d)) + cmul(cmul(d, d), d) + dcc;
+        } else {                   // z^2 + c (Mandelbrot and Julia)
+            d = 2.0 * cmul(Z, d) + cmul(d, d) + dcc;
+        }
+        m++;
+        vec2 z = landZ[m] + d;
+        float r2 = dot(z, z);
+        if (r2 > bail * bail) {
+            float lr = 0.5 * log(r2);
+            smoothIter = max(float(i) + 1.0 - log(lr / log(bail)) / log(formula == 3 ? 3.0 : 2.0), 0.0);
+            inside = false;
+            return heightScale * pow(log(1.0 + smoothIter) / log(1.0 + float(iterations)), curve);
+        }
+        if (m >= uLandRefLen - 1 || r2 < dot(d, d)) {  // rebase onto the start of the reference
+            d = z - landZ[0];
+            m = 0;
+        }
+    }
+    smoothIter = 0.0;
+    inside = true;
+    return insideStyle == 0 ? heightScale : -0.02 * heightScale;
+}
+
 float landHeight(vec2 xz, out float smoothIter, out bool inside) {
+    if (uLandRefLen > 1 && formula <= 4) return landHeightRef(xz / zoom, smoothIter, inside);
     vec2 c = center + vec2(xz.x, xz.y) / zoom;
 #ifdef HAVE_CUSTOM_FORMULA
     if (formula == 5) {  // the user's formula (spliced in by the host)

@@ -33,7 +33,7 @@ const char* Param::glslType() const {
 }
 
 void Param::reset() {
-    for (int i = 0; i < 4; i++) value[i] = def[i];
+    for (int i = 0; i < 4; i++) value[i] = def[i], exact[i] = def[i];
     animate = false;
 }
 
@@ -126,6 +126,7 @@ static bool parseParam(const std::string& line, Param& p, std::string& err) {
     }
     std::string beforeLabel = rest.substr(0, rest.find('"'));
     if (beforeLabel.find(" log") != std::string::npos) p.logScale = true;
+    if (beforeLabel.find(" hires") != std::string::npos) p.hires = true;
     size_t lc = rest.find('{'), rc = rest.find('}');
     if (lc != std::string::npos && rc != std::string::npos && rc > lc) {
         std::string c = rest.substr(lc + 1, rc - lc - 1);
@@ -140,7 +141,7 @@ static bool parseParam(const std::string& line, Param& p, std::string& err) {
         size_t q2 = rest.find('"', q1 + 1);
         if (q2 != std::string::npos) p.label = rest.substr(q1 + 1, q2 - q1 - 1);
     }
-    for (int k = 0; k < 4; k++) p.value[k] = p.def[k];
+    for (int k = 0; k < 4; k++) p.value[k] = p.def[k], p.exact[k] = p.def[k];
     return true;
 }
 
@@ -275,7 +276,7 @@ std::vector<int> FractalLibrary::reloadChanged() {
         if (!parseFractalFile(f.path, nf)) continue;
         for (auto& p : nf.params)
             if (Param* old = f.find(p.id); old && old->type == p.type)
-                for (int k = 0; k < 4; k++) p.value[k] = old->value[k];
+                for (int k = 0; k < 4; k++) p.value[k] = old->value[k], p.exact[k] = old->exact[k];
         f = std::move(nf);
         changed.push_back(i);
     }

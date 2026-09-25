@@ -107,6 +107,7 @@ void Renderer::shutdown() {
     classicDeep_ = Program();
     if (refSsbo_) glDeleteBuffers(1, &refSsbo_);
     if (blaSsbo_) glDeleteBuffers(1, &blaSsbo_);
+    if (landRefSsbo_) glDeleteBuffers(1, &landRefSsbo_);
     accum.release();
     index2D.release();
     for (auto& s : state2D_) s.release();
@@ -294,6 +295,48 @@ static Vec3 sunDirection(const RenderSettings& rs) {
     return Vec3(std::sin(az) * std::cos(el), std::sin(el), -std::cos(az) * std::cos(el)).normalized();
 }
 
+// The escape-time landscape at deep zooms: floats can't tell neighbouring points
+// apart past ~10^4x, so (like Classic 2D's deep zoom) one reference orbit at the
+// exact center is computed here in doubles, and the shader iterates only each
+// point's small difference from it, which floats handle well. Custom formulas
+// (5) keep the plain float iteration.
+void Renderer::prepareLandscape(Program& p, const Fractal& f) {
+    const Param *pf = f.find("formula"), *pc = f.find("center"), *pz = f.find("zoom"), *pj = f.find("juliaC"),
+                *pi = f.find("iterations");
+    if (!pf || !pc || !pz || !pj || !pi) return;
+    int formula = (int)std::lround(pf->value[0]), iterations = std::max((int)std::lround(pi->value[0]), 1);
+    double zoom = pz->value[0];
+    bool use = formula <= 4 && zoom >= 1000.0;
+    std::vector<double> key = {use ? 1.0 : 0.0, (double)formula, (double)iterations, pc->precise(0), pc->precise(1), pj->value[0], pj->value[1]};
+    if (key != landRefKey_) {
+        landRefKey_ = key;
+        std::vector<float> xy;
+        if (use) {
+            // the same maps as landHeight() in landscape.glsl, in doubles
+            double cx = pc->precise(0), cy = pc->precise(1), zx = 0, zy = 0;
+            if (formula == 4) zx = cx, zy = cy, cx = pj->value[0], cy = pj->value[1];
+            if (formula == 1) cy = -cy;
+            for (int n = 0; n <= iterations; n++) {
+                xy.push_back((float)zx);
+                xy.push_back((float)zy);
+                if (zx * zx + zy * zy > 256.0 * 256.0) break;
+                if (formula == 1) zx = std::abs(zx), zy = std::abs(zy);
+                if (formula == 2) zy = -zy;
+                double nx, ny;
+                if (formula == 3) nx = zx * zx * zx - 3 * zx * zy * zy, ny = 3 * zx * zx * zy - zy * zy * zy;
+                else nx = zx * zx - zy * zy, ny = 2 * zx * zy;
+                zx = nx + cx, zy = ny + cy;
+            }
+        }
+        if (!landRefSsbo_) glCreateBuffers(1, &landRefSsbo_);
+        glNamedBufferData(landRefSsbo_, (GLsizeiptr)std::max<size_t>(xy.size(), 2) * sizeof(float), xy.empty() ? nullptr : xy.data(),
+                          GL_STATIC_DRAW);
+        landRefLen_ = (int)(xy.size() / 2);
+    }
+    p.set("uLandRefLen", landRefLen_);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, landRefSsbo_);
+}
+
 void Renderer::clear3D(RenderTarget& t) {
     const float zero[4] = {0, 0, 0, 0};
     glClearNamedFramebufferfv(t.fbo, GL_COLOR, 0, zero);
@@ -351,6 +394,7 @@ bool Renderer::renderSample3D(RenderTarget& target, int sampleIndex, const Fract
     p.set("uBlueNoise", 5);
     setFormulaUniforms(p, v.formulaP, v.formulaMaxit);  // only the landscape's custom formula uses these
     setFractalParams(p, f, v.animTime);
+    if (f.key == "landscape") prepareLandscape(p, f);
 
     glBindFramebuffer(GL_FRAMEBUFFER, target.fbo);
     glViewport(0, 0, target.w, target.h);
@@ -536,6 +580,7 @@ bool Renderer::probe(const Fractal& f, const RenderSettings& rs, const View3D& v
     p.set("uFloorY", rs.floorY);
     setFormulaUniforms(p, v.formulaP, v.formulaMaxit);  // only the landscape's custom formula uses these
     setFractalParams(p, f, v.animTime);
+    if (f.key == "landscape") prepareLandscape(p, f);
     glBindFramebuffer(GL_FRAMEBUFFER, probeRT_.fbo);
     glViewport(0, 0, 2, 1);
     glBindVertexArray(vao_);
