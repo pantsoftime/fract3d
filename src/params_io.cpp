@@ -1,6 +1,7 @@
 // PAR files: human-readable "key = value" snapshots of a whole view, named after
 // Fractint's .PAR parameter files. Every screenshot writes one next to the PNG.
 #include "app.h"
+#include "pngmeta.h"
 #include "sanitize.h"
 #include "settings.h"
 
@@ -98,6 +99,11 @@ std::string App::parText() const {
 }
 
 bool App::loadPar(const fs::path& path) {
+    std::string ext = path.extension().string();
+    if (ext == ".png" || ext == ".PNG") {  // screenshots carry their view inside
+        std::string text = readPngText(path.string());
+        return !text.empty() && loadParText(text, path.filename().string(), false);
+    }
     bool ok = false;
     std::string text = readTextFile(path.string(), &ok);
     return ok && loadParText(text, path.filename().string(), false);

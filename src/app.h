@@ -289,6 +289,8 @@ public:
     int savedWin[4] = {0, 0, 1600, 900};
     bool quit = false;
     bool idle = false;  // converged and nothing animating: wait for input instead of redrawing
+    std::vector<std::filesystem::path> droppedFiles;  // from the window's drop callback
+    void openDroppedFile(const std::filesystem::path& p);
     double lastSessionSave = 0;
     std::string lastSessionText;
     void saveSession(bool force);

@@ -10,7 +10,7 @@ static void usage() {
         "fract3d - a 3D fractal explorer in the spirit of Fractint\n\n"
         "usage: fract3d [options] [file.par]\n"
         "  --fractal KEY        start on a fractal (mandelbulb, mandelbox, menger, ...)\n"
-        "  --par FILE           load a saved view\n"
+        "  --par FILE           load a saved view (.par, or a PNG saved by Fract3D)\n"
         "  --2d                 start in Classic 2D mode\n"
         "  --pt / --rt          path traced / real-time rendering\n"
         "  --render OUT.png     render an image and exit (no window shown)\n"
@@ -58,7 +58,7 @@ int main(int argc, char** argv) {
         else if (a == "--self-test") o.selfTest = o.hidden = true;
         else if (a == "--orbit") o.orbitOn = true;
         else if (a == "--gl-debug-verbose") o.glDebug = o.glDebugVerbose = true;
-        else if (a.size() > 4 && a.substr(a.size() - 4) == ".par") o.parFile = a;
+        else if (a.size() > 4 && (a.substr(a.size() - 4) == ".par" || a.substr(a.size() - 4) == ".png")) o.parFile = a;
         else { fprintf(stderr, "unknown option %s\n", a.c_str()); usage(); return 2; }
     }
     if (o.hidden && !o.shotW) { o.shotW = 1920; o.shotH = 1080; }

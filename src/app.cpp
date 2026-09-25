@@ -1,4 +1,5 @@
 #include "app.h"
+#include "pngmeta.h"
 #include "sanitize.h"
 #include "settings.h"
 
@@ -72,6 +73,11 @@ bool App::init(const CliOptions& opts) {
         return false;
     }
     glfwMakeContextCurrent(win);
+    glfwSetWindowUserPointer(win, this);
+    glfwSetDropCallback(win, [](GLFWwindow* w, int n, const char** paths) {
+        auto* app = static_cast<App*>(glfwGetWindowUserPointer(w));
+        for (int i = 0; i < n; i++) app->droppedFiles.push_back(paths[i]);
+    });
     glfwSwapInterval(1);
     glfwGetFramebufferSize(win, &fbW, &fbH);
     glfwGetWindowSize(win, &winW, &winH);
@@ -285,6 +291,36 @@ bool App::compileFormula() {
     formulaInfo = t;
     formulaGeneration++;
     return true;
+}
+
+// ------------------------------------------------------------------ drag and drop
+// Drop a screenshot (PNG with an embedded view), a .par, a .frm formula file or
+// a .map palette onto the window.
+void App::openDroppedFile(const fs::path& p) {
+    std::string ext = p.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    if (ext == ".png" || ext == ".par") {
+        if (!loadPar(p)) toast(ext == ".png" ? p.filename().string() + " doesn't contain a Fract3D view" : "Couldn't read " + p.string(), 4);
+    } else if (ext == ".frm") {
+        auto defs = parseFormulaFile(readTextFile(p.string()));
+        if (defs.empty()) return toast("No formulas found in " + p.filename().string(), 4);
+        formulas.insert(formulas.end(), defs.begin(), defs.end());
+        selectFormula(defs.front().name);
+        view.cs.formula = kCustomFormula;
+        setMode(ViewMode::Classic2D);
+        toast("Loaded " + std::to_string(defs.size()) + " formula(s) from " + p.filename().string() +
+                  " (copy it to ~/.config/fract3d/formulas to keep them)", 5);
+    } else if (ext == ".map") {
+        Palette pal;
+        if (!loadMapFile(p.string(), pal)) return toast("Couldn't read palette " + p.filename().string(), 4);
+        pal.name = "MAP: " + pal.name;
+        palettes.insert(palettes.begin() + customPaletteIdx, pal);  // keep the custom one last
+        view.rs.palette = customPaletteIdx++;
+        applyPalette();
+        toast("Palette " + pal.name + " loaded", 3);
+    } else {
+        toast("Drop a PNG screenshot, .par, .frm or .map file", 3);
+    }
 }
 
 // ------------------------------------------------------------------ undo / history
@@ -606,6 +642,8 @@ void App::frame() {
     ImGui::NewFrame();
 
     handleKeys();
+    for (auto& p : droppedFiles) openDroppedFile(p);
+    droppedFiles.clear();
     if (view.mode == ViewMode::Fractal3D) input3D(dt);
     else input2D(dt);
     if (camAnim.active) {
@@ -1167,9 +1205,8 @@ void App::takeScreenshot() {
     std::string base = (session.picturesDir / ("fract3d-" + timestampName())).string();
     std::vector<uint8_t> px;
     bool ok = rend.readImage(view.mode, &rend.accum, &rend.index2D, view.rs, view.cs, cycleOffset, fbW, fbH, px) &&
-              writePngRaw(base + ".png", fbW, fbH, px.data());
-    savePar(base + ".par");
-    toast(ok ? "Saved " + base + ".png (+ .par to recreate it)" : "Screenshot failed", 4);
+              writePngWithText(base + ".png", fbW, fbH, px.data(), parText());
+    toast(ok ? "Saved " + base + ".png - drop it on the window to reopen this view" : "Screenshot failed", 4);
 }
 
 void App::startPoster(int w, int h, int nSamples) {
@@ -1272,9 +1309,8 @@ void App::updatePoster() {
         rend.setPalette(poster.palette);
         bool ok = rend.readImage(poster.mode, &poster.target, &poster.index, poster.rs, poster.cs, poster.cycleOffset,
                                  poster.w, poster.h, px) &&
-                  writePngRaw(poster.path, poster.w, poster.h, px.data());
+                  writePngWithText(poster.path, poster.w, poster.h, px.data(), poster.par);  // the view travels inside the PNG
         applyPalette();  // back to whatever the live view uses
-        std::ofstream(fs::path(poster.path).replace_extension(".par")) << poster.par;
         double secs = glfwGetTime() - poster.started;
         char buf[512];
         snprintf(buf, sizeof buf, "%s %s (%.1fs)", ok ? "Saved" : "FAILED to save", poster.path.c_str(), secs);
