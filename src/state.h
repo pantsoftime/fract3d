@@ -1,7 +1,6 @@
 #pragma once
-// All user-facing settings. These structs contain only 4-byte ints and floats
-// (no bools, no padding) so they can be compared bytewise to detect changes
-// and restart progressive accumulation.
+// All user-facing settings. settings.h lists every field (with flags saying
+// what each one affects), and everything else is derived from that table.
 
 enum class ViewMode : int { Fractal3D = 0, Classic2D = 1 };
 
@@ -21,7 +20,7 @@ struct RenderSettings {
     float sunColor[3] = {1.0f, 0.9f, 0.78f};
     float sunIntensity = 3.0f;
     float sunSize = 2.0f;  // degrees (angular radius): shadow softness
-    int shadows = 1;
+    bool shadows = true;
     float skyZenith[3] = {0.12f, 0.22f, 0.48f};
     float skyHorizon[3] = {0.66f, 0.70f, 0.80f};
     float skyIntensity = 0.8f;
@@ -32,7 +31,7 @@ struct RenderSettings {
     float fogColor[3] = {0.62f, 0.70f, 0.80f};
     float glowStrength = 0.0f;
     float glowColor[3] = {0.35f, 0.55f, 1.0f};
-    int floorOn = 0;
+    bool floorOn = false;
     float floorY = -1.0f;
     float floorColor[3] = {0.26f, 0.26f, 0.28f};
 
@@ -48,7 +47,7 @@ struct RenderSettings {
     // camera optics
     float fov = 55.0f;
     float aperture = 0.0f;
-    int autoFocus = 1;
+    bool autoFocus = true;
     float focusDist = 3.0f;
 
     // post
@@ -61,14 +60,14 @@ struct RenderSettings {
     float scanlines = 0.0f;
 
     // performance
-    int adaptiveRes = 1;
+    bool adaptiveRes = true;
     float targetFps = 60.0f;
     float stillScale = 1.0f;  // render resolution when the view is still
 };
 
 struct Classic2DSettings {
     int formula = 0;  // see kClassicFormulas
-    int julia = 0;
+    bool julia = false;
     double cx = -0.6, cy = 0.0;  // view center
     double height = 3.0;         // visible height of the complex plane
     double jx = -0.8, jy = 0.156;
@@ -78,18 +77,16 @@ struct Classic2DSettings {
     float phoenixP[2] = {-0.5f, 0.0f};
     int supersample = 2;
     int fp64 = 2;  // 0 off, 1 on, 2 auto
-    int banded = 1;
+    bool banded = true;
     float colorDensity = 1.0f;  // palette entries per iteration
     int insideMode = 0;         // black, zmag, solid
     float insideColor[3] = {0.0f, 0.0f, 0.0f};
     float rootSpread = 85.0f;
-    int showOrbit = 0;
+    bool showOrbit = false;
     int coloring = 0;       // outside coloring mode, see kColoringModes
     float trapSize = 4.0f;  // stripe density / orbit trap scale
     float p1[2] = {0, 0}, p2[2] = {0, 0}, p3[2] = {0, 0};  // user formula parameters
-    int reserved_ = 0;  // keeps sizeof a multiple of 8 (no tail padding) for the bytewise signature
 };
-static_assert(sizeof(Classic2DSettings) % 8 == 0);
 
 inline const char* kClassicFormulas[] = {"Mandelbrot", "Burning Ship", "Tricorn (Mandelbar)", "Multibrot",
                                          "Newton (z^3 - 1)", "Phoenix", "Lambda", "Magnet I",

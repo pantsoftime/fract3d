@@ -2,6 +2,7 @@
 // Fractint's .PAR parameter files. Every screenshot writes one next to the PNG.
 #include "app.h"
 #include "sanitize.h"
+#include "settings.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -11,72 +12,24 @@
 
 namespace fs = std::filesystem;
 
-// Visits every persisted setting as (name, pointer, component count).
+// Every setting flagged kPar in settings.h, as (name, pointer, component count).
 template <class F>
 static void visitSettings(RenderSettings& r, Classic2DSettings& c, F&& f) {
-    f("render.mode", &r.renderMode, 1);
-    f("render.bounces", &r.bounces, 1);
-    f("render.maxSteps", &r.maxSteps, 1);
-    f("render.detail", &r.detail, 1);
-    f("render.stepFactor", &r.stepFactor, 1);
-    f("render.maxDist", &r.maxDist, 1);
-    f("render.maxSamplesRT", &r.maxSamplesRT, 1);
-    f("render.maxSamplesPT", &r.maxSamplesPT, 1);
-    f("light.sunAzimuth", &r.sunAzimuth, 1);
-    f("light.sunElevation", &r.sunElevation, 1);
-    f("light.sunColor", r.sunColor, 3);
-    f("light.sunIntensity", &r.sunIntensity, 1);
-    f("light.sunSize", &r.sunSize, 1);
-    f("light.shadows", &r.shadows, 1);
-    f("light.skyZenith", r.skyZenith, 3);
-    f("light.skyHorizon", r.skyHorizon, 3);
-    f("light.skyIntensity", &r.skyIntensity, 1);
-    f("light.background", &r.background, 1);
-    f("light.bgColor", r.bgColor, 3);
-    f("light.ao", &r.aoStrength, 1);
-    f("light.fogDensity", &r.fogDensity, 1);
-    f("light.fogColor", r.fogColor, 3);
-    f("light.glow", &r.glowStrength, 1);
-    f("light.glowColor", r.glowColor, 3);
-    f("light.floor", &r.floorOn, 1);
-    f("light.floorY", &r.floorY, 1);
-    f("light.floorColor", r.floorColor, 3);
-    f("color.mode", &r.colorMode, 1);
-    f("color.scale", &r.colorScale, 1);
-    f("color.offset", &r.colorOffset, 1);
-    f("color.paletteMix", &r.paletteMix, 1);
-    f("color.base", r.baseColor, 3);
-    f("color.specular", &r.specular, 1);
-    f("color.roughness", &r.roughness, 1);
-    f("color.cycleSpeed", &r.cycleSpeed, 1);
-    f("camera.fov", &r.fov, 1);
-    f("camera.aperture", &r.aperture, 1);
-    f("camera.autoFocus", &r.autoFocus, 1);
-    f("camera.focusDist", &r.focusDist, 1);
-    f("post.exposure", &r.exposure, 1);
-    f("post.tonemap", &r.tonemap, 1);
-    f("post.vignette", &r.vignette, 1);
-    f("post.saturation", &r.saturation, 1);
-    f("post.retro", &r.retro, 1);
-    f("post.pixelSize", &r.pixelSize, 1);
-    f("post.scanlines", &r.scanlines, 1);
-    f("classic.formula", &c.formula, 1);
-    f("classic.julia", &c.julia, 1);
-    f("classic.center", &c.cx, 2);  // cx, cy are adjacent doubles
-    f("classic.height", &c.height, 1);
-    f("classic.juliaC", &c.jx, 2);
-    f("classic.maxIter", &c.maxIter, 1);
-    f("classic.bailout", &c.bailout, 1);
-    f("classic.power", &c.power, 1);
-    f("classic.phoenixP", c.phoenixP, 2);
-    f("classic.supersample", &c.supersample, 1);
-    f("classic.banded", &c.banded, 1);
-    f("classic.colorDensity", &c.colorDensity, 1);
-    f("classic.insideMode", &c.insideMode, 1);
-    f("classic.insideColor", c.insideColor, 3);
-    f("classic.rootSpread", &c.rootSpread, 1);
+    auto pick = [&](const char* name, const char*, auto* ptr, int n, unsigned flags) {
+        if (flags & kPar) f(name, ptr, n);
+    };
+    visitRender(r, pick);
+    visitClassic(c, pick);
 }
 
+static void writeVals(std::ostream& o, const bool* p, int n) { for (int i = 0; i < n; i++) o << (i ? " " : "") << (p[i] ? 1 : 0); }
+static void readVals(std::istream& is, bool* p, int n) {
+    for (int i = 0; i < n; i++) {
+        int v = 0;
+        is >> v;
+        p[i] = v != 0;
+    }
+}
 static void writeVals(std::ostream& o, const int* p, int n) { for (int i = 0; i < n; i++) o << (i ? " " : "") << p[i]; }
 static void writeVals(std::ostream& o, const float* p, int n) { for (int i = 0; i < n; i++) o << (i ? " " : "") << p[i]; }
 static void writeVals(std::ostream& o, const double* p, int n) {

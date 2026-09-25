@@ -1,5 +1,6 @@
 #include "app.h"
 #include "sanitize.h"
+#include "settings.h"
 
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
@@ -164,6 +165,11 @@ void App::loadPrefs() {
         else if (k == "uiScale") uiScale = std::clamp(v, 0.5f, 3.0f);
         else if (k == "showLearn") showLearn = v != 0;
         else if (k == "flySpeed") flySpeed = std::isfinite(v) ? std::clamp(v, 0.01f, 100.0f) : 1.5f;
+        else if (k == "keepLighting") keepLighting = v != 0;
+        else
+            visitRender(rs, [&](const char* name, const char*, auto* ptr, int, unsigned flags) {
+                if ((flags & kPerf) && k == name) *ptr = static_cast<std::remove_reference_t<decltype(*ptr)>>(v);
+            });
     }
     if (uiTheme != 0 && uiTheme != 1) uiTheme = 0;
     if (!std::isfinite(uiScale)) uiScale = 1.0f;
@@ -172,7 +178,11 @@ void App::loadPrefs() {
 void App::savePrefs() {
     FILE* f = fopen((userDir / "prefs.ini").c_str(), "w");
     if (!f) return;
-    fprintf(f, "theme=%d\nuiScale=%g\nshowLearn=%d\nflySpeed=%g\n", uiTheme, uiScale, (int)showLearn, flySpeed);
+    fprintf(f, "theme=%d\nuiScale=%g\nshowLearn=%d\nflySpeed=%g\nkeepLighting=%d\n", uiTheme, uiScale, (int)showLearn,
+            flySpeed, (int)keepLighting);
+    visitRender(rs, [&](const char* name, const char*, auto* ptr, int, unsigned flags) {
+        if (flags & kPerf) fprintf(f, "%s=%g\n", name, (double)*ptr);
+    });
     fclose(f);
 }
 
@@ -205,59 +215,42 @@ void App::selectFractal(int idx, bool reset) {
     glfwSetWindowTitle(win, ("Fract3D - " + f.name).c_str());
 }
 
-// Restores the color/lighting defaults, then applies the fractal's curated "@look".
+// Restores the look-related defaults, then applies the fractal's curated "@look".
+// With "keep my lighting" on, the lighting part of the current setup survives.
 void App::applyLook(const Fractal& f) {
-    RenderSettings d;
-    rs.colorMode = d.colorMode; rs.colorScale = d.colorScale; rs.colorOffset = d.colorOffset;
-    rs.paletteMix = d.paletteMix; rs.specular = d.specular; rs.roughness = d.roughness;
-    std::copy(d.baseColor, d.baseColor + 3, rs.baseColor);
-    rs.sunAzimuth = d.sunAzimuth; rs.sunElevation = d.sunElevation; rs.sunIntensity = d.sunIntensity;
-    rs.sunSize = d.sunSize; rs.skyIntensity = d.skyIntensity; rs.aoStrength = d.aoStrength;
-    rs.fogDensity = d.fogDensity; rs.glowStrength = d.glowStrength; rs.background = d.background;
-    rs.fov = d.fov;
-    rs.floorOn = d.floorOn; rs.floorY = d.floorY;
-    std::copy(d.floorColor, d.floorColor + 3, rs.floorColor);
-    std::copy(d.sunColor, d.sunColor + 3, rs.sunColor);
-    std::copy(d.skyZenith, d.skyZenith + 3, rs.skyZenith);
-    std::copy(d.skyHorizon, d.skyHorizon + 3, rs.skyHorizon);
-    std::copy(d.fogColor, d.fogColor + 3, rs.fogColor);
-    std::copy(d.glowColor, d.glowColor + 3, rs.glowColor);
-    std::copy(d.bgColor, d.bgColor + 3, rs.bgColor);
+    const unsigned mask = kLook;
+    RenderSettings defaults;
+    // copy defaults for every look field, except lighting fields when they're kept
+    visitRender(rs, [&](const char*, const char*, auto* ptr, int n, unsigned flags) {
+        if (!(flags & mask) || (keepLighting && (flags & kLighting))) return;
+        size_t off = reinterpret_cast<const char*>(ptr) - reinterpret_cast<const char*>(&rs);
+        std::memcpy(ptr, reinterpret_cast<const char*>(&defaults) + off, sizeof(*ptr) * n);
+    });
     int pal = 0;
     for (auto& [k, v] : f.look) {
-        auto num = [&] { return std::strtof(v.c_str(), nullptr); };
-        auto vec3 = [&](float* out) { std::sscanf(v.c_str(), "%f,%f,%f", &out[0], &out[1], &out[2]); };
         if (k == "palette") {
             for (int i = 0; i < (int)palettes.size(); i++)
                 if (palettes[i].name == v) pal = i;
-        } else if (k == "colorMode") rs.colorMode = (int)num();
-        else if (k == "colorScale") rs.colorScale = num();
-        else if (k == "colorOffset") rs.colorOffset = num();
-        else if (k == "paletteMix") rs.paletteMix = num();
-        else if (k == "specular") rs.specular = num();
-        else if (k == "roughness") rs.roughness = num();
-        else if (k == "baseColor") vec3(rs.baseColor);
-        else if (k == "sunAzimuth") rs.sunAzimuth = num();
-        else if (k == "sunElevation") rs.sunElevation = num();
-        else if (k == "sunIntensity") rs.sunIntensity = num();
-        else if (k == "sunColor") vec3(rs.sunColor);
-        else if (k == "sunSize") rs.sunSize = num();
-        else if (k == "sky") rs.skyIntensity = num();
-        else if (k == "skyZenith") vec3(rs.skyZenith);
-        else if (k == "skyHorizon") vec3(rs.skyHorizon);
-        else if (k == "ao") rs.aoStrength = num();
-        else if (k == "fog") rs.fogDensity = num();
-        else if (k == "fogColor") vec3(rs.fogColor);
-        else if (k == "glow") rs.glowStrength = num();
-        else if (k == "glowColor") vec3(rs.glowColor);
-        else if (k == "background") rs.background = (int)num();
-        else if (k == "bgColor") vec3(rs.bgColor);
-        else if (k == "fov") rs.fov = num();
-        else if (k == "floor") rs.floorOn = (int)num();
-        else if (k == "floorY") rs.floorY = num();
-        else if (k == "floorColor") vec3(rs.floorColor);
+            continue;
+        }
+        bool known = false;
+        visitRender(rs, [&](const char* name, const char* alias, auto* ptr, int n, unsigned flags) {
+            if (!(flags & kLook) || (k != name && !(alias && k == alias))) return;
+            known = true;
+            if (keepLighting && (flags & kLighting)) return;
+            std::string vals = v;
+            std::replace(vals.begin(), vals.end(), ',', ' ');
+            std::istringstream is(vals);
+            for (int i = 0; i < n; i++) {
+                double d;
+                if (!(is >> d)) break;
+                ptr[i] = static_cast<std::remove_reference_t<decltype(*ptr)>>(d);
+            }
+        });
+        if (!known) fprintf(stderr, "fract3d: %s: unknown @look key '%s'\n", f.path.filename().c_str(), k.c_str());
     }
     rs.palette = pal;
+    sanitize(rs);
     applyPalette();
 }
 
@@ -549,15 +542,15 @@ static void appendBytes(std::vector<uint8_t>& v, const T& x) {
 
 std::vector<uint8_t> App::signature3D(int w, int h) const {
     RenderSettings r = rs;
-    // settings that only affect the display pass or scheduling don't restart accumulation
-    r.exposure = 0; r.tonemap = 0; r.vignette = 0; r.saturation = 0; r.retro = 0; r.pixelSize = 0;
-    r.scanlines = 0; r.adaptiveRes = 0; r.targetFps = 0; r.cycleSpeed = 0; r.maxSamplesRT = 0;
-    r.maxSamplesPT = 0; r.stillScale = 0;
-    r.colorOffset = rs.colorOffset + cycleOffset / 256.0f;
-    if (r.aperture <= 0.0f) r.focusDist = 0, r.autoFocus = 0;
+    // palette cycling only matters when the palette is used for coloring
+    if (r.colorMode <= 2) r.colorOffset = rs.colorOffset + cycleOffset / 256.0f;
+    // the focus only matters with a lens
+    if (r.aperture <= 0.0f) r.focusDist = 0, r.autoFocus = false;
+    else if (r.autoFocus) r.focusDist = 0;  // autofocus distance is added (quantized) below
     std::vector<uint8_t> s;
     s.reserve(512);
-    appendBytes(s, r);
+    appendFields(s, r, kTrace3D, [](RenderSettings& x, auto&& f) { visitRender(x, f); });
+    appendBytes(s, rs.palette);
     appendBytes(s, cam.pos);
     appendBytes(s, cam.yaw);
     appendBytes(s, cam.pitch);
@@ -723,12 +716,11 @@ void App::render2D() {
         cs.formula = 0;
         toast("No custom formula is compiled - showing the Mandelbrot set instead", 4);
     }
+    // only fields that change the iteration buffer need a recompute
     Classic2DSettings c = cs;
-    // display-only fields don't need a recompute
-    c.colorDensity = 0; c.insideMode = 0; c.insideColor[0] = c.insideColor[1] = c.insideColor[2] = 0;
-    c.rootSpread = 0; c.showOrbit = 0; c.supersample = 0;
     std::vector<uint8_t> sig;
-    appendBytes(sig, c);
+    appendFields(sig, c, kCompute2D, [](Classic2DSettings& x, auto&& f) { visitClassic(x, f); });
+    appendBytes(sig, formulaGeneration);
     appendBytes(sig, fbW);
     appendBytes(sig, fbH);
     appendBytes(sig, generation);

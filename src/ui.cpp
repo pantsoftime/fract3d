@@ -497,6 +497,8 @@ void App::drawColorTab() {
 }
 
 void App::drawLightTab() {
+    ImGui::Checkbox("Keep my lighting when switching fractals", &keepLighting);
+    helpTip("Normally each fractal brings its own curated lighting. Tick this to keep your sun, sky, fog and glow instead.");
     ImGui::SeparatorText("Presets");
     if (ImGui::Button("Daylight")) {
         rs.sunAzimuth = 35; rs.sunElevation = 38; rs.sunIntensity = 2.6f; rs.sunSize = 2;
@@ -525,8 +527,7 @@ void App::drawLightTab() {
     ImGui::SliderFloat("Intensity", &rs.sunIntensity, 0.0f, 8.0f);
     ImGui::SliderFloat("Sun size", &rs.sunSize, 0.1f, 15.0f, "%.1f deg");
     helpTip("Angular radius of the sun. Bigger means softer shadows, like an overcast day.");
-    bool sh = rs.shadows;
-    if (ImGui::Checkbox("Shadows", &sh)) rs.shadows = sh;
+    ImGui::Checkbox("Shadows", &rs.shadows);
     ImGui::SeparatorText("Sky & ambient");
     const char* bgs[] = {"Sky gradient", "Solid color"};
     ImGui::Combo("Background", &rs.background, bgs, 2);
@@ -546,8 +547,7 @@ void App::drawLightTab() {
     helpTip("Adds light wherever rays took many steps, meaning they passed close to the surface. It's a cheap trick that makes fractals look electric.");
     ImGui::ColorEdit3("Glow color", rs.glowColor);
     ImGui::SeparatorText("Ground");
-    bool fl = rs.floorOn;
-    if (ImGui::Checkbox("Ground plane", &fl)) rs.floorOn = fl;
+    ImGui::Checkbox("Ground plane", &rs.floorOn);
     helpTip("A flat floor under the fractal. It catches shadows and, when path traced, bounces light back up.");
     if (rs.floorOn) {
         ImGui::SliderFloat("Ground height", &rs.floorY, -20.0f, 5.0f, "%.3f");
@@ -582,8 +582,7 @@ void App::drawRenderTab() {
     if (ImGui::Button("Restart")) lastSig3D.clear();
 
     ImGui::SeparatorText("Performance");
-    bool ad = rs.adaptiveRes;
-    if (ImGui::Checkbox("Adaptive resolution while moving", &ad)) rs.adaptiveRes = ad;
+    ImGui::Checkbox("Adaptive resolution while moving", &rs.adaptiveRes);
     ImGui::SliderFloat("Target fps", &rs.targetFps, 20.0f, 240.0f, "%.0f");
     ImGui::SliderFloat("Render scale", &rs.stillScale, 0.25f, 2.0f, "%.2fx");
     helpTip("Resolution of the still image relative to the window. Above 1 supersamples.");
@@ -598,8 +597,7 @@ void App::drawCameraTab() {
     ImGui::SeparatorText("Depth of field");
     ImGui::SliderFloat("Aperture", &rs.aperture, 0.0f, 2.0f, "%.3f", ImGuiSliderFlags_Logarithmic);
     helpTip("Lens size. Bigger gives a blurrier background and a stronger macro-photo look. Takes a few samples to resolve.");
-    bool af = rs.autoFocus;
-    if (ImGui::Checkbox("Autofocus on screen center", &af)) rs.autoFocus = af;
+    ImGui::Checkbox("Autofocus on screen center", &rs.autoFocus);
     if (!rs.autoFocus) ImGui::SliderFloat("Focus distance", &rs.focusDist, 1e-4f, 100.0f, "%.4g", ImGuiSliderFlags_Logarithmic);
     ImGui::TextDisabled("Press F to focus on whatever is at screen center.");
     ImGui::SeparatorText("Position");
@@ -651,8 +649,7 @@ void App::drawClassicPanel() {
     ImGui::PushItemWidth(-fs_ * 8.5f);
     ImGui::Combo("Formula", &cs.formula, kClassicFormulas, kClassicFormulaCount);
     if (cs.formula != 4) {
-        bool j = cs.julia;
-        if (ImGui::Checkbox("Julia set", &j)) cs.julia = j;
+        ImGui::Checkbox("Julia set", &cs.julia);
         helpTip("Shortcut: right-click (or press Space) on any point of the Mandelbrot set to see the Julia set for that c. Do it again to go back.");
         if (cs.julia) {
             ImGui::InputDouble("c real", &cs.jx, 0.001, 0.01, "%.10f");
@@ -697,8 +694,7 @@ void App::drawClassicPanel() {
 
     ImGui::SeparatorText("Color");
     paletteCombo(*this);
-    bool b = cs.banded;
-    if (ImGui::Checkbox("Fractint bands (B)", &b)) cs.banded = b;
+    ImGui::Checkbox("Fractint bands (B)", &cs.banded);
     helpTip("On: one palette entry per whole iteration, the classic 1990 look. Off: the smooth (continuous) iteration count blends the colors.");
     ImGui::SliderFloat("Color density", &cs.colorDensity, 0.05f, 16.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
     const char* ins[] = {"Black", "zmag (Fractint)", "Solid color"};
@@ -709,8 +705,7 @@ void App::drawClassicPanel() {
     helpTip("Palette rotation. Costs nothing here: the iteration counts are stored and only the colors are looked up again, just like Fractint rotating the VGA hardware palette.");
     ImGui::SliderInt("Anti-aliasing", &cs.supersample, 1, 4, "%d x");
     helpTip("Computes N x N points per pixel and averages their colors. 2 is a good balance.");
-    bool o = cs.showOrbit;
-    if (ImGui::Checkbox("Show orbit under cursor (O)", &o)) cs.showOrbit = o;
+    ImGui::Checkbox("Show orbit under cursor (O)", &cs.showOrbit);
     helpTip("Draws the sequence z0, z1, z2... for the point under your mouse. This is literally what's computed for every pixel.");
     ImGui::SeparatorText("Retro");
     const char* rm[] = {"Off", "VGA 256 colors", "EGA 16 colors"};

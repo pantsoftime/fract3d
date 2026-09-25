@@ -156,6 +156,8 @@ public:
     double lastClickTime = 0;
     float scrollAccum = 0.0f;
     float flySpeed = 1.5f;
+    bool keepLighting = false;  // keep the current lighting when switching fractals
+    int formulaGeneration = 0;  // bumped when the custom formula is recompiled
     bool flying = false;
     double savedMandel[3] = {-0.6, 0.0, 3.0};
 
