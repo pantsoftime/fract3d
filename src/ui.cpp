@@ -832,6 +832,10 @@ void App::drawClassicPanel() {
     } else {
         ImGui::ProgressBar(1.0f, ImVec2(-1, 0), "done");
     }
+    ImGui::Checkbox("Periodicity checking", &view.cs.periodicity);
+    helpTip("Fractint's trick for the black inside of the set: when a point's orbit comes back to where it was, "
+            "and has been contracting, it's caught in a cycle and will never escape - so it can stop long before "
+            "Max iterations. The picture is the same, often several times faster. (Deep zooms skip ahead instead.)");
     ImGui::SliderFloat("Bailout", &view.cs.bailout, 2.0f, 1000.0f, "%.1f", ImGuiSliderFlags_Logarithmic);
     helpTip("Escape radius: once |z| passes it, the point is counted as escaped. 2 is Fractint's value and is enough to prove escape for the Mandelbrot set. It changes the color bands, not the set itself. Smooth coloring always uses at least 64.");
 

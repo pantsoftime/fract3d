@@ -78,6 +78,7 @@ struct Classic2DSettings {
     int supersample = 2;
     int fp64 = 2;  // 0 off, 1 on, 2 auto, 3 perturbation
     bool bla = true;  // deep zoom: skip ahead with linear approximations (much faster)
+    bool periodicity = true;  // stop early when an orbit is caught in a cycle (Fractint's periodicity checking)
     bool banded = true;
     float colorDensity = 1.0f;  // palette entries per iteration
     int insideMode = 0;         // black, zmag, solid

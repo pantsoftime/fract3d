@@ -492,6 +492,11 @@ bool Renderer::dispatch2D(IndexTarget& out, const Classic2DSettings& cs, int y0,
     p.set("uPhoenixP", cs.phoenixP[0], cs.phoenixP[1]);
     p.set("uColoring", cs.coloring);
     p.set("uTrapSize", cs.trapSize);
+    // cycles are meaningful for the escape-time maps (not Newton/Magnet, which stop on their own,
+    // Phoenix, whose state includes the previous z, or user formulas, whose state is theirs)
+    bool periodic = cs.periodicity && !custom && !deep && (cs.formula <= 3 || cs.formula == 6);
+    p.set("uPeriodicity", periodic ? 1 : 0);
+    p.set("uPeriodEps2", classicUsesFp64(cs, out.h) ? 1e-24f : 1e-12f);
     setFormulaUniforms(p, cs.formulaP, (float)cs.maxIter);
     if (deep) {
         double pixel = cs.height / out.h;

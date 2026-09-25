@@ -41,6 +41,34 @@ uniform vec2   uPhoenixP;
 uniform int    uBanded;        // 1: whole iteration counts (Fractint bands), 0: smooth count
 uniform int    uColoring;      // outside coloring mode, see kColoringModes
 uniform float  uTrapSize;      // orbit trap / stripe parameter
+uniform int    uPeriodicity;   // 1: stop early when an orbit is caught in a cycle (inside the set)
+uniform float  uPeriodEps2;    // how close (squared) counts as "back where it was"
+
+// Periodicity checking, as in Fractint: every pixel remembers z at iterations
+// 16, 32, 64, ... (Brent's cycle detection). An orbit that comes back to within a
+// hair of a remembered point has gone round a cycle. That alone isn't proof: at deep
+// zooms an escaping orbit can shadow a nearby minibrot's cycle closer than doubles
+// can tell apart. So the orbit must also have been contracting since the checkpoint
+// (the product of |f'(z)|^2 over those steps - the cycle's multiplier - well below 1):
+// then it's attracted to the cycle, the point is inside the set, and it can stop
+// long before maxIter. The exponent of the next checkpoint lives in bits 8-15 of the
+// pixel's flags; the saved z and the product live in otherwise unused state.
+// (Not in the deep-zoom kernel: there, skipping ahead already jumps through inside
+// orbits, and the checks cost more than they saved - measured, 5.1 s vs 4.6 s.)
+uint saveExpOf(uint flags) { return (flags >> 8) & 0xFFu; }
+uint withSaveExp(uint flags, uint e) { return (flags & 0xFFu) | (e << 8); }
+// The product runs over whole cycles (thousands of steps at deep zooms), far past
+// the range of a float: it's kept as mantissa * 2^exponent.
+void derMul(inout float m, inout int e, float f) {
+    m *= f;
+    if (m > 1e18 || m < 1e-18) {
+        if (m == 0.0 || isinf(m) || isnan(m)) return;
+        int k;
+        m = frexp(m, k);
+        e += k;
+    }
+}
+bool contracting(float m, int e) { return m > 0.0 && float(e) + log2(m) < -20.0; }  // product < 2^-20
 
 #ifdef FP64
   #define REAL double
@@ -234,7 +262,9 @@ void main() {
 #endif
     ivec2 pix = uBandOrigin + g_local;
 
-    CPLX z, zprev;
+    CPLX z, zprev, zsave;
+    float derM = 1.0;  // periodicity: |f'|^2 product since the last checkpoint (derM * 2^derE)
+    int derE = 0;
     int i;
     uint flags;
     dvec2 pd = uCenter + (dvec2(pix) + 0.5 - 0.5 * dvec2(uResolution)) * uPixelSize;
@@ -247,8 +277,9 @@ void main() {
         if (uFormula == 6 && uJulia == 0) z = CPLX(0.5, 0.0);  // Lambda: start at the critical point
         if (uFormula == 4) z = pixel;                          // Newton: every point is a starting guess
         zprev = CPLX(0);
+        zsave = CPLX(1e30);
         i = 0;
-        flags = 0u;
+        flags = withSaveExp(0u, 4u);
         g_accA = uColoring == 4 || uColoring == 5 ? 1e20 : 0.0;
         g_accB = 0.0;
 #ifdef CUSTOM_FORMULA
@@ -265,6 +296,8 @@ void main() {
         g_accB = uintBitsToFloat(s2.w);
         z = unpackC(imageLoad(uState0, g_local));
         zprev = unpackC(imageLoad(uState1, g_local));
+        zsave = unpackC(imageLoad(uState3, g_local));  // (custom formulas use state 3 for variables: no periodicity)
+        if (uPeriodicity != 0) derM = float(zprev.x), derE = int(zprev.y);  // (periodic formulas don't need zprev: it holds the product)
 #ifdef CUSTOM_FORMULA
         v_whitesq = vec2(float((pix.x + pix.y) & 1), 0.0);
         frm_load(vec2(pixel), imageLoad(uState0, g_local), imageLoad(uState1, g_local), imageLoad(uState3, g_local));
@@ -289,6 +322,14 @@ void main() {
         }
         continue;
 #endif
+        if (uPeriodicity != 0) {                                // |f'(z)|^2 of this step
+            float z2 = float(dot(z, z));
+            float f;
+            if (uFormula == 3) f = float(uPower * uPower) * pow(z2, float(uPower - 1));
+            else if (uFormula == 6) { vec2 t = vec2(1.0) - 2.0 * vec2(z); f = float(dot(c, c)) * dot(t, t); }
+            else f = 4.0 * z2;
+            derMul(derM, derE, f);
+        }
         if (uFormula == 4) {                                    // Newton's method for z^3 - 1
             CPLX z2 = cm(z, z);
             CPLX f = cm(z2, z) - CPLX(1, 0);
@@ -319,6 +360,12 @@ void main() {
         }
         accumulate(z);
         if (hasEscaped(z, bail)) { escaped(z, i, powerF, bail); return; }
+        if (uPeriodicity != 0) {
+            CPLX d = z - zsave;
+            if (dot(d, d) < REAL(uPeriodEps2) && contracting(derM, derE)) { finish(-1.0, sqrt(float(dot(z, z))) * 0.5, i, 0u); return; }
+            uint e = saveExpOf(flags);
+            if (i + 1 >= (1 << e)) { zsave = z; derM = 1.0, derE = 0; flags = withSaveExp(flags, e + 1u); }
+        }
     }
 
     if (i >= uMaxIter) {                                        // never escaped: inside the set
@@ -334,6 +381,7 @@ void main() {
     imageStore(uState3, g_local, s3);
 #else
     imageStore(uState0, g_local, packC(z));
-    imageStore(uState1, g_local, packC(zprev));
+    imageStore(uState1, g_local, packC(uPeriodicity != 0 ? CPLX(derM, float(derE)) : zprev));
+    imageStore(uState3, g_local, packC(zsave));
 #endif
 }
