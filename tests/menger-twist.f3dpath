@@ -1,0 +1,16 @@
+; a short camera path used by the video export test
+---- keyframe 2 start
+fractal = menger
+param.preRotation = 0 0 0
+camera.pos = 2.4 1.8 -2.9
+camera.target = 0 0 0
+---- keyframe 2 twist
+fractal = menger
+param.preRotation = 0 0 30
+camera.pos = -2.6 1.2 -2.6
+camera.target = 0 0 0
+---- keyframe 2 end
+fractal = menger
+param.preRotation = 0 0 0
+camera.pos = -2.2 2.6 2.4
+camera.target = 0 0 0

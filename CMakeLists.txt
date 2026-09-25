@@ -38,7 +38,8 @@ add_executable(fract3d
   src/sanitize.cpp
   src/bluenoise.cpp
   src/formula.cpp
-  src/pngmeta.cpp)
+  src/pngmeta.cpp
+  src/animation.cpp)
 target_include_directories(fract3d PRIVATE src)
 target_include_directories(fract3d SYSTEM PRIVATE third_party/stb)
 target_link_libraries(fract3d PRIVATE imgui PkgConfig::GLFW PkgConfig::EPOXY)
@@ -138,6 +139,16 @@ if(FRACT3D_TESTS)
   # the overlay UI (both themes, both modes) must draw without errors
   add_test(NAME ui.modern-3d COMMAND fract3d --fractal mandelbulb --ui-shot ${TEST_OUT}/ui-3d.png --size 1280x720 --frames 30)
   add_test(NAME ui.fractint-2d COMMAND fract3d --2d --theme fractint --ui-shot ${TEST_OUT}/ui-2d.png --size 1280x720 --frames 30)
+
+  # camera path -> video (only when ffmpeg is installed)
+  find_program(FFMPEG_EXE ffmpeg)
+  if(FFMPEG_EXE)
+    add_test(NAME video.export
+             COMMAND fract3d --path ${CMAKE_SOURCE_DIR}/tests/menger-twist.f3dpath --render ${TEST_OUT}/path.mp4
+                     --size 160x90 --samples 1 --fps 5)
+  endif()
+  add_test(NAME ui.path-window COMMAND fract3d --fractal menger --path ${CMAKE_SOURCE_DIR}/tests/menger-twist.f3dpath
+                                       --open path --ui-shot ${TEST_OUT}/ui-path.png --size 1600x900 --frames 20)
 
   # an impossible render must fail cleanly with a non-zero exit code
   add_test(NAME oversize_render_fails

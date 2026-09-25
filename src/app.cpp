@@ -160,6 +160,8 @@ bool App::init(const CliOptions& opts) {
             ui.showHelp = true;
         } else if (w == "render") {
             ui.showPoster = true;
+        } else if (w == "path") {
+            ui.showPathWindow = true;
         }
     }
     if (session.cli.orbitOn) view.cs.showOrbit = true;
@@ -170,6 +172,28 @@ bool App::init(const CliOptions& opts) {
     if (session.cli.selfTest) {
         exitCode = selfTest();
         quit = true;
+        return true;
+    }
+    if (!session.cli.pathFile.empty() && !loadPath(session.cli.pathFile)) {
+        fprintf(stderr, "fract3d: could not load camera path %s\n", session.cli.pathFile.c_str());
+        exitCode = 1;
+        quit = true;
+        return true;
+    }
+    auto isVideo = [](const std::string& p) {
+        for (const char* e : {".mp4", ".mkv", ".mov", ".webm"})
+            if (p.size() > 4 && p.compare(p.size() - strlen(e), strlen(e), e) == 0) return true;
+        return false;
+    };
+    if (!session.cli.shotPath.empty() && isVideo(session.cli.shotPath)) {
+        if (session.cli.shotW) camPath.videoW = session.cli.shotW, camPath.videoH = session.cli.shotH;
+        if (session.cli.shotSamples) camPath.videoSamples = session.cli.shotSamples;
+        camPath.fps = std::clamp(session.cli.videoFps, 1.0f, 240.0f);
+        if (!startVideo(session.cli.shotPath)) {
+            exitCode = 1;
+            quit = true;
+        }
+        lastFrameTime = glfwGetTime();
         return true;
     }
     if (!session.cli.shotPath.empty()) {
@@ -185,6 +209,7 @@ bool App::init(const CliOptions& opts) {
 void App::shutdown() {
     if (!session.cli.hidden) savePrefs();
     saveSession(true);
+    if (video.active) cancelVideo();  // closes the encoder pipe cleanly
     // every GL object must go before the context does
     poster.target.release();
     poster.index.release();
@@ -666,6 +691,7 @@ void App::frame() {
     ImGui::NewFrame();
 
     handleKeys();
+    updatePathPlayback();
     for (auto& p : droppedFiles) openDroppedFile(p);
     droppedFiles.clear();
     if (view.mode == ViewMode::Fractal3D) input3D(dt);
@@ -741,7 +767,9 @@ void App::frame() {
 
 bool App::computeIdle() {
     if (session.cli.hidden) return false;  // headless renders and tests run flat out
-    if (poster.active || job2D.active || camAnim.active || dragButton >= 0 || flying || gamepadActive) return false;
+    if (poster.active || job2D.active || camAnim.active || dragButton >= 0 || flying || gamepadActive || camPath.playing ||
+        video.active)
+        return false;
     for (int j = GLFW_JOYSTICK_1; j <= GLFW_JOYSTICK_LAST; j++)
         if (glfwJoystickIsGamepad(j)) return false;  // gamepads are polled, not event-driven
     if (view.rs.cycleSpeed != 0.0f || glfwGetTime() < ui.toastUntil) return false;
@@ -775,6 +803,7 @@ void App::handleKeys() {
     if (ctrl && pressed(ImGuiKey_Z)) io.KeyShift ? redo() : undo();
     if (ctrl && pressed(ImGuiKey_Y)) redo();
     if (pressed(ImGuiKey_N)) tourStep(io.KeyShift ? -1 : 1);
+    if (pressed(ImGuiKey_K) && !ctrl) addKeyframe();
     if (pressed(ImGuiKey_C) && !ctrl) {  // Fractint's 'c': color cycling
         if (view.rs.cycleSpeed != 0.0f) lastCycleSpeed = view.rs.cycleSpeed, view.rs.cycleSpeed = 0.0f;
         else view.rs.cycleSpeed = lastCycleSpeed;
@@ -1417,6 +1446,18 @@ void App::updatePoster() {
             if (!session.cli.shotPath.empty()) quit = true;
             return;
         }
+    }
+    if (finished && poster.toVideo) {  // one frame of a video: straight to the encoder
+        std::vector<uint8_t> px;
+        rend.setPalette(poster.palette);
+        bool ok = rend.readImage(poster.mode, &poster.target, &poster.index, poster.rs, poster.cs, poster.cycleOffset,
+                                 poster.w, poster.h, px);
+        applyPalette();
+        poster.active = false;
+        poster.toVideo = false;
+        if (ok) videoFrameRendered(px);
+        else finishVideo(false);
+        return;
     }
     if (finished) {
         std::vector<uint8_t> px;

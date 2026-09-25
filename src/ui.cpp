@@ -232,6 +232,7 @@ void App::drawUI() {
     if (ui.showDemo) ImGui::ShowDemoWindow(&ui.showDemo);
     if (ui.showFormulaEditor) drawFormulaEditor();
     if (ui.showGradientEditor) drawGradientEditor();
+    if (ui.showPathWindow || video.active) drawPathWindow();
     drawToast();
 }
 
@@ -280,6 +281,15 @@ void App::drawMenuBar() {
             if (ImGui::MenuItem(history.entries[i].first.c_str(), nullptr, i == history.pos)) jumpToHistory(i);
         ImGui::Separator();
         ImGui::MenuItem("Reopen my last view at startup", nullptr, &session.restoreSession);
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Animate")) {
+        if (ImGui::MenuItem("Add keyframe", "K")) addKeyframe();
+        if (ImGui::MenuItem(camPath.playing ? "Stop" : "Play path", nullptr, false, camPath.keys.size() >= 2)) {
+            camPath.playing = !camPath.playing;
+            camPath.playStart = now - (camPath.time >= pathDuration() ? 0 : camPath.time);
+        }
+        ImGui::MenuItem("Camera path & video...", nullptr, &ui.showPathWindow);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Mode")) {
@@ -807,6 +817,140 @@ void App::drawJuliaInset() {
     ImGui::End();
 }
 
+// ------------------------------------------------------------------ camera path & video
+void App::drawPathWindow() {
+    float fs_ = ImGui::GetFontSize();
+    ImGui::SetNextWindowSize(ImVec2(fs_ * 30, fs_ * 30), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f, fs_ * 3.0f), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.0f));
+    if (!ImGui::Begin("Camera path & video", &ui.showPathWindow)) {
+        ImGui::End();
+        return;
+    }
+    if (video.active) {
+        float prog = (video.frame + (poster.active ? 0.5f : 0.0f)) / std::max(video.frames, 1);
+        double el = glfwGetTime() - video.started;
+        ImGui::Text("Exporting %s", video.out.c_str());
+        ImGui::ProgressBar(prog, ImVec2(-1, 0), (std::to_string(video.frame) + " / " + std::to_string(video.frames) + " frames").c_str());
+        if (prog > 0.01f) ImGui::TextDisabled("%.0fs elapsed, about %.0fs left", el, el / prog - el);
+        if (ImGui::Button("Cancel export")) cancelVideo();
+        ImGui::End();
+        return;
+    }
+    ImGui::TextWrapped("Record views as keyframes (K adds the current view) and the app flies smoothly between them: "
+                       "camera, lighting, colors and every slider are interpolated.");
+    auto& keys = camPath.keys;
+    int remove = -1, up = -1;
+    if (ImGui::BeginTable("keys", 5, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingFixedFit,
+                          ImVec2(0, fs_ * 10))) {
+        ImGui::TableSetupColumn("#");
+        ImGui::TableSetupColumn("View", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Seconds");
+        ImGui::TableSetupColumn("");
+        ImGui::TableSetupColumn("");
+        ImGui::TableHeadersRow();
+        for (int i = 0; i < (int)keys.size(); i++) {
+            ImGui::PushID(i);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("%d", i + 1);
+            ImGui::TableNextColumn();
+            if (ImGui::Selectable(keys[i].label.c_str())) {
+                loadParText(keys[i].par, "keyframe", true);
+                camPath.playing = false;
+            }
+            ImGui::SetItemTooltip("Go to this keyframe");
+            ImGui::TableNextColumn();
+            ImGui::SetNextItemWidth(fs_ * 4);
+            if (i + 1 < (int)keys.size()) ImGui::DragFloat("##d", &keys[i].duration, 0.05f, 0.1f, 600.0f, "%.1f");
+            else ImGui::TextDisabled("end");
+            ImGui::TableNextColumn();
+            if (ImGui::SmallButton("set")) {
+                keys[i].par = parText();
+                keys[i].label = historyLabel();
+                camPath.parsed = false;
+            }
+            ImGui::SetItemTooltip("Replace this keyframe with the current view");
+            ImGui::SameLine();
+            if (i > 0 && ImGui::SmallButton("up")) up = i;
+            ImGui::TableNextColumn();
+            if (ImGui::SmallButton("x")) remove = i;
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    if (remove >= 0) keys.erase(keys.begin() + remove), camPath.parsed = false;
+    if (up > 0) std::swap(keys[up], keys[up - 1]), camPath.parsed = false;
+    if (ImGui::Button("Add keyframe (K)")) addKeyframe();
+    ImGui::SameLine();
+    if (ImGui::Button("Clear") && !keys.empty()) keys.clear(), camPath.parsed = false;
+
+    ImGui::SeparatorText("Play");
+    float dur = pathDuration();
+    ImGui::BeginDisabled(keys.size() < 2);
+    if (ImGui::Button(camPath.playing ? "Stop" : "Play")) {
+        camPath.playing = !camPath.playing;
+        if (camPath.playing) camPath.playStart = now - (camPath.time >= dur ? 0 : camPath.time);
+    }
+    ImGui::SameLine();
+    ImGui::Checkbox("Loop", &camPath.loop);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::SliderFloat("##time", &camPath.time, 0.0f, std::max(dur, 0.01f), "%.2f s")) {
+        camPath.playing = false;
+        applyPathTime(camPath.time);
+    }
+    ImGui::EndDisabled();
+
+    ImGui::SeparatorText("Save");
+    ImGui::SetNextItemWidth(fs_ * 10);
+    ImGui::InputText("##pathname", ui.pathName, sizeof ui.pathName);
+    ImGui::SameLine();
+    std::error_code ec;
+    fs::path dir = session.userDir / "paths";
+    if (ImGui::Button("Save path") && !keys.empty()) {
+        fs::create_directories(dir, ec);
+        std::string n = ui.pathName;
+        for (auto& ch : n)
+            if (ch == '/' || ch == '\\') ch = '_';
+        savePath(dir / (n + ".f3dpath"));
+    }
+    ImGui::SameLine();
+    if (ImGui::BeginCombo("##load", "Load...", ImGuiComboFlags_HeightLarge)) {
+        for (auto& e : fs::directory_iterator(dir, ec))
+            if (e.path().extension() == ".f3dpath" && ImGui::Selectable(e.path().stem().string().c_str())) loadPath(e.path());
+        ImGui::EndCombo();
+    }
+
+    ImGui::SeparatorText("Export video");
+    ImGui::SetNextItemWidth(fs_ * 8);
+    ImGui::InputInt2("Size", &camPath.videoW);
+    camPath.videoW = std::clamp(camPath.videoW & ~1, 16, 8192);  // even sizes for yuv420p
+    camPath.videoH = std::clamp(camPath.videoH & ~1, 16, 8192);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("1080p")) camPath.videoW = 1920, camPath.videoH = 1080;
+    ImGui::SameLine();
+    if (ImGui::SmallButton("4K")) camPath.videoW = 3840, camPath.videoH = 2160;
+    ImGui::SetNextItemWidth(fs_ * 8);
+    ImGui::SliderFloat("Frames per second", &camPath.fps, 10.0f, 120.0f, "%.0f");
+    ImGui::SetNextItemWidth(fs_ * 8);
+    ImGui::SliderInt("Samples per frame (3D)", &camPath.videoSamples, 1, 1024, "%d", ImGuiSliderFlags_Logarithmic);
+    const char* enc[] = {"H.264 (x264, best quality)", "H.264 (NVIDIA NVENC, fast)"};
+    ImGui::SetNextItemWidth(fs_ * 14);
+    ImGui::Combo("Encoder", &camPath.encoder, enc, 2);
+    int frames = std::max(2, (int)std::ceil(dur * camPath.fps) + 1);
+    ImGui::TextDisabled("%.1f s -> %d frames", dur, frames);
+    ImGui::BeginDisabled(keys.size() < 2);
+    if (ImGui::Button("Export video")) {
+        const char* home = std::getenv("HOME");
+        fs::path vids = home ? fs::path(home) / "Videos" / "fract3d" : session.picturesDir;
+        fs::create_directories(vids, ec);
+        startVideo((vids / ("fract3d-" + timestampName() + ".mp4")).string());
+    }
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("Saved to ~/Videos/fract3d (needs ffmpeg).");
+    ImGui::End();
+}
+
 // ------------------------------------------------------------------ gradient editor
 void App::drawGradientEditor() {
     float fs_ = ImGui::GetFontSize();
@@ -1210,7 +1354,8 @@ void App::drawHelp() {
                   {"R", "reset view"},
                   {"P", "toggle path tracing"},
                   {"Space", "pause parameter animation"},
-                  {"1 - 9", "switch fractal"}});
+                  {"1 - 9", "switch fractal"},
+                  {"K", "add a camera-path keyframe (Animate menu)"}});
     ImGui::SeparatorText("Classic 2D");
     table("h2d", {{"Left drag", "pan"},
                   {"Wheel / PgUp / PgDn", "zoom at the cursor"},

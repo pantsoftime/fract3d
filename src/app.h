@@ -6,8 +6,11 @@
 #include "renderer.h"
 #include "state.h"
 
+#include <array>
 #include <filesystem>
 #include <random>
+
+#include <sys/types.h>
 #include <string>
 #include <vector>
 
@@ -36,7 +39,9 @@ struct CliOptions {
     // testing aids for --ui-shot runs (there's no real mouse in a hidden window)
     float fakeMouse[2] = {-1, -1};
     bool insetOn = false, orbitOn = false;
-    std::vector<std::string> openWindows;  // --open gradient|formula|help|render
+    std::vector<std::string> openWindows;  // --open gradient|formula|help|render|path
+    std::string pathFile;                  // camera path to load (--path); with --render x.mp4 it's exported
+    float videoFps = 30;
 };
 
 // Everything that defines what's on screen. (Fractal parameter values live with
@@ -91,6 +96,8 @@ struct UiState {
     std::filesystem::file_time_type docsTime{}, presetsTime{}, formulasTime{};
     bool showFormulaEditor = false;
     bool showGradientEditor = false;
+    bool showPathWindow = false;
+    char pathName[96] = "my-path";
     int gradientSel = 0;  // selected stop in the gradient editor
     std::string formulaEdit;  // text in the editor (compiled on request)
 };
@@ -180,6 +187,7 @@ private:
     void drawFormulaControls();
     void drawJuliaInset();
     void drawGradientEditor();
+    void drawPathWindow();
     void drawFormulaEditor();
     bool paramWidget(Param& p);
 
@@ -295,7 +303,48 @@ public:
         ViewMode mode = ViewMode::Fractal3D;
         IndexTarget index;     // 2D posters
         Job2D job;
+        bool toVideo = false;  // a video frame: hand the pixels to the encoder instead of saving a PNG
     } poster;
+
+    // ---- camera paths and video export (animation.cpp)
+    struct Keyframe {
+        std::string par;        // the complete view
+        float duration = 3.0f;  // seconds to the next keyframe
+        std::string label;
+        ViewState v;            // parsed from par (see parseKeyframes)
+        std::string fractalKey;
+        std::vector<std::array<float, 4>> params;
+    };
+    struct CameraPath {
+        std::vector<Keyframe> keys;
+        bool parsed = false;
+        bool playing = false, loop = false;
+        double playStart = 0;
+        float time = 0;
+        float fps = 30;
+        int videoW = 1920, videoH = 1080, videoSamples = 32;
+        int encoder = 0;  // 0 libx264, 1 NVIDIA NVENC
+    } camPath;
+    struct VideoJob {
+        bool active = false;
+        int fd = -1;
+        pid_t pid = 0;
+        int frame = 0, frames = 0;
+        std::string out, restorePar;
+        double started = 0;
+    } video;
+    void addKeyframe();
+    void parseKeyframes();
+    float pathDuration() const;
+    void applyPathTime(float t);
+    void updatePathPlayback();
+    bool savePath(const std::filesystem::path& p);
+    bool loadPath(const std::filesystem::path& p);
+    bool startVideo(const std::string& out);
+    void nextVideoFrame();
+    void videoFrameRendered(const std::vector<uint8_t>& rgba);
+    void finishVideo(bool ok);
+    void cancelVideo();
 
     RenderTarget uiShotRT;
     int exitCode = 0;
