@@ -10,16 +10,23 @@ uniform float uDetail;
 uniform float uStepFactor;
 uniform int   uMaxSteps;
 uniform float uMaxT;
+uniform int   uFloor;          // the ground plane counts as a surface too
+uniform float uFloorY;
+
+float sceneDE(vec3 p, inout vec4 trap) {
+    float d = DE(p, trap);
+    return uFloor != 0 ? min(d, abs(p.y - uFloorY)) : d;
+}
 
 void main() {
     vec4 trap;
     if (int(gl_FragCoord.x) == 0) {
-        outColor = vec4(DE(uCamPos, trap), 0, 0, 1);
+        outColor = vec4(sceneDE(uCamPos, trap), 0, 0, 1);
         return;
     }
     float t = 0.0;
     for (int i = 0; i < uMaxSteps; i++) {
-        float d = DE(uCamPos + uProbeDir * t, trap);
+        float d = sceneDE(uCamPos + uProbeDir * t, trap);
         if (d < max(t * uPixelAngle * uDetail, 1e-7)) { outColor = vec4(t, 0, 0, 1); return; }
         t += d * uStepFactor;
         if (t > uMaxT) break;

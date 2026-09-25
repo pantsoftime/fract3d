@@ -306,6 +306,7 @@ bool Renderer::renderSample3D(RenderTarget& target, int sampleIndex, const Fract
     p.set3("uGlowColor", rs.glowColor);
     p.set("uFloor", (int)rs.floorOn);
     p.set("uFloorY", rs.floorY);
+    p.set("uFloorSide", v.pos.y >= rs.floorY ? 1.0f : -1.0f);
     p.set3("uFloorColor", rs.floorColor);
     p.set("uColorScale", rs.colorScale);
     p.set("uColorOffset", rs.colorOffset);

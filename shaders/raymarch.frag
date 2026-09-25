@@ -44,6 +44,7 @@ uniform float uGlowStrength;
 uniform vec3  uGlowColor;
 uniform int   uFloor;          // optional ground plane that catches shadows
 uniform float uFloorY;
+uniform float uFloorSide;      // +1 camera above the ground plane, -1 below (it's two-sided)
 uniform vec3  uFloorColor;
 
 // material / coloring
@@ -77,27 +78,30 @@ vec3 sky(vec3 rd, bool withSun) {
 float sceneDE(vec3 p, inout vec4 trap) {
     float d = DE(p, trap);
     if (uFloor != 0) {
-        float fd = p.y - uFloorY;
+        // signed toward the camera's side, so normals stay well defined on the plane
+        float fd = (p.y - uFloorY) * uFloorSide;
         if (fd < d) { d = fd; trap = vec4(0, 0, 0, -1); }
     }
     return d;
 }
 float mapDE(vec3 p) { vec4 t; return sceneDE(p, t); }
 
-struct Hit { bool hit; float t; int steps; vec4 trap; float minD; };
+struct Hit { bool hit; float t; int steps; vec4 trap; };
 
 // Marches the fractal only; the ground plane is intersected analytically, so it
 // costs nothing and extends all the way to the horizon.
 Hit march(vec3 ro, vec3 rd, float tStart, float maxT, float epsScale) {
-    Hit h; h.hit = false; h.t = tStart; h.steps = 0; h.trap = vec4(0); h.minD = 1e20;
+    Hit h; h.hit = false; h.t = tStart; h.steps = 0; h.trap = vec4(0);
     float tFloor = 1e30;
-    if (uFloor != 0 && rd.y < 0.0 && ro.y > uFloorY) tFloor = (uFloorY - ro.y) / rd.y;
+    if (uFloor != 0 && abs(rd.y) > 1e-7) {  // from above or below
+        float tf = (uFloorY - ro.y) / rd.y;
+        if (tf > tStart) tFloor = tf;
+    }
     float tEnd = min(maxT, tFloor);
     for (int i = 0; i < uMaxSteps; i++) {
         vec4 trap;
         float d = DE(ro + rd * h.t, trap);
         float eps = max(h.t * g_pixelAngle * uDetail * epsScale, 1e-7);
-        h.minD = min(h.minD, d / max(h.t, 1e-6));
         h.steps = i;
         if (d < eps) { h.hit = true; h.trap = trap; return h; }
         h.t += d * uStepFactor;

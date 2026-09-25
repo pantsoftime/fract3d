@@ -10,6 +10,7 @@
 #include <vector>
 
 struct GLFWwindow;
+struct GLFWmonitor;
 struct ImFont;
 
 struct CliOptions {
@@ -211,6 +212,14 @@ public:
     int frameCount = 0;
     bool fullscreen = false;
     int savedWin[4] = {0, 0, 1600, 900};
+    std::string fullscreenMonitor;  // monitor name chosen in View > Fullscreen on (saved in prefs)
+    void toggleFullscreen();
+    GLFWmonitor* pickMonitor();
+    void saveNamedPar();  // File > Save / Ctrl+S
+    struct CamAnim {
+        bool active = false;
+        float start = 0, yaw0 = 0, pitch0 = 0, dist0 = 1, yaw1 = 0, pitch1 = 0, dist1 = 1;
+    } camAnim;
     bool quit = false;
 };
 

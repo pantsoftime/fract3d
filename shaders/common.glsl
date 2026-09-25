@@ -12,8 +12,8 @@ mat3 rotX(float a) { float c = cos(a), s = sin(a); return mat3(1, 0, 0,  0, c, s
 mat3 rotY(float a) { float c = cos(a), s = sin(a); return mat3(c, 0, -s,  0, 1, 0,  s, 0, c); }
 mat3 rotZ(float a) { float c = cos(a), s = sin(a); return mat3(c, s, 0,  -s, c, 0,  0, 0, 1); }
 
-// Rotation about a unit `axis` (Rodrigues). Note GLSL mat3() is column-major, so as
-// written this is the transpose: it rotates vectors by -angle.
+// Rotation by `angle` radians (right-handed) about a unit axis k — Rodrigues'
+// formula. mat3() takes columns, so each group of three below is one column.
 mat3 rotAxis(vec3 k, float angle) {
     float c = cos(angle), s = sin(angle), t = 1.0 - c;
     return mat3(t * k.x * k.x + c,       t * k.x * k.y + s * k.z, t * k.x * k.z - s * k.y,

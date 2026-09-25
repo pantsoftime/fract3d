@@ -15,6 +15,13 @@
 #include <cstdlib>
 #include <random>
 #include <sstream>
+#include <thread>
+
+#include <fcntl.h>
+#include <spawn.h>
+#include <sys/wait.h>
+
+extern char** environ;
 
 namespace fs = std::filesystem;
 
@@ -193,9 +200,19 @@ static bool paletteCombo(App& app) {
     return changed;
 }
 
+// Opens a file or folder with the desktop's default application. Uses
+// posix_spawn with an argv (no shell), so any character in the path is safe.
 static void openPath(const fs::path& p) {
-    std::string cmd = "xdg-open '" + p.string() + "' >/dev/null 2>&1 &";
-    [[maybe_unused]] int r = std::system(cmd.c_str());
+    std::string path = p.string();
+    char* argv[] = {(char*)"xdg-open", path.data(), nullptr};
+    posix_spawn_file_actions_t fa;
+    posix_spawn_file_actions_init(&fa);
+    posix_spawn_file_actions_addopen(&fa, 1, "/dev/null", O_WRONLY, 0);
+    posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0);
+    pid_t pid;
+    if (posix_spawnp(&pid, "xdg-open", &fa, nullptr, argv, environ) == 0)
+        std::thread([pid] { waitpid(pid, nullptr, 0); }).detach();  // reap it, don't block the UI
+    posix_spawn_file_actions_destroy(&fa);
 }
 
 // ------------------------------------------------------------------ top level
@@ -220,7 +237,7 @@ void App::drawMenuBar() {
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10);
         ImGui::InputText("##parname", parName, sizeof parName);
         ImGui::SameLine();
-        if (ImGui::Button("Save PAR")) savePar(userDir / "params" / (std::string(parName) + ".par"));
+        if (ImGui::Button("Save PAR")) saveNamedPar();
         helpTip("Saves everything about the current view (fractal, camera, colors, lighting) to a small text file. Ctrl+S.");
         if (ImGui::BeginMenu("Load PAR")) {
             auto files = listParFiles();
@@ -275,18 +292,22 @@ void App::drawMenuBar() {
         ImGui::MenuItem("Controls & everything (Tab hides all)", "Tab", &showUI);
         ImGui::MenuItem("Learn panel", "L", &showLearn);
         ImGui::MenuItem("Keyboard & mouse help", "F1", &showHelp);
-        if (ImGui::MenuItem("Fullscreen", "F11", fullscreen)) {
-            // emulate the key so both paths share code
-            fullscreen = !fullscreen;
-            if (fullscreen) {
-                glfwGetWindowPos(win, &savedWin[0], &savedWin[1]);
-                glfwGetWindowSize(win, &savedWin[2], &savedWin[3]);
-                GLFWmonitor* mon = glfwGetPrimaryMonitor();
-                const GLFWvidmode* vm = glfwGetVideoMode(mon);
-                glfwSetWindowMonitor(win, mon, 0, 0, vm->width, vm->height, vm->refreshRate);
-            } else {
-                glfwSetWindowMonitor(win, nullptr, savedWin[0], savedWin[1], savedWin[2], savedWin[3], 0);
+        if (ImGui::MenuItem("Fullscreen", "F11", fullscreen)) toggleFullscreen();
+        int nMon = 0;
+        GLFWmonitor** mons = glfwGetMonitors(&nMon);
+        if (nMon > 1 && ImGui::BeginMenu("Fullscreen on")) {
+            for (int i = 0; i < nMon; i++) {
+                const char* name = glfwGetMonitorName(mons[i]);
+                const GLFWvidmode* vm = glfwGetVideoMode(mons[i]);
+                char label[160];
+                snprintf(label, sizeof label, "%s (%dx%d)", name ? name : "monitor", vm ? vm->width : 0, vm ? vm->height : 0);
+                if (ImGui::MenuItem(label, nullptr, fullscreenMonitor == (name ? name : ""))) {
+                    fullscreenMonitor = name ? name : "";
+                    if (fullscreen) toggleFullscreen();  // leave, then re-enter on the chosen monitor
+                    toggleFullscreen();
+                }
             }
+            ImGui::EndMenu();
         }
         ImGui::SeparatorText("Theme");
         if (ImGui::MenuItem("Modern", nullptr, uiTheme == 0)) uiTheme = 0, applyTheme();
@@ -677,8 +698,13 @@ void App::drawClassicPanel() {
         cs.height = 3.0;
     }
     ImGui::SameLine();
+    bool liftable = cs.formula <= 3 && !(cs.julia && cs.formula != 0) && !(cs.formula == 3 && cs.power != 3);
+    ImGui::BeginDisabled(!liftable);
     if (ImGui::Button("Lift into 3D landscape")) liftTo3D();
-    helpTip("Turn the escape time into height and fly over the result in 3D. Works for Mandelbrot, Burning Ship, Tricorn, Multibrot and Mandelbrot-Julia.");
+    ImGui::EndDisabled();
+    ImGui::SetItemTooltip(liftable ? "Turn the escape time into height and fly over the result in 3D."
+                                   : "The 3D landscape supports Mandelbrot (and its Julia sets), Burning Ship, Tricorn and "
+                                     "Multibrot z^3. Switch to one of those to lift this view into 3D.");
 
     ImGui::SeparatorText("Iteration");
     ImGui::SliderInt("Max iterations", &cs.maxIter, 16, kMaxIterations, "%d", ImGuiSliderFlags_Logarithmic);

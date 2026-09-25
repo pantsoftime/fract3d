@@ -177,6 +177,15 @@ bool App::loadPar(const fs::path& path) {
     return true;
 }
 
+void App::saveNamedPar() {
+    std::string name = parName;
+    // keep the name a plain file name; fall back to a timestamp when it's empty
+    for (auto& c : name)
+        if (c == '/' || c == '\\' || (unsigned char)c < 32) c = '_';
+    if (name.find_first_not_of(" ._") == std::string::npos) name = "view-" + timestampName();
+    savePar(userDir / "params" / (name + ".par"));
+}
+
 // Steps through the built-in presets (the Learn panel's Tour tab, or N / Shift+N).
 void App::tourStep(int delta) {
     std::vector<fs::path> tour;

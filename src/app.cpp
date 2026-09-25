@@ -166,6 +166,7 @@ void App::loadPrefs() {
         else if (k == "showLearn") showLearn = v != 0;
         else if (k == "flySpeed") flySpeed = std::isfinite(v) ? std::clamp(v, 0.01f, 100.0f) : 1.5f;
         else if (k == "keepLighting") keepLighting = v != 0;
+        else if (k == "fullscreenMonitor") fullscreenMonitor = line.substr(e + 1);
         else
             visitRender(rs, [&](const char* name, const char*, auto* ptr, int, unsigned flags) {
                 if ((flags & kPerf) && k == name) *ptr = static_cast<std::remove_reference_t<decltype(*ptr)>>(v);
@@ -178,8 +179,8 @@ void App::loadPrefs() {
 void App::savePrefs() {
     FILE* f = fopen((userDir / "prefs.ini").c_str(), "w");
     if (!f) return;
-    fprintf(f, "theme=%d\nuiScale=%g\nshowLearn=%d\nflySpeed=%g\nkeepLighting=%d\n", uiTheme, uiScale, (int)showLearn,
-            flySpeed, (int)keepLighting);
+    fprintf(f, "theme=%d\nuiScale=%g\nshowLearn=%d\nflySpeed=%g\nkeepLighting=%d\nfullscreenMonitor=%s\n", uiTheme,
+            uiScale, (int)showLearn, flySpeed, (int)keepLighting, fullscreenMonitor.c_str());
     visitRender(rs, [&](const char* name, const char*, auto* ptr, int, unsigned flags) {
         if (flags & kPerf) fprintf(f, "%s=%g\n", name, (double)*ptr);
     });
@@ -259,6 +260,50 @@ void App::resetView() {
     cam.lookAt(Vec3(f.camPos[0], f.camPos[1], f.camPos[2]), Vec3(f.camTarget[0], f.camTarget[1], f.camTarget[2]));
 }
 
+// ------------------------------------------------------------------ fullscreen
+// Wayland doesn't expose window positions, so there the monitor comes from the
+// user's choice (View > Fullscreen on) or the primary one; on X11 it's the
+// monitor that shows most of the window.
+GLFWmonitor* App::pickMonitor() {
+    int n = 0;
+    GLFWmonitor** mons = glfwGetMonitors(&n);
+    if (n == 0) return nullptr;
+    for (int i = 0; i < n; i++) {
+        const char* name = glfwGetMonitorName(mons[i]);
+        if (name && fullscreenMonitor == name) return mons[i];
+    }
+    if (glfwGetPlatform() == GLFW_PLATFORM_WAYLAND) return glfwGetPrimaryMonitor();
+    int wx, wy, ww, wh;
+    glfwGetWindowPos(win, &wx, &wy);
+    glfwGetWindowSize(win, &ww, &wh);
+    GLFWmonitor* best = glfwGetPrimaryMonitor();
+    long bestArea = -1;
+    for (int i = 0; i < n; i++) {
+        int mx, my, mw, mh;
+        glfwGetMonitorWorkarea(mons[i], &mx, &my, &mw, &mh);
+        long ox = std::max(0, std::min(wx + ww, mx + mw) - std::max(wx, mx));
+        long oy = std::max(0, std::min(wy + wh, my + mh) - std::max(wy, my));
+        if (ox * oy > bestArea) bestArea = ox * oy, best = mons[i];
+    }
+    return best;
+}
+
+void App::toggleFullscreen() {
+    bool wayland = glfwGetPlatform() == GLFW_PLATFORM_WAYLAND;
+    if (!fullscreen) {
+        GLFWmonitor* mon = pickMonitor();
+        if (!mon) return;
+        if (!wayland) glfwGetWindowPos(win, &savedWin[0], &savedWin[1]);  // not available on Wayland
+        glfwGetWindowSize(win, &savedWin[2], &savedWin[3]);
+        const GLFWvidmode* vm = glfwGetVideoMode(mon);
+        glfwSetWindowMonitor(win, mon, 0, 0, vm->width, vm->height, vm->refreshRate);
+        fullscreen = true;
+    } else {
+        glfwSetWindowMonitor(win, nullptr, savedWin[0], savedWin[1], savedWin[2], savedWin[3], 0);
+        fullscreen = false;
+    }
+}
+
 void App::setMode(ViewMode m) {
     mode = m;
     shownSig2D.clear();
@@ -270,9 +315,10 @@ void App::setMode(ViewMode m) {
 void App::frame() {
     glfwPollEvents();
     now = glfwGetTime();
-    dt = (float)std::min(now - lastFrameTime, 0.1);
+    double rawDt = now - lastFrameTime;
+    dt = (float)std::min(rawDt, 0.1);  // animation/motion step, clamped after stalls
     lastFrameTime = now;
-    fps = fps * 0.95f + (dt > 0 ? 1.0f / dt : 0) * 0.05f;
+    fps = fps * 0.95f + (rawDt > 0 ? (float)(1.0 / rawDt) : 0.0f) * 0.05f;
     glfwGetFramebufferSize(win, &fbW, &fbH);
     glfwGetWindowSize(win, &winW, &winH);
     if (fbW <= 0 || fbH <= 0) {  // minimized
@@ -287,6 +333,15 @@ void App::frame() {
     handleKeys();
     if (mode == ViewMode::Fractal3D) input3D(dt);
     else input2D(dt);
+    if (camAnim.active) {
+        float t = std::min((float)(now - camAnim.start) / 0.45f, 1.0f);
+        float s = t * t * (3.0f - 2.0f * t);
+        float dyaw = std::remainder(camAnim.yaw1 - camAnim.yaw0, 6.2831853f);  // shortest way round
+        cam.yaw = camAnim.yaw0 + dyaw * s;
+        cam.pitch = camAnim.pitch0 + (camAnim.pitch1 - camAnim.pitch0) * s;
+        cam.distance = camAnim.dist0 * std::pow(camAnim.dist1 / camAnim.dist0, s);
+        if (t >= 1.0f || dragButton >= 0) camAnim.active = false;
+    }
 
     // live reload of shaders/ and fractals/ (edit a .glsl file and save)
     static double lastCheck = 0;
@@ -352,7 +407,7 @@ void App::handleKeys() {
     if (pressed(ImGuiKey_L)) showLearn = !showLearn;
     if (pressed(ImGuiKey_M)) setMode(mode == ViewMode::Fractal3D ? ViewMode::Classic2D : ViewMode::Fractal3D);
     if (pressed(ImGuiKey_Escape) && showHelp) showHelp = false;
-    if (ctrl && pressed(ImGuiKey_S)) savePar(userDir / "params" / (std::string(parName) + ".par"));
+    if (ctrl && pressed(ImGuiKey_S)) saveNamedPar();
     if (ctrl && pressed(ImGuiKey_Q)) quit = true;
     if (pressed(ImGuiKey_N)) tourStep(io.KeyShift ? -1 : 1);
     if (pressed(ImGuiKey_C) && !ctrl) {  // Fractint's 'c': color cycling
@@ -361,18 +416,7 @@ void App::handleKeys() {
         else rs.cycleSpeed = lastSpeed;
         toast(rs.cycleSpeed != 0.0f ? "Color cycling on" : "Color cycling off", 1.2f);
     }
-    if (pressed(ImGuiKey_F11)) {
-        fullscreen = !fullscreen;
-        if (fullscreen) {
-            glfwGetWindowPos(win, &savedWin[0], &savedWin[1]);
-            glfwGetWindowSize(win, &savedWin[2], &savedWin[3]);
-            GLFWmonitor* mon = glfwGetPrimaryMonitor();
-            const GLFWvidmode* vm = glfwGetVideoMode(mon);
-            glfwSetWindowMonitor(win, mon, 0, 0, vm->width, vm->height, vm->refreshRate);
-        } else {
-            glfwSetWindowMonitor(win, nullptr, savedWin[0], savedWin[1], savedWin[2], savedWin[3], 0);
-        }
-    }
+    if (pressed(ImGuiKey_F11)) toggleFullscreen();
 
     if (mode == ViewMode::Fractal3D) {
         if (pressed(ImGuiKey_P)) {
@@ -510,10 +554,12 @@ void App::input2D(float dt) {
         if (ImGui::IsKeyDown(ImGuiKey_PageDown)) wheel -= dt * 4;
     }
     if (wheel != 0.0f) {
-        double f = std::pow(0.8, wheel);
+        // clamp the zoom factor first, so hitting a limit doesn't slide the view
+        double newH = std::clamp(cs.height * std::pow(0.8, wheel), 1e-15, 50.0);
+        double f = newH / cs.height;
         cs.cx = px + (cs.cx - px) * f;
         cs.cy = py + (cs.cy - py) * f;
-        cs.height = std::clamp(cs.height * f, 1e-15, 50.0);
+        cs.height = newH;
     }
 }
 
@@ -649,8 +695,11 @@ void App::updateProbe() {
             deAtCam = de;
             centerHitT = hit;
         } else if (hit > 0) {
-            cam.lookAt(cam.pos, cam.pos + dir * hit);
-            toast("Orbit center moved to the point you double-clicked", 1.5f);
+            // turn smoothly toward the clicked point; it becomes the new orbit center
+            Camera goal = cam;
+            goal.lookAt(cam.pos, cam.pos + dir * hit);
+            camAnim = {true, (float)now, cam.yaw, cam.pitch, cam.distance, goal.yaw, goal.pitch, goal.distance};
+            toast("Turning to face the point you double-clicked - it's the new orbit center", 1.5f);
         } else {
             toast("Nothing there - double-click on the fractal surface", 1.5f);
         }
@@ -900,6 +949,10 @@ void App::updatePoster() {
 
 // ------------------------------------------------------------------ 2D <-> 3D bridge
 void App::liftTo3D() {
+    if (cs.formula > 3 || (cs.julia && cs.formula != 0)) {
+        toast("The 3D landscape supports Mandelbrot (and its Julia sets), Burning Ship, Tricorn and Multibrot z^3", 4);
+        return;
+    }
     int li = lib_.indexOf("landscape");
     if (li < 0) {
         toast("landscape.glsl not found");
@@ -919,10 +972,13 @@ void App::liftTo3D() {
     if (auto* p = f.find("zoom")) p->value[0] = (float)(3.0 / cs.height);
     if (auto* p = f.find("iterations")) p->value[0] = (float)std::clamp(cs.maxIter, 10, 1500);
     if (auto* p = f.find("juliaC")) { p->value[0] = (float)cs.jx; p->value[1] = (float)cs.jy; }
+    int palette = rs.palette;  // the point of lifting is continuity: keep the 2D palette
     selectFractal(li, true);
     setMode(ViewMode::Fractal3D);
+    rs.palette = palette;
+    applyPalette();
     rs.colorMode = 0;
-    rs.colorScale = cs.colorDensity;
+    rs.colorScale = cs.colorDensity;  // landscape trap.x = iterations / 256, so density maps 1:1
     rs.colorOffset = 0;
     rs.paletteMix = 1.0f;
     if (cs.height < 1e-4) toast("Note: 3D uses single precision; very deep zooms get blocky", 4);
@@ -942,6 +998,7 @@ void App::flattenTo2D() {
         cs.jx = f.find("juliaC")->value[0];
         cs.jy = f.find("juliaC")->value[1];
         cs.maxIter = (int)f.find("iterations")->value[0];
+        cs.colorDensity = std::clamp(rs.colorScale, 0.05f, 16.0f);  // same palette spacing as in 3D
     }
     setMode(ViewMode::Classic2D);
 }

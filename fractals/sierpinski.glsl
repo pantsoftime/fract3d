@@ -27,8 +27,9 @@
 float DE(vec3 p, inout vec4 trap) {
     mat3 R = rotEulerDeg(rotation);
     bool rot = dot(rotation, rotation) > 0.0;
-    // stand the pyramid on its base: map world +y onto the (1,1,1) vertex
-    vec3 z = rotAxis(vec3(0.70710678, 0.0, -0.70710678), -0.95531662) * p;
+    // Stand the pyramid on its base: this rotation takes world +y to the (1,1,1)
+    // vertex direction (the angle between them is acos(1/sqrt 3) = 0.9553 rad).
+    vec3 z = rotAxis(vec3(0.70710678, 0.0, -0.70710678), 0.95531662) * p;
     float orb = 1e10;
     int n = 0;
     while (n < iterations) {
