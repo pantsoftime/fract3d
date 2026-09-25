@@ -603,6 +603,29 @@ int App::selfTest() {
     check(isImageSequence("out/f-%05d.png") && isImageSequence("f%d.png") && !isImageSequence("f-%05d.mp4") &&
               !isImageSequence("f%s%05d.png") && !isImageSequence("f%d%d.png") && !isImageSequence("plain.png"),
           "PNG sequence patterns are recognized safely");
+    // progressive 2D rendering: with a tiny budget (one pass per step) every band must still be
+    // started properly - a band begun right as the budget ran out used to stay black
+    {
+        IndexTarget t;
+        Job2D j;
+        j.active = true;
+        j.cs = Classic2DSettings();
+        j.cs.maxIter = 64;
+        j.cs.fp64 = 0;
+        j.chunk = 16;
+        int w = 8192, h = 400;  // wide, so each band is only ~128 rows: several bands
+        bool ok = t.ensure(w, h);
+        if (ok) {
+            t.clear();
+            for (int n = 0; n < 10000 && !stepJob2D(j, t, 1e-9); n++) {}
+            std::vector<float> v((size_t)w * h);
+            glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT);
+            glGetTextureImage(t.value, 0, GL_RED, GL_FLOAT, (GLsizei)(v.size() * sizeof(float)), v.data());
+            ok = std::none_of(v.begin(), v.end(), [](float x) { return x < -1.5f; });
+        }
+        t.release();
+        check(ok, "a 2D render in the smallest steps leaves no band undrawn");
+    }
     // mouse-wheel zoom: eased notches add up exactly; a zoom covers a share of the gap to
     // the surface ahead (not to the orbit target) and never all of it
     wheelPending = 3;
@@ -1488,14 +1511,18 @@ bool App::stepJob2D(Job2D& job, IndexTarget& target, double budgetMs, int stateS
     double spent = 0;
     int passes = 0;
     while (job.active && !pt.full()) {
+        // A new band starts with a "first" pass that initializes its orbits. Only commit
+        // to the band once that pass is really issued: if the budget ran out right at a
+        // band boundary, the next frame must still begin it with its first pass (it
+        // didn't, and the band stayed black).
         bool first = job.bandRows == 0;
-        if (first) {
-            job.bandRows = std::min(rend.bandRowsFor(tw), th - job.row);
-            job.itersDone = 0;
-        }
-        int k = std::max(std::min(job.chunk, maxIter - job.itersDone), 1);
+        int bandRows = first ? std::min(rend.bandRowsFor(tw), th - job.row) : job.bandRows;
+        int itersDone = first ? 0 : job.itersDone;
+        int k = std::max(std::min(job.chunk, maxIter - itersDone), 1);
         double est = pt.msPerWork * k;
         if (passes > 0 && spent + est > budgetMs) break;
+        job.bandRows = bandRows;
+        job.itersDone = itersDone;
         int y0 = th - job.row - job.bandRows;  // bands run top-down (GL rows count up)
         pt.begin((float)k, first);
         bool ok = rend.dispatch2D(target, job.cs, y0, job.bandRows, k, first, stateSlot);

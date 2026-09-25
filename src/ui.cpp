@@ -739,13 +739,20 @@ void App::drawClassicPanel() {
     if (view.cs.formula == 5) ImGui::SliderFloat2("Phoenix p", view.cs.phoenixP, -1.0f, 1.0f);
 
     ImGui::SeparatorText("View");
-    bool deepCenter = hp::bitsForPixel(view.cs.height / std::max(fbH, 1)) > 64;
+    // (The panel keeps the same layout whatever the zoom or render state, so nothing
+    // below jumps around while you zoom.)
+    bool deepCenter = view.cs.height / std::max(fbH, 1) < 1e-13;  // where doubles can't place a pixel any more
     if (!deepCenter) {
         ImGui::InputDouble("Center real", &view.cs.cx, 0, 0, "%.15f");
         ImGui::InputDouble("Center imag", &view.cs.cy, 0, 0, "%.15f");
     } else {
-        // doubles can't locate the center any more: show (and edit) the exact one below
-        ImGui::TextDisabled("Center: past double precision - see Exact center");
+        // doubles can't locate the center any more: show the exact one (edit it below)
+        syncCenter();
+        int digits = hp::digitsForPixel(view.cs.height / std::max(fbH, 1));
+        std::string re = hp::round(view.hpRe, digits), im = hp::round(view.hpIm, digits);
+        ImGui::InputText("Center real", &re, ImGuiInputTextFlags_ReadOnly);
+        ImGui::SetItemTooltip("Past double precision: every digit is kept in Exact center below, where you can edit it.");
+        ImGui::InputText("Center imag", &im, ImGuiInputTextFlags_ReadOnly);
     }
     double mag = 3.0 / view.cs.height;
     if (ImGui::InputDouble("Magnification", &mag, 0, 0, "%.6g") && mag > 0) view.cs.height = 3.0 / mag;
@@ -762,14 +769,13 @@ void App::drawClassicPanel() {
     if (deep) snprintf(precLabel, sizeof precLabel, "(deep, %d bits)", hp::bitsForPixel(view.cs.height / fbH));
     else snprintf(precLabel, sizeof precLabel, fp64 ? "(fp64)" : "(fp32)");
     ImGui::TextDisabled("%s", precLabel);
-    if (deep) {
-        ImGui::Checkbox("Skip ahead (BLA)", &view.cs.bla);
-        helpTip("While a pixel stays very close to the reference orbit, thousands of iterations can be replaced by "
-                "one linear step (bivariate linear approximation). Near a deep minibrot that's 5x faster, and the "
-                "picture is the same: the approximation is only used where its error is below double precision.");
-    }
-    if (deep && (refPending || !refWorker.ready()))
-        ImGui::ProgressBar(refWorker.progress(), ImVec2(-1, 0), "reference orbit (high precision)...");
+    ImGui::BeginDisabled(!deep);
+    ImGui::Checkbox("Skip ahead (BLA)", &view.cs.bla);
+    ImGui::EndDisabled();
+    ImGui::SetItemTooltip("Deep zoom only. While a pixel stays very close to the reference orbit, thousands of iterations "
+                          "can be replaced by one linear step (bivariate linear approximation). Near a deep minibrot "
+                          "that's 5x faster, and the picture is the same: the approximation is only used where its error "
+                          "is below double precision.");
     if (view.cs.formula != 0 && view.cs.height / fbH < 1e-13)
         ImGui::TextWrapped("Past the limit of double precision - deep zoom (perturbation) works for the Mandelbrot formula "
                            "and its Julia sets.");
@@ -814,13 +820,18 @@ void App::drawClassicPanel() {
 
     ImGui::SeparatorText("Iteration");
     ImGui::SliderInt("Max iterations", &view.cs.maxIter, 16, kMaxIterations, "%d", ImGuiSliderFlags_Logarithmic);
-    if (job2D.active) {
+    helpTip("Points still bounded after this many steps are declared 'inside'. Deeper zooms need more. Keys: + and - double or halve it.");
+    // one status bar, always there
+    if (deep && (refPending || !refWorker.ready())) {
+        ImGui::ProgressBar(refWorker.progress(), ImVec2(-1, 0), "reference orbit (high precision)...");
+    } else if (job2D.active) {
         float th = (float)(job2D.offscreen ? work2D.h : rend.index2D.h);
         float bandFrac = job2D.bandRows > 0 ? (float)job2D.itersDone / std::max(job2D.cs.maxIter, 1) : 0.0f;
         float prog = th > 0 ? (job2D.row + job2D.bandRows * bandFrac) / th : 0.0f;
         ImGui::ProgressBar(prog, ImVec2(-1, 0), "drawing...");
+    } else {
+        ImGui::ProgressBar(1.0f, ImVec2(-1, 0), "done");
     }
-    helpTip("Points still bounded after this many steps are declared 'inside'. Deeper zooms need more. Keys: + and - double or halve it.");
     ImGui::SliderFloat("Bailout", &view.cs.bailout, 2.0f, 1000.0f, "%.1f", ImGuiSliderFlags_Logarithmic);
     helpTip("Escape radius: once |z| passes it, the point is counted as escaped. 2 is Fractint's value and is enough to prove escape for the Mandelbrot set. It changes the color bands, not the set itself. Smooth coloring always uses at least 64.");
 
