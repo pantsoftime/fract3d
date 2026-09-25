@@ -62,6 +62,7 @@ int main(int argc, char** argv) {
         else if (a == "--path") o.pathFile = next();
         else if (a == "--fps") o.videoFps = (float)atof(next().c_str());
         else if (a == "--path-time") o.pathTime = (float)atof(next().c_str());
+        else if (a == "--dump-iterations") o.dumpIterations = next();  // testing: see tools/itercheck.cpp
         else if (a == "--self-test") o.selfTest = o.hidden = true;
         else if (a == "--orbit") o.orbitOn = true;
         else if (a == "--gl-debug-verbose") o.glDebug = o.glDebugVerbose = true;

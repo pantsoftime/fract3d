@@ -114,13 +114,13 @@ void RefOrbitWorker::request(const RefOrbitRequest& r) {
             mpfr_set_str(cr, r.re.c_str(), 10, MPFR_RNDN);
             mpfr_set_str(ci, r.im.c_str(), 10, MPFR_RNDN);
         }
-        std::vector<float> out;
+        std::vector<double> out;
         out.reserve(2 * (size_t)std::min(r.maxIter + 1, 1 << 22));
         double bail2 = (double)r.bailout * r.bailout;
         for (int n = 0; n <= r.maxIter && !cancel_; n++) {
             double x = mpfr_get_d(zr, MPFR_RNDN), y = mpfr_get_d(zi, MPFR_RNDN);
-            out.push_back((float)x);
-            out.push_back((float)y);
+            out.push_back(x);
+            out.push_back(y);
             if (x * x + y * y > bail2) break;  // the reference escaped: pixels rebase at the end
             // z = z^2 + c
             mpfr_sqr(t1, zr, MPFR_RNDN);

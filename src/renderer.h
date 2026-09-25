@@ -66,7 +66,7 @@ public:
     // Deep zoom (perturbation, see deepzoom.h): used for the Mandelbrot set and its
     // Julia sets when a pixel is smaller than doubles can resolve, or when forced.
     bool classicUsesDeep(const Classic2DSettings& cs, int targetH) const;
-    void setReferenceOrbit(const std::vector<float>& xy);  // uploads Z_0..Z_n
+    void setReferenceOrbit(const std::vector<double>& xy);  // uploads Z_0..Z_n
     // (view center - reference point), in plane units
     void setDeepOffset(double dx, double dy) { deepOffset_[0] = dx, deepOffset_[1] = dy; }
     int referenceLength() const { return refLen_; }

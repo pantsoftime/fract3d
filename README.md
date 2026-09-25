@@ -144,8 +144,9 @@ cmake --preset asan && cmake --build --preset asan && ctest --preset asan
 ```
 
 The suite renders every fractal, preset (against golden images), formula and UI window headlessly; checks
-that saved views reproduce their images exactly, that hostile PAR files are repaired, that deep zoom agrees
-with double precision, and (with `--self-test`) undo/redo and exact deep-zoom panning.
+that saved views reproduce their images exactly, that hostile PAR files are repaired, that deep zoom matches
+exact arithmetic (`tools/itercheck` recomputes every pixel with MPFR), and (with `--self-test`) undo/redo, camera
+paths and exact deep-zoom panning.
 
 ## Layout
 
@@ -156,5 +157,5 @@ fractals/   one self-describing .glsl per 3D fractal
 formulas/   Fractint-style .frm formula files
 presets/    the guided tour (.par)
 docs/       concepts.txt and classic.txt (Learn panel content), the code review and its resolution
-tests/      golden images, hostile inputs, test paths; tools/imgdiff
+tests/      golden images, hostile inputs, test paths and deep views; tools/ imgdiff and itercheck (exact MPFR check)
 ```

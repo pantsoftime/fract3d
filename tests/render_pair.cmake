@@ -1,0 +1,15 @@
+# Renders two PARs and compares the images with imgdiff's default tolerance.
+#   -DAPP -DDIFF -DPAR -DGOLDEN_PAR -DOUT=dir -DSIZE
+get_filename_component(a ${GOLDEN_PAR} NAME_WE)
+get_filename_component(b ${PAR} NAME_WE)
+foreach(p ${GOLDEN_PAR} ${PAR})
+  get_filename_component(n ${p} NAME_WE)
+  execute_process(COMMAND ${APP} --par ${p} --render ${OUT}/pair-${n}.png --size ${SIZE} RESULT_VARIABLE rc OUTPUT_QUIET)
+  if(NOT rc EQUAL 0)
+    message(FATAL_ERROR "render of ${p} failed (exit ${rc})")
+  endif()
+endforeach()
+execute_process(COMMAND ${DIFF} ${OUT}/pair-${a}.png ${OUT}/pair-${b}.png RESULT_VARIABLE rc)
+if(NOT rc EQUAL 0)
+  message(FATAL_ERROR "${b} differs from ${a}")
+endif()

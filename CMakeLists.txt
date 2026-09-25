@@ -75,6 +75,8 @@ if(FRACT3D_TESTS)
   enable_testing()
   add_executable(imgdiff tools/imgdiff.cpp)
   target_include_directories(imgdiff SYSTEM PRIVATE third_party/stb)
+  add_executable(itercheck tools/itercheck.cpp)
+  target_link_libraries(itercheck PRIVATE PkgConfig::MPFR)
 
   set(TEST_OUT ${CMAKE_BINARY_DIR}/test-out)
   file(MAKE_DIRECTORY ${TEST_OUT})
@@ -163,13 +165,31 @@ if(FRACT3D_TESTS)
   add_test(NAME ui.path-window COMMAND fract3d --fractal menger --path ${CMAKE_SOURCE_DIR}/tests/menger-twist.f3dpath
                                        --open path --ui-shot ${TEST_OUT}/ui-path.png --size 1600x900 --frames 20)
 
-  # deep zoom: perturbation must agree with plain doubles where both work (the
-  # tolerance allows the per-pixel rounding noise along chaotic filaments)
-  add_test(NAME deep.fp64-reference
-           COMMAND fract3d --par ${CMAKE_SOURCE_DIR}/tests/deep-seahorse-fp64.par --render ${TEST_OUT}/deep-fp64.png --size 240x135)
-  add_test(NAME deep.matches-fp64
-           COMMAND ${CMAKE_COMMAND} -E env sh -c "$<TARGET_FILE:fract3d> --par ${CMAKE_SOURCE_DIR}/tests/deep-seahorse-perturb.par --render ${TEST_OUT}/deep-perturb.png --size 240x135 >/dev/null && $<TARGET_FILE:imgdiff> ${TEST_OUT}/deep-fp64.png ${TEST_OUT}/deep-perturb.png --max-mean 6 --max-bad-fraction 0.08")
-  set_tests_properties(deep.matches-fp64 PROPERTIES DEPENDS deep.fp64-reference)
+  # deep zoom: perturbation checked against exact MPFR arithmetic (tools/itercheck). The
+  # allowances sit just above each view's own conditioning: moving the 1e-20 view's center
+  # by a millionth of a pixel already changes 0.42% of its pixels.
+  foreach(spec "seahorse-5e-10|-0.743643887037151|0.131825904205330|5e-10|8000|0.005"
+               "seahorse-1e-20|-0.743643887037158704752191506114774|0.131825904205311970493132056385139|1e-20|20000|0.01"
+               "dendrite-perturb|-0.10109636384562|0.95628651080914|1e-10|4000|0.0005")
+    string(REPLACE "|" ";" f "${spec}")
+    list(GET f 0 name)
+    list(GET f 1 re)
+    list(GET f 2 im)
+    list(GET f 3 h)
+    list(GET f 4 it)
+    list(GET f 5 tol)
+    add_test(NAME deep.exact-${name}
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:fract3d> -DCHECK=$<TARGET_FILE:itercheck>
+                     -DPAR=${CMAKE_SOURCE_DIR}/tests/deep/${name}.par -DOUT=${TEST_OUT} -DNAME=deep-${name} -DSIZE=240x135
+                     -DRE=${re} -DIM=${im} -DHEIGHT=${h} -DMAXITER=${it} -DMAXMISMATCH=${tol}
+                     -P ${CMAKE_SOURCE_DIR}/tests/iter_check.cmake)
+  endforeach()
+  # ...and agrees with plain doubles where both are accurate (a well-conditioned view)
+  add_test(NAME deep.agrees-with-fp64
+           COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:fract3d> -DDIFF=$<TARGET_FILE:imgdiff>
+                   -DPAR=${CMAKE_SOURCE_DIR}/tests/deep/dendrite-perturb.par
+                   -DGOLDEN_PAR=${CMAKE_SOURCE_DIR}/tests/deep/dendrite-fp64.par -DOUT=${TEST_OUT} -DSIZE=240x135
+                   -P ${CMAKE_SOURCE_DIR}/tests/render_pair.cmake)
 
   # an impossible render must fail cleanly with a non-zero exit code
   add_test(NAME oversize_render_fails

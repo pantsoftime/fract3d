@@ -43,7 +43,8 @@ struct CliOptions {
     std::vector<std::string> openWindows;  // --open gradient|formula|help|render|path
     std::string pathFile;                  // camera path to load (--path); with --render x.mp4 it's exported
     float videoFps = 30;
-    float pathTime = -1;  // --path-time: render the camera path at this time (with --render x.png)
+    float pathTime = -1;
+    std::string dumpIterations;  // --dump-iterations: 2D renders also write the raw iteration buffer (tests)  // --path-time: render the camera path at this time (with --render x.png)
 };
 
 // Everything that defines what's on screen. (Fractal parameter values live with

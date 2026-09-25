@@ -372,9 +372,9 @@ bool Renderer::classicUsesDeep(const Classic2DSettings& cs, int targetH) const {
     return cs.height / std::max(targetH, 1) < 1e-13;  // doubles start to run out here
 }
 
-void Renderer::setReferenceOrbit(const std::vector<float>& xy) {
+void Renderer::setReferenceOrbit(const std::vector<double>& xy) {
     if (!refSsbo_) glCreateBuffers(1, &refSsbo_);
-    glNamedBufferData(refSsbo_, (GLsizeiptr)std::max<size_t>(xy.size(), 2) * sizeof(float), xy.empty() ? nullptr : xy.data(),
+    glNamedBufferData(refSsbo_, (GLsizeiptr)std::max<size_t>(xy.size(), 2) * sizeof(double), xy.empty() ? nullptr : xy.data(),
                       GL_STATIC_DRAW);
     refLen_ = (int)(xy.size() / 2);
 }
@@ -438,13 +438,8 @@ bool Renderer::dispatch2D(IndexTarget& out, const Classic2DSettings& cs, int y0,
     p.set("uP2", cs.p2[0], cs.p2[1]);
     p.set("uP3", cs.p3[0], cs.p3[1]);
     if (deep) {
-        // pixel size as mantissa * 2^exponent: at 10^100x it's far below the smallest float
         double pixel = cs.height / out.h;
-        int pe = 0;
-        double pm = std::frexp(pixel, &pe);
-        p.set("uPixelMant", (float)pm);
-        p.set("uPixelExp", pe);
-        p.set("uRefOffsetPx", (float)(deepOffset_[0] / pixel), (float)(deepOffset_[1] / pixel));
+        p.setd("uRefOffsetPx", deepOffset_[0] / pixel, deepOffset_[1] / pixel);
         p.set("uRefLen", refLen_);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, refSsbo_);
     }

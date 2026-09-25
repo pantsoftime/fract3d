@@ -123,37 +123,33 @@ void escaped(CPLX z, int i, float powerF, REAL bail) {
 #ifdef PERTURB
 // ---------------------------------------------------------------- deep zoom
 // Perturbation against a reference orbit computed in high precision on the CPU
-// (see src/deepzoom.h). Each pixel iterates only delta = z - Z, stored as a
-// float mantissa and an integer exponent (value = m * 2^e), because deltas at
-// deep zooms are far below the smallest float.
-layout(std430, binding = 0) readonly buffer RefOrbit { vec2 refZ[]; };
+// (see src/deepzoom.h). Each pixel iterates only delta = z - Z in doubles. The
+// deepest zoom (kMinHeight, 1e-290) keeps even a pixel above the smallest double
+// (1e-308), so no separate exponent is needed.
+//
+// Why doubles, when floats would be 64x faster on a GeForce: deep views need
+// thousands of iterations, and each one adds rounding error that the chaotic
+// dynamics near the set amplify. With float deltas, a 10^20x seahorse view at
+// 20000 iterations had 21% of its pixels escape at the wrong iteration (checked
+// against exact MPFR arithmetic with tools/itercheck); with doubles it matches
+// exact arithmetic about as well as the view allows (moving its center by a
+// millionth of a pixel changes 0.4% of the pixels).
+layout(std430, binding = 0) readonly buffer RefOrbit { dvec2 refZ[]; };
 uniform int   uRefLen;       // entries in refZ
-uniform float uPixelMant;    // pixel size = uPixelMant * 2^uPixelExp
-uniform int   uPixelExp;
-uniform vec2  uRefOffsetPx;  // (view center - reference point) in pixels
+uniform dvec2 uRefOffsetPx;  // (view center - reference point) in pixels
 
-void renorm(inout vec2 m, inout int e) {
-    float a = max(abs(m.x), abs(m.y));
-    if (a == 0.0 || isinf(a) || isnan(a)) return;
-    int k;
-    frexp(a, k);
-    m = ldexp(m, ivec2(-k));
-    e += k;
-}
+dvec2 dcmul(dvec2 a, dvec2 b) { return dvec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
 
 void mainPerturb() {
     ivec2 pix = uBandOrigin + g_local;
-    // this pixel's offset from the reference point, in plane units = dM * 2^dE
-    vec2 dM = (vec2(pix) + 0.5 - 0.5 * uResolution + uRefOffsetPx) * uPixelMant;
-    int dE = uPixelExp;
-    vec2 cM = uJulia != 0 ? vec2(0) : dM;  // delta_c (Julia sets: c is the same everywhere)
-    vec2 eps;
-    int e, m, i;
+    // this pixel's offset from the reference point, in plane units
+    dvec2 dc = (dvec2(pix) + 0.5LF - 0.5LF * dvec2(uResolution) + uRefOffsetPx) * uPixelSize;
+    dvec2 cD = uJulia != 0 ? dvec2(0) : dc;  // delta_c (Julia sets: c is the same everywhere)
+    dvec2 eps;
+    int m, i;
     uint flags;
     if (uFirstPass != 0) {
-        eps = uJulia != 0 ? dM : vec2(0);  // delta_0 (Mandelbrot: every orbit starts at 0)
-        e = dE;
-        renorm(eps, e);
+        eps = uJulia != 0 ? dc : dvec2(0);  // delta_0 (Mandelbrot: every orbit starts at 0)
         m = 0;
         i = 0;
         flags = 0u;
@@ -167,38 +163,34 @@ void mainPerturb() {
         g_accA = uintBitsToFloat(s2.z);
         g_accB = uintBitsToFloat(s2.w);
         uvec4 s0 = imageLoad(uState0, g_local);
-        eps = uintBitsToFloat(s0.xy);
-        e = int(s0.z);
-        m = int(s0.w);
+        eps = dvec2(packDouble2x32(s0.xy), packDouble2x32(s0.zw));
+        m = int(imageLoad(uState1, g_local).x);
     }
-    float bail = uBailout;
-    vec2 zf = refZ[m] + (e > -120 ? ldexp(eps, ivec2(e)) : vec2(0));
+    double bail2 = double(uBailout) * double(uBailout);
+    dvec2 zf = refZ[m] + eps;
     int end = min(i + uChunk, uMaxIter);
     for (; i < end; i++) {
-        // delta' = 2 Z delta + delta^2 + delta_c, everything in units of 2^e
-        vec2 Z = refZ[m];
-        eps = 2.0 * cmul(Z, eps) + ldexp(cmul(eps, eps), ivec2(e)) + ldexp(cM, ivec2(dE - e));
-        renorm(eps, e);
+        eps = dcmul(2.0LF * refZ[m] + eps, eps) + cD;  // delta' = 2 Z delta + delta^2 + delta_c
         m++;
-        vec2 d = e > -120 ? ldexp(eps, ivec2(e)) : vec2(0);  // too small to matter next to Z
-        zf = refZ[m] + d;
-        accumulate(zf);
-        if (hasEscaped(zf, bail)) { escaped(zf, i, 2.0, bail); return; }
+        zf = refZ[m] + eps;
+        vec2 zc = vec2(zf);
+        accumulate(zc);
+        bool esc = uColoring == 6 ? max(abs(zc.x), abs(zc.y)) > biomorphLimit() : dot(zf, zf) > bail2;
+        if (esc) { escaped(zc, i, 2.0, uBailout); return; }
         // Rebase (Zhuoran): when z comes closer to 0 than to the reference, or the
         // reference has run out, continue from the start of the reference instead.
-        if (m >= uRefLen - 1 || dot(zf, zf) < dot(d, d)) {
+        if (m >= uRefLen - 1 || dot(zf, zf) < dot(eps, eps)) {
             eps = zf - refZ[0];
-            e = 0;
-            renorm(eps, e);
             m = 0;
         }
     }
     if (i >= uMaxIter) {
-        finish(-1.0, length(zf) * 0.5, i, 0u);
+        finish(-1.0, float(length(zf)) * 0.5, i, 0u);
         return;
     }
     imageStore(uState2, g_local, uvec4(uint(i), flags, floatBitsToUint(g_accA), floatBitsToUint(g_accB)));
-    imageStore(uState0, g_local, uvec4(floatBitsToUint(eps), uint(e), uint(m)));
+    imageStore(uState0, g_local, uvec4(unpackDouble2x32(eps.x), unpackDouble2x32(eps.y)));
+    imageStore(uState1, g_local, uvec4(uint(m), 0u, 0u, 0u));
 }
 #endif
 

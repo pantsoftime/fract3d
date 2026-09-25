@@ -1588,6 +1588,18 @@ void App::updatePoster() {
         else finishVideo(false);
         return;
     }
+    if (finished && !is3D && !session.cli.dumpIterations.empty()) {
+        // raw iteration values (int32 width, height, then float rows top-down) for tools/itercheck
+        int w = poster.index.w, h = poster.index.h;
+        std::vector<float> v((size_t)w * h);
+        glGetTextureImage(poster.index.value, 0, GL_RED, GL_FLOAT, (GLsizei)(v.size() * sizeof(float)), v.data());
+        if (FILE* f = fopen(session.cli.dumpIterations.c_str(), "wb")) {
+            int32_t hdr[2] = {w, h};
+            fwrite(hdr, sizeof hdr, 1, f);
+            for (int y = h - 1; y >= 0; y--) fwrite(&v[(size_t)y * w], sizeof(float), w, f);
+            fclose(f);
+        }
+    }
     if (finished) {
         std::vector<uint8_t> px;
         rend.setPalette(poster.palette);

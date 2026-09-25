@@ -4,12 +4,12 @@
 // Past about 10^13x even doubles run out of digits. Instead of iterating every
 // pixel in high precision, compute ONE reference orbit Z_n at the view center in
 // arbitrary precision (MPFR, on a worker thread), then let each pixel iterate
-// only its tiny difference delta_n = z_n - Z_n in plain floats on the GPU:
+// only its tiny difference delta_n = z_n - Z_n in plain doubles on the GPU:
 //
 //   delta_{n+1} = 2 Z_n delta_n + delta_n^2 + delta_c
 //
-// Deltas can be far smaller than a float can hold, so the shader keeps them as a
-// float mantissa plus an integer exponent. When |z| gets smaller than |delta|, or
+// (The deepest zoom, kMinHeight = 1e-290, keeps every delta inside the range of a
+// double, so no separate exponent is needed.) When |z| gets smaller than |delta|, or
 // the reference runs out, the pixel restarts from the start of the reference
 // ("rebasing", Zhuoran 2021), which avoids the glitches of older methods.
 #include <atomic>
@@ -50,8 +50,8 @@ public:
     bool ready() const { return ready_; }
     float progress() const { return progress_; }
     const RefOrbitRequest& current() const { return req_; }
-    // Takes the finished orbit (x, y floats, Z_0 first). Only valid when ready().
-    const std::vector<float>& orbit() const { return orbit_; }
+    // Takes the finished orbit (x, y doubles, Z_0 first). Only valid when ready().
+    const std::vector<double>& orbit() const { return orbit_; }
     int version() const { return version_; }  // bumped whenever a new orbit is ready
 
 private:
@@ -60,7 +60,7 @@ private:
     std::thread thread_;
     std::atomic<bool> cancel_{false}, ready_{false};
     std::atomic<float> progress_{0};
-    std::vector<float> orbit_;
+    std::vector<double> orbit_;
     std::atomic<int> version_{0};
     bool running_ = false;
 };

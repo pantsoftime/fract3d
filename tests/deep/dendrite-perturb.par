@@ -1,0 +1,10 @@
+; A well-conditioned view near c = i, by perturbation
+mode = 2d
+classic.fp64 = 3
+classic.banded = 1
+classic.bailout = 2
+classic.supersample = 1
+classic.center = -0.10109636384562 0.95628651080914
+classic.centerHP = -0.10109636384562 0.95628651080914
+classic.height = 1e-10
+classic.maxIter = 4000

@@ -62,9 +62,10 @@ Coloring is where a fractal gets much of its personality.
 @@ Precision: why deep zooms get blocky
 Computers store numbers with a fixed number of digits. A 32-bit float keeps about 7 significant digits. Zoom in 100,000x and neighboring pixels differ only in the 7th digit, so they all compute the same value and you see blocks.
 * 64-bit doubles keep about 16 digits, good to about 10^13x zoom. Classic 2D mode switches to them automatically (Precision: Auto).
-* Past that, this app uses "perturbation theory": it computes ONE reference orbit at the center of the view in as many digits as needed (hundreds of bits), then lets every pixel track only its tiny difference from that orbit, which ordinary floats handle fine:
+* Past that, this app uses "perturbation theory": it computes ONE reference orbit at the center of the view in as many digits as needed (hundreds of bits), then lets every pixel track only its tiny difference from that orbit, which ordinary doubles handle fine:
 $ z = Z + delta,   delta' = 2 Z delta + delta^2 + delta_c
-The differences are far smaller than the smallest float, so each one is stored as a number plus a separate power of two. When a pixel's orbit drifts too far from the reference, it simply restarts from the reference's beginning ("rebasing", 2021). Try the 10^100x tour stop: that's a zoom by a googol.
+When a pixel's orbit drifts too far from the reference, it simply restarts from the reference's beginning ("rebasing", 2021). Try the 10^100x tour stop: that's a zoom by a googol.
+* How do we know the picture is right? A test renders deep views and recomputes every pixel with hundreds of digits on the CPU. Near the boundary some pixels are so sensitive that moving the view by a millionth of a pixel changes them - no computer can get those "right" - and the renderer matches the exact answer as closely as that allows.
 * Fractint's name means FRACTal INTeger: it used fast fixed-point integer math, because most 1988 PCs had no floating-point chip at all.
 
 @@ Lighting: real-time vs path tracing
