@@ -23,6 +23,7 @@ struct View3D {
     float time = 0.0f;
     float animTime = 0.0f;
     int fullW = 1, fullH = 1;  // resolution of the whole image (for tiled renders)
+    float formulaP[6] = {0, 0, 0, 0, 0, 0};  // p1..p3 of the user formula (the landscape can use it)
 };
 
 class Renderer {
@@ -74,7 +75,6 @@ public:
     void setCustomFormula(const std::string& glsl);
     const std::string& customFormulaError() const { return customError_; }
     bool hasCustomFormula() const { return !customGlsl_.empty() && customError_.empty(); }
-    void setFormulaParams(const float p1[2], const float p2[2], const float p3[2]);
 
     // ---- final image: 3D accumulation or 2D iteration buffer -> fbo
     void display(ViewMode mode, const RenderTarget* accum, const IndexTarget* index, const RenderSettings& rs,
@@ -87,6 +87,8 @@ public:
     // Renders the display pass at w x h and reads it back (RGBA, bottom-up).
     bool readImage(ViewMode mode, const RenderTarget* accum, const IndexTarget* index, const RenderSettings& rs,
                    const Classic2DSettings& cs, float cycleOffset, int w, int h, std::vector<uint8_t>& rgba);
+
+    PassTimer& passTimer(int stateSlot) { return passTimers_[stateSlot & 1]; }  // 2D compute passes
 
     RenderTarget accum;    // interactive 3D accumulation
     IndexTarget index2D;   // interactive 2D iteration buffer
@@ -110,10 +112,10 @@ private:
     int refLen_ = 0;
     double deepOffset_[2] = {0, 0};
     std::string customGlsl_, customError_;
-    float formulaP_[6] = {0, 0, 0, 0, 0, 0};
     std::unordered_map<std::string, std::unique_ptr<FractalPrograms>> progs_;
     GLuint vao_ = 0, paletteTex_ = 0, retroLut_[2] = {0, 0}, blueNoise_ = 0;
     StateImages state2D_[2];
+    PassTimer passTimers_[2];
     RenderTarget probeRT_, shotRT_;
     GLuint probePbo_[2] = {0, 0};
     GLsync probeFence_[2] = {nullptr, nullptr};

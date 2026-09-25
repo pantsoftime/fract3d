@@ -277,8 +277,9 @@ bool App::startVideo(const std::string& out) {
         toast("Video export needs ffmpeg (not found on PATH)", 5);
         return false;
     }
-    signal(SIGPIPE, SIG_IGN);  // if ffmpeg dies we get an error from write() instead of being killed
+    if (video.finishing) pollVideoEncoder(true);  // the previous export's encoder is still flushing
     video = VideoJob();
+    video.oldSigpipe = signal(SIGPIPE, SIG_IGN);  // if ffmpeg dies, write() fails instead of killing us
     video.active = true;
     video.fd = fds[1];
     video.pid = pid;
@@ -310,23 +311,43 @@ void App::videoFrameRendered(const std::vector<uint8_t>& rgba) {
         left -= (size_t)n;
     }
     if (++video.frame >= video.frames) finishVideo(true);
+    else if (video.frame == session.cli.cancelAfterFrames) cancelVideo();
     else nextVideoFrame();
 }
 
+// All frames are written (ok), writing failed, or the user cancelled. The view comes
+// back right away; ffmpeg may still need a while to flush a long video, so its exit
+// is picked up by pollVideoEncoder from the frame loop instead of blocking the UI.
 void App::finishVideo(bool ok) {
     if (!video.active) return;
     video.active = false;
     close(video.fd);
-    int status = 0;
-    waitpid(video.pid, &status, 0);
-    ok = ok && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    video.fd = -1;
+    signal(SIGPIPE, video.oldSigpipe ? video.oldSigpipe : SIG_DFL);
+    if (!ok) kill(video.pid, SIGTERM);  // no point letting it encode a broken or abandoned file
+    video.ok = ok;
+    video.finishing = true;
     endPathPreview();
     loadParText(video.restorePar, "view", true);
+    if (ok) toast("Finishing " + video.out + " ...", 60);
+    pollVideoEncoder();
+}
+
+void App::pollVideoEncoder(bool wait) {
+    if (!video.finishing) return;
+    int status = 0;
+    pid_t r = waitpid(video.pid, &status, wait ? 0 : WNOHANG);
+    if (r == 0) return;  // still encoding
+    video.finishing = false;
+    bool ok = video.ok && r == video.pid && WIFEXITED(status) && WEXITSTATUS(status) == 0;
     char buf[512];
-    snprintf(buf, sizeof buf, "%s %s (%d frames, %.0fs)", ok ? "Saved" : "Video export FAILED:", video.out.c_str(), video.frame,
-             glfwGetTime() - video.started);
+    if (video.cancelled)
+        snprintf(buf, sizeof buf, "Video export cancelled after %d frames", video.frame);
+    else
+        snprintf(buf, sizeof buf, "%s %s (%d frames, %.0fs)", ok ? "Saved" : "Video export FAILED:", video.out.c_str(), video.frame,
+                 glfwGetTime() - video.started);
     toast(buf, 8);
-    if (!ok) exitCode = 1;
+    if (!ok && !video.cancelled) exitCode = 1;
     if (!session.cli.shotPath.empty()) quit = true;
 }
 
@@ -335,6 +356,6 @@ void App::cancelVideo() {
     poster.active = false;
     poster.target.release();
     poster.index.release();
-    video.frames = video.frame;  // so the message reports what was written
+    video.cancelled = true;
     finishVideo(false);
 }

@@ -44,7 +44,8 @@ struct CliOptions {
     std::string pathFile;                  // camera path to load (--path); with --render x.mp4 it's exported
     float videoFps = 30;
     float pathTime = -1;
-    std::string dumpIterations;  // --dump-iterations: 2D renders also write the raw iteration buffer (tests)  // --path-time: render the camera path at this time (with --render x.png)
+    std::string dumpIterations;
+    int cancelAfterFrames = -1;  // testing: cancel a video export after N frames, like the Cancel button  // --dump-iterations: 2D renders also write the raw iteration buffer (tests)  // --path-time: render the camera path at this time (with --render x.png)
 };
 
 // Everything that defines what's on screen. (Fractal parameter values live with
@@ -107,6 +108,7 @@ struct UiState {
     char pathName[96] = "my-path";
     int gradientSel = 0;  // selected stop in the gradient editor
     std::string formulaEdit;  // text in the editor (compiled on request)
+    std::string centerEdit[2], centerShown[2];  // the Exact center fields, and the center they were filled from
 };
 
 class App {
@@ -230,7 +232,6 @@ public:
     int generation = 0;         // bumped on shader reload to force re-render
     int formulaGeneration = 0;  // bumped when the custom formula is recompiled
     int band3DRow = 0;          // rows of the current 3D sample already rendered (banded mode)
-    float frameBudgetMs = 12.0f;  // GPU time per frame for progressive work
 
     // Progressive 2D rendering: the iteration buffer is filled in top-down bands,
     // and each band's orbits are advanced a chunk of iterations per compute pass
@@ -276,11 +277,18 @@ public:
     bool mouseCaptured = false;
     double captureLast[2] = {0, 0};
     void setMouseCapture(bool on);
+    void toggleJulia(double px, double py);  // 2D: Julia set of the point, or back to the parameter plane
     void inputGamepad(float dt);
     bool gamepadActive = false;
     GLFWgamepadstate prevPad{};
     double savedMandel[3] = {-0.6, 0.0, 3.0};  // view to return to from a Julia set
     std::string savedMandelHP[2];
+    // custom formulas: the formula and parameters to return to from its @julia partner
+    struct {
+        std::string formula;
+        float p[3][2];
+        int fn[4];
+    } juliaReturn;
     // deep zoom
     RefOrbitWorker refWorker;
     int refUploaded = -1;
@@ -348,11 +356,14 @@ public:
     void endPathPreview();  // playback/scrubbing ended: parameter animation comes back
     struct VideoJob {
         bool active = false;
+        bool finishing = false;  // all frames written (or cancelled): waiting for ffmpeg to exit
+        bool ok = false, cancelled = false;
         int fd = -1;
         pid_t pid = 0;
         int frame = 0, frames = 0;
         std::string out, restorePar;
         double started = 0;
+        void (*oldSigpipe)(int) = nullptr;
     } video;
     void addKeyframe();
     void parseKeyframes();
@@ -366,6 +377,7 @@ public:
     void videoFrameRendered(const std::vector<uint8_t>& rgba);
     void finishVideo(bool ok);
     void cancelVideo();
+    void pollVideoEncoder(bool wait = false);  // reports the result once ffmpeg has exited
 
     RenderTarget uiShotRT;
     int exitCode = 0;

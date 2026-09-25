@@ -349,6 +349,8 @@ static void applyAnnotations(FormulaDef& d, const std::string& text) {
         } else if (key == "view") {
             vs >> d.view[0] >> d.view[1] >> d.view[2];
             d.hasView = d.view[2] > 0;
+        } else if (key == "julia") {
+            vs >> d.julia;
         }
     }
 }

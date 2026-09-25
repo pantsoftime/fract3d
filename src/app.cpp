@@ -218,6 +218,7 @@ void App::shutdown() {
     if (!session.cli.hidden) savePrefs();
     saveSession(true);
     if (video.active) cancelVideo();  // closes the encoder pipe cleanly
+    pollVideoEncoder(true);           // a finished export may still be flushing: let it complete
     // every GL object must go before the context does
     poster.target.release();
     poster.index.release();
@@ -348,6 +349,19 @@ bool App::compileFormula() {
     formulaGeneration++;
     compiledSource = view.formulaSource;
     std::copy(view.fn, view.fn + 4, compiledFn);
+    // A render in progress that uses the formula would now mix the old and new
+    // formula (the GPU programs were just rebuilt): start it over.
+    if (poster.active && !poster.toVideo) {
+        const Param* lf = poster.fractal.find("formula");
+        bool uses = poster.mode == ViewMode::Classic2D ? poster.cs.formula == kCustomFormula
+                                                        : poster.fractal.key == "landscape" && lf && std::lround(lf->value[0]) == 5;
+        if (uses) {
+            std::string path = poster.path;
+            startPoster(poster.w, poster.h, poster.samples);
+            poster.path = path;
+            toast("The formula changed - the high-res render started over", 4);
+        }
+    }
     return true;
 }
 
@@ -525,6 +539,18 @@ int App::selfTest() {
     check(view.cs.cx == -0.6 && view.cs.height == 3.0, "...and ends exactly on it");
     endPathPreview();
     camPath = CameraPath();
+    // custom formulas: right-click goes to the @julia partner with c = p1, and back
+    loadParText("mode = 2d\nclassic.formula = 8\nformula.name = FnMandel\nformula.fn = 5 0 0 0\nclassic.center = 1 0.5\n", "julia", true);
+    toggleJulia(-0.25, 0.75);
+    check(view.formulaName == "FnJulia" && view.cs.p1[0] == -0.25f && view.cs.p1[1] == 0.75f && view.fn[0] == 5,
+          "right-click on FnMandel shows FnJulia for that c (same fn1)");
+    toggleJulia(0, 0);
+    check(view.formulaName == "FnMandel" && view.cs.cx == 1.0 && view.cs.cy == 0.5 && view.fn[0] == 5,
+          "...and right-click again returns to FnMandel's view");
+    selectFormula("Spider");
+    double cx0 = view.cs.cx;
+    toggleJulia(0.3, 0.3);
+    check(view.formulaName == "Spider" && view.cs.cx == cx0, "a formula without a Julia partner keeps its view");
     // hostile values are repaired
     loadParText("mode = 2d\nclassic.formula = 99\nclassic.maxIter = -3\npost.tonemap = 7\n", "bad", true);
     check(view.cs.formula < kClassicFormulaCount && view.cs.maxIter >= 1 && view.rs.tonemap <= 2, "hostile PAR values are sanitized");
@@ -738,6 +764,7 @@ void App::frame() {
 
     handleKeys();
     updatePathPlayback();
+    pollVideoEncoder();
     for (auto& p : droppedFiles) openDroppedFile(p);
     droppedFiles.clear();
     if (view.mode == ViewMode::Fractal3D) input3D(dt);
@@ -774,7 +801,6 @@ void App::frame() {
     if (view.rs.cycleSpeed != 0.0f) cycleOffset = std::fmod(cycleOffset + view.rs.cycleSpeed * dt + 256.0f, 256.0f);
 
     rend.timer.poll();
-    rend.setFormulaParams(view.cs.p1, view.cs.p2, view.cs.p3);
     if (poster.active) updatePoster();
     else if (view.mode == ViewMode::Fractal3D) render3D();
     else {
@@ -828,6 +854,7 @@ double App::computeIdle() {
     } else if (interactive) {
         return 0;
     }
+    if (video.finishing) return 0.1;  // waiting for ffmpeg to exit
     for (int j = GLFW_JOYSTICK_1; j <= GLFW_JOYSTICK_LAST; j++)
         if (glfwJoystickIsGamepad(j)) return 0.05;  // gamepads are polled, not event-driven: check often
     return 0.25;
@@ -1043,46 +1070,11 @@ void App::input2D(float dt) {
     if (dragButton == 0 || dragButton == 2) {
         if (io.MouseDelta.x != 0 || io.MouseDelta.y != 0) moveCenter(-io.MouseDelta.x * sx * ps, io.MouseDelta.y * sy * ps);
     }
-    auto toggleJulia = [&]() {
-        if (view.cs.formula == 4) {
-            toast("Newton's method has no Julia/Mandelbrot pair", 2);
-            return;
-        }
-        if (!view.cs.julia) {
-            syncCenter();
-            savedMandel[0] = view.cs.cx;
-            savedMandel[1] = view.cs.cy;
-            savedMandelHP[0] = view.hpRe;
-            savedMandelHP[1] = view.hpIm;
-            savedMandel[2] = view.cs.height;
-            view.cs.jx = px;
-            view.cs.jy = view.cs.formula == 1 ? -py : py;
-            view.cs.julia = 1;
-            view.cs.cx = 0;
-            view.cs.cy = 0;
-            view.cs.height = 3.2;
-            char buf[128];
-            snprintf(buf, sizeof buf, "Julia set for c = %.6f %+.6fi", view.cs.jx, view.cs.jy);
-            toast(buf);
-        } else {
-            view.cs.julia = 0;
-            view.cs.cx = savedMandel[0];
-            view.cs.cy = savedMandel[1];
-            if (!savedMandelHP[0].empty()) {  // back to the exact deep-zoom center
-                view.hpRe = savedMandelHP[0];
-                view.hpIm = savedMandelHP[1];
-                view.hpShadow[0] = view.cs.cx;
-                view.hpShadow[1] = view.cs.cy;
-            }
-            view.cs.height = savedMandel[2];
-            toast("Back to the parameter plane");
-        }
-    };
     if (dragButton == 1 && ImGui::IsMouseReleased(1)) {
-        if (std::abs(io.MousePos.x - pressX) + std::abs(io.MousePos.y - pressY) < 5) toggleJulia();
+        if (std::abs(io.MousePos.x - pressX) + std::abs(io.MousePos.y - pressY) < 5) toggleJulia(px, py);
     }
     if (dragButton >= 0 && !ImGui::IsMouseDown(dragButton)) dragButton = -1;
-    if (!io.WantCaptureKeyboard && ImGui::IsKeyPressed(ImGuiKey_Space, false) && !overUI) toggleJulia();
+    if (!io.WantCaptureKeyboard && ImGui::IsKeyPressed(ImGuiKey_Space, false) && !overUI) toggleJulia(px, py);
 
     float wheel = overUI ? 0.0f : io.MouseWheel;
     if (!io.WantCaptureKeyboard) {
@@ -1102,6 +1094,83 @@ void App::input2D(float dt) {
     }
 }
 
+// Right-click / Space in 2D: the Julia set for the point (px, py), and back.
+void App::toggleJulia(double px, double py) {
+    if (view.cs.formula == 4) {
+        toast("Newton's method has no Julia/Mandelbrot pair", 2);
+        return;
+    }
+    if (view.cs.formula == kCustomFormula) {
+        // A formula's Julia sets are another formula (named by "; @julia = Name"),
+        // with the clicked point as p1 - Fractint's formula files worked the same way.
+        float* ps[3] = {view.cs.p1, view.cs.p2, view.cs.p3};
+        if (!juliaReturn.formula.empty()) {
+            std::string back = juliaReturn.formula;
+            juliaReturn.formula.clear();
+            selectFormula(back);
+            for (int i = 0; i < 3; i++) ps[i][0] = juliaReturn.p[i][0], ps[i][1] = juliaReturn.p[i][1];
+            std::copy(juliaReturn.fn, juliaReturn.fn + 4, view.fn);
+            compileFormula();
+            view.cs.cx = savedMandel[0], view.cs.cy = savedMandel[1], view.cs.height = savedMandel[2];
+            if (!savedMandelHP[0].empty()) {
+                view.hpRe = savedMandelHP[0], view.hpIm = savedMandelHP[1];
+                view.hpShadow[0] = view.cs.cx, view.hpShadow[1] = view.cs.cy;
+            }
+            toast("Back to " + back);
+            return;
+        }
+        const FormulaDef* d = findFormula(view.formulaName);
+        if (!d || d->julia.empty() || !findFormula(d->julia)) {
+            toast("This formula has no Julia partner. Add a line  ; @julia = OtherFormula  before it in its .frm file", 5);
+            return;
+        }
+        syncCenter();
+        savedMandel[0] = view.cs.cx, savedMandel[1] = view.cs.cy, savedMandel[2] = view.cs.height;
+        savedMandelHP[0] = view.hpRe, savedMandelHP[1] = view.hpIm;
+        juliaReturn.formula = view.formulaName;
+        for (int i = 0; i < 3; i++) juliaReturn.p[i][0] = ps[i][0], juliaReturn.p[i][1] = ps[i][1];
+        std::copy(view.fn, view.fn + 4, juliaReturn.fn);
+        std::string partner = d->julia;
+        selectFormula(partner);  // its own @view and defaults...
+        std::copy(juliaReturn.fn, juliaReturn.fn + 4, view.fn);  // ...but the same functions
+        view.cs.p1[0] = (float)px, view.cs.p1[1] = (float)py;
+        compileFormula();
+        char buf[160];
+        snprintf(buf, sizeof buf, "%s for c = p1 = %.6f %+.6fi (right-click again to go back)", partner.c_str(), px, py);
+        toast(buf, 4);
+        return;
+    }
+    if (!view.cs.julia) {
+        syncCenter();
+        savedMandel[0] = view.cs.cx;
+        savedMandel[1] = view.cs.cy;
+        savedMandelHP[0] = view.hpRe;
+        savedMandelHP[1] = view.hpIm;
+        savedMandel[2] = view.cs.height;
+        view.cs.jx = px;
+        view.cs.jy = view.cs.formula == 1 ? -py : py;
+        view.cs.julia = 1;
+        view.cs.cx = 0;
+        view.cs.cy = 0;
+        view.cs.height = 3.2;
+        char buf[128];
+        snprintf(buf, sizeof buf, "Julia set for c = %.6f %+.6fi", view.cs.jx, view.cs.jy);
+        toast(buf);
+    } else {
+        view.cs.julia = 0;
+        view.cs.cx = savedMandel[0];
+        view.cs.cy = savedMandel[1];
+        if (!savedMandelHP[0].empty()) {  // back to the exact deep-zoom center
+            view.hpRe = savedMandelHP[0];
+            view.hpIm = savedMandelHP[1];
+            view.hpShadow[0] = view.cs.cx;
+            view.hpShadow[1] = view.cs.cy;
+        }
+        view.cs.height = savedMandel[2];
+        toast("Back to the parameter plane");
+    }
+}
+
 // ------------------------------------------------------------------ 3D rendering
 View3D App::makeView(int w, int h) const {
     View3D v;
@@ -1116,6 +1185,8 @@ View3D App::makeView(int w, int h) const {
     v.animTime = animTime;
     v.fullW = w;
     v.fullH = h;
+    const float* ps[3] = {view.cs.p1, view.cs.p2, view.cs.p3};
+    for (int i = 0; i < 3; i++) v.formulaP[2 * i] = ps[i][0], v.formulaP[2 * i + 1] = ps[i][1];
     return v;
 }
 
@@ -1142,7 +1213,10 @@ std::vector<uint8_t> App::signature3D(int w, int h) const {
     appendBytes(s, view.cam.distance);
     appendBytes(s, view.fractal);
     appendBytes(s, generation);
-    appendBytes(s, formulaGeneration);  // the landscape can use the user formula
+    appendBytes(s, formulaGeneration);  // the landscape can use the user formula...
+    appendBytes(s, view.cs.p1);         // ...and its parameters
+    appendBytes(s, view.cs.p2);
+    appendBytes(s, view.cs.p3);
     appendBytes(s, paletteVersion);
     appendBytes(s, w);
     appendBytes(s, h);
@@ -1265,27 +1339,35 @@ void App::updateProbe() {
 bool App::stepJob2D(Job2D& job, IndexTarget& target, double budgetMs, int stateSlot) {
     int tw = target.w, th = target.h;
     int maxIter = std::max(job.cs.maxIter, 1);
-    glFinish();  // drain earlier work so pass timings measure only ours
-    auto t0 = std::chrono::steady_clock::now();
-    while (job.active) {
+    // Plan this frame's passes from the measured cost per iteration (timer queries,
+    // read back a frame later), so the CPU never waits for the GPU. Each pass aims at
+    // a third of the budget; the bounded number of passes in flight keeps the GPU
+    // from falling far behind when an estimate is too optimistic.
+    PassTimer& pt = rend.passTimer(stateSlot);
+    pt.poll();
+    double spent = 0;
+    int passes = 0;
+    while (job.active && !pt.full()) {
         bool first = job.bandRows == 0;
         if (first) {
             job.bandRows = std::min(rend.bandRowsFor(tw), th - job.row);
             job.itersDone = 0;
         }
-        int k = std::min(job.chunk, maxIter - job.itersDone);
+        int k = std::max(std::min(job.chunk, maxIter - job.itersDone), 1);
+        double est = pt.msPerWork * k;
+        if (passes > 0 && spent + est > budgetMs) break;
         int y0 = th - job.row - job.bandRows;  // bands run top-down (GL rows count up)
-        auto b0 = std::chrono::steady_clock::now();
-        if (!rend.dispatch2D(target, job.cs, y0, job.bandRows, std::max(k, 1), first, stateSlot)) {
+        pt.begin((float)k);
+        bool ok = rend.dispatch2D(target, job.cs, y0, job.bandRows, k, first, stateSlot);
+        pt.end();
+        if (!ok) {
             job.active = false;
             return false;
         }
-        glFinish();
-        double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - b0).count();
-        job.itersDone += std::max(k, 1);
-        // aim each pass at a third of the budget; pixels that finish make later passes cheaper
-        double f = std::clamp(budgetMs / 3.0 / std::max(ms, 0.01), 0.25, 4.0);
-        job.chunk = (int)std::clamp(job.chunk * f, std::min(16.0, (double)maxIter), (double)maxIter);
+        passes++;
+        spent += est;
+        job.itersDone += k;
+        job.chunk = (int)std::clamp(budgetMs / 3.0 / std::max(pt.msPerWork, 1e-6), std::min(16.0, (double)maxIter), (double)maxIter);
         if (job.itersDone >= maxIter) {  // every orbit in the band has escaped or hit the limit
             job.row += job.bandRows;
             job.bandRows = 0;
@@ -1294,8 +1376,6 @@ bool App::stepJob2D(Job2D& job, IndexTarget& target, double budgetMs, int stateS
                 return true;
             }
         }
-        double total = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-        if (total > budgetMs) break;
     }
     return false;
 }
@@ -1361,7 +1441,7 @@ void App::render2D() {
     }
     if (!job2D.active) return;
     IndexTarget& target = job2D.offscreen ? work2D : rend.index2D;
-    if (stepJob2D(job2D, target, frameBudgetMs)) {
+    if (stepJob2D(job2D, target, 1000.0 / std::max(view.rs.targetFps, 10.0f) * 0.8)) {  // the 3D renderer's budget
         if (job2D.offscreen) {
             rend.index2D.swap(work2D);
             work2D.release();
@@ -1667,17 +1747,19 @@ void App::liftTo3D() {
 
 void App::flattenTo2D() {
     Fractal& f = fractal();
-    if (f.key == "landscape") {
-        int formula = (int)f.find("formula")->value[0];
+    const Param *pf = f.find("formula"), *pc = f.find("center"), *pz = f.find("zoom"), *pj = f.find("juliaC"),
+                *pi = f.find("iterations");
+    if (f.key == "landscape" && pf && pc && pz && pj && pi) {  // (a live-edited landscape.glsl may lack some)
+        int formula = (int)pf->value[0];
         view.cs.formula = formula == 4 ? 0 : formula == 5 ? kCustomFormula : formula;
         view.cs.julia = formula == 4;
         if (formula == 3) view.cs.power = 3;
-        view.cs.cx = f.find("center")->value[0];
-        view.cs.cy = f.find("center")->value[1];
-        view.cs.height = 3.0 / f.find("zoom")->value[0];
-        view.cs.jx = f.find("juliaC")->value[0];
-        view.cs.jy = f.find("juliaC")->value[1];
-        view.cs.maxIter = (int)f.find("iterations")->value[0];
+        view.cs.cx = pc->value[0];
+        view.cs.cy = pc->value[1];
+        view.cs.height = 3.0 / std::max(pz->value[0], 1e-6f);
+        view.cs.jx = pj->value[0];
+        view.cs.jy = pj->value[1];
+        view.cs.maxIter = std::max((int)pi->value[0], 1);
         view.cs.colorDensity = std::clamp(view.rs.colorScale, 0.05f, 16.0f);  // same palette spacing as in 3D
     }
     setMode(ViewMode::Classic2D);

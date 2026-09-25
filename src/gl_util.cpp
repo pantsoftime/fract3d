@@ -313,7 +313,36 @@ void StateImages::release() {
     w = h = 0;
 }
 
-// ------------------------------------------------------------------ timer
+// ------------------------------------------------------------------ timers
+void PassTimer::begin(float amountOfWork) {
+    if (!q[0]) glGenQueries(kSlots, q);
+    work[head] = amountOfWork;
+    glBeginQuery(GL_TIME_ELAPSED, q[head]);
+}
+
+void PassTimer::end() {
+    glEndQuery(GL_TIME_ELAPSED);
+    head = (head + 1) % kSlots;
+}
+
+void PassTimer::poll() {
+    while (tail != head) {
+        GLint avail = 0;
+        glGetQueryObjectiv(q[tail], GL_QUERY_RESULT_AVAILABLE, &avail);
+        if (!avail) break;
+        GLuint64 ns = 0;
+        glGetQueryObjectui64v(q[tail], GL_QUERY_RESULT, &ns);
+        if (work[tail] > 0) msPerWork = msPerWork * 0.5 + (ns / 1e6 / work[tail]) * 0.5;
+        tail = (tail + 1) % kSlots;
+    }
+}
+
+void PassTimer::release() {
+    if (q[0]) glDeleteQueries(kSlots, q);
+    for (auto& x : q) x = 0;
+    head = tail = 0;
+}
+
 void GpuTimer::begin(float tagA, float tagB) {
     if (!q[0]) glGenQueries(4, q);
     tag[idx][0] = tagA;

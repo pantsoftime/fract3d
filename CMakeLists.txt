@@ -154,6 +154,11 @@ if(FRACT3D_TESTS)
     add_test(NAME video.export
              COMMAND fract3d --path ${CMAKE_SOURCE_DIR}/tests/menger-twist.f3dpath --render ${TEST_OUT}/path.mp4
                      --size 160x90 --samples 1 --fps 5)
+    # cancelling stops the encoder and reports it (exit code 0: a cancel isn't an error)
+    add_test(NAME video.cancel
+             COMMAND fract3d --path ${CMAKE_SOURCE_DIR}/tests/menger-twist.f3dpath --render ${TEST_OUT}/cancel.mp4
+                     --size 160x90 --samples 1 --fps 5 --cancel-after-frames 3)
+    set_tests_properties(video.cancel PROPERTIES PASS_REGULAR_EXPRESSION "cancelled after 3 frames")
   endif()
   # camera paths arrive exactly at their keyframes (both ends of a deep-to-shallow zoom)
   foreach(end first:0 last:1)

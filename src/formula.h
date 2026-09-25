@@ -27,13 +27,14 @@ struct FormulaDef {
     std::string name;
     std::string comment;  // lines of ';' text just before the formula
     std::string source;   // the full text, "Name { ... }"
-    // Optional defaults from "; @p1 = (re, im)", "; @fn1 = cos" and
-    // "; @view = centerRe centerIm height" lines in the comment:
+    // Optional defaults from "; @p1 = (re, im)", "; @fn1 = cos",
+    // "; @view = centerRe centerIm height" and "; @julia = Name" lines in the comment:
     bool hasP[3] = {false, false, false};
     float p[3][2] = {};
     int fn[4] = {-1, -1, -1, -1};
     bool hasView = false;
     double view[3] = {-0.5, 0.0, 3.0};
+    std::string julia;  // "; @julia = Name": the formula that shows this one's Julia sets (c = p1)
 };
 
 // Splits a .frm file into its formulas.

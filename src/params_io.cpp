@@ -125,6 +125,7 @@ bool App::loadPar(const fs::path& path) {
 // Applies PAR text. `quiet` (undo/redo, session restore) skips the toast.
 bool App::loadParText(const std::string& text, const std::string& label, bool quiet) {
     std::istringstream in(text);
+    juliaReturn.formula.clear();  // a different view: right-click no longer returns to an earlier formula
     std::map<std::string, std::string> kv;
     std::string line, note;
     while (std::getline(in, line)) {

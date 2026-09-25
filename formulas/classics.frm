@@ -15,7 +15,9 @@
 ; Your own formulas can go in ~/.config/fract3d/formulas/*.frm.
 
 ; The Mandelbrot set, written out the long way.
+; Right-click a point (or press Space) to see its Julia set.
 ; @view = -0.6 0 3
+; @julia = Julia
 Mandel {
   z = 0, c = pixel :
   z = z*z + c,
@@ -62,10 +64,22 @@ Nova {
 
 ; A Mandelbrot set built on any function: pick fn1 in the panel.
 ; sin, cos, exp and cosh give very different worlds. Needs a larger bailout.
+; Right-click a point (or press Space) for its Julia set.
 ; @fn1 = cos
 ; @view = 0 0 8
+; @julia = FnJulia
 FnMandel {
   z = 0, c = pixel :
+  z = fn1(z) + c,
+  |z| <= 64
+}
+
+; The Julia sets of FnMandel: the same map, with c fixed at p1.
+; @fn1 = cos
+; @p1 = (-0.5, 0.35)
+; @view = 0 0 8
+FnJulia {
+  z = pixel, c = p1 :
   z = fn1(z) + c,
   |z| <= 64
 }

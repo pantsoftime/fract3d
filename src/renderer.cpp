@@ -107,6 +107,7 @@ void Renderer::shutdown() {
     accum.release();
     index2D.release();
     for (auto& s : state2D_) s.release();
+    for (auto& t : passTimers_) t.release();
     probeRT_.release();
     shotRT_.release();
     for (auto& f : probeFence_)
@@ -197,11 +198,6 @@ void Renderer::setCustomFormula(const std::string& glsl) {
     }
     if (!glsl.empty()) classicProgram(false, true);  // compile now so errors show immediately
     progs_.erase("landscape");                       // it embeds the formula too
-}
-
-void Renderer::setFormulaParams(const float p1[2], const float p2[2], const float p3[2]) {
-    float v[6] = {p1[0], p1[1], p2[0], p2[1], p3[0], p3[1]};
-    std::copy(v, v + 6, formulaP_);
 }
 
 bool Renderer::reloadCoreIfChanged() {
@@ -341,9 +337,9 @@ bool Renderer::renderSample3D(RenderTarget& target, int sampleIndex, const Fract
     p.set("uRoughness", rs.roughness);
     p.set("uPalette", 0);
     p.set("uBlueNoise", 5);
-    p.set("uP1", formulaP_[0], formulaP_[1]);  // only the landscape's custom formula uses these
-    p.set("uP2", formulaP_[2], formulaP_[3]);
-    p.set("uP3", formulaP_[4], formulaP_[5]);
+    p.set("uP1", v.formulaP[0], v.formulaP[1]);  // only the landscape's custom formula uses these
+    p.set("uP2", v.formulaP[2], v.formulaP[3]);
+    p.set("uP3", v.formulaP[4], v.formulaP[5]);
     setFractalParams(p, f, v.animTime);
 
     glBindFramebuffer(GL_FRAMEBUFFER, target.fbo);
@@ -510,9 +506,9 @@ bool Renderer::probe(const Fractal& f, const RenderSettings& rs, const View3D& v
     p.set("uMaxT", rs.maxDist * v.sceneScale);
     p.set("uFloor", (int)rs.floorOn);
     p.set("uFloorY", rs.floorY);
-    p.set("uP1", formulaP_[0], formulaP_[1]);
-    p.set("uP2", formulaP_[2], formulaP_[3]);
-    p.set("uP3", formulaP_[4], formulaP_[5]);
+    p.set("uP1", v.formulaP[0], v.formulaP[1]);
+    p.set("uP2", v.formulaP[2], v.formulaP[3]);
+    p.set("uP3", v.formulaP[4], v.formulaP[5]);
     setFractalParams(p, f, v.animTime);
     glBindFramebuffer(GL_FRAMEBUFFER, probeRT_.fbo);
     glViewport(0, 0, 2, 1);

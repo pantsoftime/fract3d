@@ -88,6 +88,9 @@ struct RenderTarget {
     GLenum format = 0;
     // Returns false (and leaves the target empty) if the size is unsupported or
     // the framebuffer is incomplete, e.g. out of video memory.
+    RenderTarget() = default;
+    RenderTarget(const RenderTarget&) = delete;  // owns GL names: copies would delete them twice
+    RenderTarget& operator=(const RenderTarget&) = delete;
     bool ensure(int width, int height, GLenum internalFormat, GLenum filter = GL_LINEAR);
     void release();
     void swap(RenderTarget& o) {
@@ -106,6 +109,9 @@ struct RenderTarget {
 struct IndexTarget {
     GLuint value = 0, aux = 0;
     int w = 0, h = 0;
+    IndexTarget() = default;
+    IndexTarget(const IndexTarget&) = delete;
+    IndexTarget& operator=(const IndexTarget&) = delete;
     bool ensure(int width, int height);
     void clear();  // everything "not computed yet"
     void release();
@@ -122,9 +128,32 @@ struct IndexTarget {
 struct StateImages {
     GLuint tex[4] = {0, 0, 0, 0};
     int w = 0, h = 0;
+    StateImages() = default;
+    StateImages(const StateImages&) = delete;
+    StateImages& operator=(const StateImages&) = delete;
     bool ensure(int width, int height);
     void release();
     ~StateImages() { release(); }
+};
+
+// Times a stream of GPU passes without waiting for them: each pass gets a timer
+// query, and results are collected a frame or two later to keep a running
+// estimate of the cost per unit of work. Callers plan each frame's work from the
+// estimate, so the CPU never has to stall until the GPU is done.
+struct PassTimer {
+    static constexpr int kSlots = 64;  // passes in flight at most
+    GLuint q[kSlots] = {};
+    float work[kSlots] = {};
+    int head = 0, tail = 0;  // in flight: [tail, head)
+    double msPerWork = 0.002;  // running estimate
+    PassTimer() = default;
+    PassTimer(const PassTimer&) = delete;
+    PassTimer& operator=(const PassTimer&) = delete;
+    bool full() const { return (head + 1) % kSlots == tail; }
+    void begin(float amountOfWork);
+    void end();
+    void poll();  // folds finished passes into the estimate
+    void release();
 };
 
 struct GpuTimer {

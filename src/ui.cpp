@@ -232,7 +232,7 @@ void App::drawUI() {
     if (ui.showDemo) ImGui::ShowDemoWindow(&ui.showDemo);
     if (ui.showFormulaEditor) drawFormulaEditor();
     if (ui.showGradientEditor) drawGradientEditor();
-    if (ui.showPathWindow || video.active) drawPathWindow();
+    if (ui.showPathWindow || video.active || video.finishing) drawPathWindow();
     drawToast();
 }
 
@@ -357,8 +357,11 @@ void App::drawMenuBar() {
     char buf[160];
     if (view.mode == ViewMode::Fractal3D) {
         int maxS = view.rs.renderMode ? view.rs.maxSamplesPT : view.rs.maxSamplesRT;
-        snprintf(buf, sizeof buf, "%s  |  %s  |  %d/%d samples  |  %.0f fps", fractal().name.c_str(),
-                 view.rs.renderMode ? "path traced" : "real-time", samples, maxS, fps);
+        if (rend.status(fractal()) == Renderer::ProgStatus::Compiling)
+            snprintf(buf, sizeof buf, "%s  |  compiling shaders...  |  %.0f fps", fractal().name.c_str(), fps);
+        else
+            snprintf(buf, sizeof buf, "%s  |  %s  |  %d/%d samples  |  %.0f fps", fractal().name.c_str(),
+                     view.rs.renderMode ? "path traced" : "real-time", samples, maxS, fps);
     } else {
         snprintf(buf, sizeof buf, "%s%s  |  zoom %.3gx  |  %.0f fps", kClassicFormulas[view.cs.formula], view.cs.julia ? " Julia" : "",
                  3.0 / view.cs.height, fps);
@@ -467,6 +470,10 @@ void App::drawFractalTab() {
     ImGui::PopStyleColor();
 
     auto& progs = rend.programs(f);
+    if (rend.status(f) == Renderer::ProgStatus::Compiling) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("compiling %c", "|/-\\"[(int)(ImGui::GetTime() * 8) & 3]);
+    }
     if (!rend.coreError.empty() || !progs.error.empty() || !f.parseError.empty()) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.45f, 0.4f, 1));
         ImGui::TextWrapped("Shader problem - fix the file and save, it reloads automatically:");
@@ -742,9 +749,9 @@ void App::drawClassicPanel() {
                            "and its Julia sets.");
     if (ImGui::TreeNode("Exact center (deep zoom)")) {
         syncCenter();
-        static std::string editRe, editIm;
-        static std::string lastRe, lastIm;
-        if (lastRe != view.hpRe || lastIm != view.hpIm) editRe = lastRe = view.hpRe, editIm = lastIm = view.hpIm;
+        std::string &editRe = ui.centerEdit[0], &editIm = ui.centerEdit[1];
+        if (ui.centerShown[0] != view.hpRe || ui.centerShown[1] != view.hpIm)
+            editRe = ui.centerShown[0] = view.hpRe, editIm = ui.centerShown[1] = view.hpIm;
         ImGui::PushFont(ui.fontMono, 0.0f);
         bool ch = ImGui::InputText("re", &editRe, ImGuiInputTextFlags_EnterReturnsTrue);
         ch |= ImGui::InputText("im", &editIm, ImGuiInputTextFlags_EnterReturnsTrue);
@@ -870,6 +877,12 @@ void App::drawPathWindow() {
         ImGui::ProgressBar(prog, ImVec2(-1, 0), (std::to_string(video.frame) + " / " + std::to_string(video.frames) + " frames").c_str());
         if (prog > 0.01f) ImGui::TextDisabled("%.0fs elapsed, about %.0fs left", el, el / prog - el);
         if (ImGui::Button("Cancel export")) cancelVideo();
+        ImGui::End();
+        return;
+    }
+    if (video.finishing) {
+        ImGui::Text("Finishing %s", video.out.c_str());
+        ImGui::TextDisabled("The encoder is writing the last frames; you can keep exploring.");
         ImGui::End();
         return;
     }
@@ -1342,8 +1355,9 @@ void App::drawHud() {
                           ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove;
     if (ImGui::Begin("##hud", nullptr, fl)) {
         if (view.mode == ViewMode::Fractal3D) {
+            bool compiling = rend.status(fractal()) == Renderer::ProgStatus::Compiling;
             ImGui::Text("%.0f fps  |  %d x %d  |  scale %.2f  |  %s", fps, rend.accum.w, rend.accum.h,
-                        (float)rend.accum.w / std::max(fbW, 1), interactive ? "moving" : "refining");
+                        (float)rend.accum.w / std::max(fbW, 1), compiling ? "compiling shaders..." : interactive ? "moving" : "refining");
             ImGui::TextDisabled("F1 help  |  Tab hide UI  |  F12 screenshot  |  P path trace  |  M 2D mode");
         } else {
             float sx = (float)fbW / std::max(winW, 1), sy = (float)fbH / std::max(winH, 1);
