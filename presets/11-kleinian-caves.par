@@ -1,0 +1,4 @@
+; Pseudo-Kleinian caverns, path traced.
+fractal = kleinian
+render.mode = 1
+render.maxSamplesPT = 2048

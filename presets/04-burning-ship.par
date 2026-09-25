@@ -1,0 +1,9 @@
+; The Burning Ship (Michelitsch & Rossler, 1992).
+mode = 2d
+color.palette = Fire
+classic.banded = 0
+classic.colorDensity = 3
+classic.formula = 1
+classic.center = -1.762 0.012
+classic.height = 0.1
+classic.maxIter = 500

@@ -1,0 +1,3 @@
+; A quaternion Julia set sliding through the 4th dimension (animated slice).
+fractal = quatjulia
+param.slice.anim = 0.04 0.7

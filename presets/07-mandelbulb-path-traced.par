@@ -1,0 +1,4 @@
+; The Mandelbulb, path traced. Hold still for a few seconds while it refines.
+fractal = mandelbulb
+render.mode = 1
+render.maxSamplesPT = 2048

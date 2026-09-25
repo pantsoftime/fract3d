@@ -1,0 +1,6 @@
+; A Menger sponge with a twist before each fold: rotations turn cubes into crystals.
+fractal = menger
+param.preRotation = 0 0 22
+param.rotation = 8 0 0
+camera.pos = 2.4 1.8 -2.9
+camera.target = 0 0 0

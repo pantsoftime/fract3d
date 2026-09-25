@@ -1,0 +1,2 @@
+; The Mandelbrot set as terrain: escape time becomes height and the set is a black lake.
+fractal = landscape

@@ -1,0 +1,4 @@
+; Kaleidoscopic IFS: fold, rotate, scale, repeat.
+fractal = kifs
+render.mode = 1
+render.maxSamplesPT = 1024

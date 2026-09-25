@@ -1,0 +1,9 @@
+; Newton's method for z^3 = 1: which root does each starting point find?
+mode = 2d
+color.palette = Rainbow (cosine)
+classic.formula = 4
+classic.center = 0 0
+classic.height = 3
+classic.maxIter = 64
+classic.colorDensity = 6
+classic.rootSpread = 85

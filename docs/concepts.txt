@@ -1,0 +1,87 @@
+@@ What is a fractal?
+A fractal is a shape with detail at every scale: zoom in anywhere and there is still more structure. Benoit Mandelbrot coined the word in 1975, from the Latin fractus, "broken".
+
+Nature is full of near-fractals: coastlines, ferns, lightning, blood vessels, broccoli, mountain ranges. Classical geometry of lines, circles and cubes describes none of them well.
+
+Most fractals come from a very simple rule applied again and again. That is the big surprise: a one-line formula can produce endless complexity.
+
+@@ Self-similarity
+Many fractals contain smaller copies of themselves.
+* Exactly self-similar: the Menger sponge and the Sierpinski tetrahedron are made of perfect scaled copies of the whole.
+* Quasi self-similar: the Mandelbrot set has tiny "mini-brots" scattered along its boundary. They look like the whole set but are slightly distorted, and they are surrounded by different decoration.
+* Statistically self-similar: a coastline doesn't repeat exactly, but it looks equally rough at every scale.
+
+@@ Fractal dimension
+How long is the coast of Britain? Measure it with a 100 km ruler, then a 10 km ruler, and you get a longer answer each time, because the smaller ruler follows more of the wiggles. Mandelbrot asked this question in 1967. The answer depends on the ruler.
+
+Fractal dimension measures how fast detail appears as you zoom in. If a shape is made of N copies of itself, each scaled down by a factor s:
+$ dimension D = log N / log s
+$ line:           2 copies at 1/2 -> log 2 / log 2 = 1
+$ square:         4 copies at 1/2 -> log 4 / log 2 = 2
+$ Koch snowflake: 4 copies at 1/3 -> 1.2619
+$ Menger sponge: 20 copies at 1/3 -> 2.7268
+A dimension between 1 and 2 means "more than a line, less than a surface". The boundary of the Mandelbrot set has dimension exactly 2, which Mitsuhiro Shishikura proved in 1998. The edge is so wrinkled that it's as "big" as an area.
+
+@@ Escape-time fractals
+The Mandelbrot set, the Julia sets, the Mandelbulb and the quaternion Julia sets all use the same recipe:
+$ start with z
+$ repeat:  z -> f(z) + c
+$ does |z| stay small forever, or escape to infinity?
+Points whose orbit stays bounded are inside the set. Points that escape are outside. Near the boundary, orbits take a long time to decide, and those are the points that give the colors and the detail.
+
+The number of steps before escaping is the escape time. Fractint colored each pixel by it: 1 step is palette color 1, 2 steps is color 2, and so on. That's where its famous bands came from.
+
+@@ Mandelbrot and Julia: two views of one formula
+Both come from z -> z^2 + c, but they ask different questions.
+* Julia set: fix c and vary the starting point z. There is a different Julia set for every c.
+* Mandelbrot set: always start at z = 0 and vary c. It is a map of all the Julia sets.
+If c is inside the Mandelbrot set, its Julia set is one connected piece. If c is outside, the Julia set breaks into dust (Fatou and Julia, around 1918). Try it in Classic 2D mode: right-click near the boundary of the Mandelbrot set, and the Julia set you get looks like the neighborhood you clicked in.
+
+@@ Iterated function systems & folding
+An IFS is a set of shrinking maps. Apply them over and over and the result is always the same shape, the attractor. Fractint drew IFS ferns with the "chaos game": start anywhere, apply one of the maps chosen at random, plot the point, and repeat thousands of times.
+
+For 3D rendering we use the maps in reverse. Folding (mirroring) space puts a point in one symmetric wedge. Scaling then zooms into one copy. After many folds and scales, we measure how far the point is from a simple shape (a box or a sphere) and divide by the total zoom. That is the distance to the fractal. The Menger, Sierpinski, KIFS and Mandelbox fractals all work this way.
+
+@@ Distance estimation & ray marching
+To draw a 3D fractal we shoot a ray from the camera through every pixel and find where it first touches the surface. Fractals have no triangles to intersect. What they do have is a distance estimator (DE): a formula that gives a safe distance to move without hitting anything.
+$ t = 0
+$ repeat:  d = DE(camera + t * ray)
+$          if d < pixel size: hit!
+$          t = t + d
+This is called sphere tracing: each step jumps to the edge of an empty ball. Near the surface the steps get tiny, which is why detail costs time. The same DE also gives soft shadows (did the shadow ray pass close to anything?) and ambient occlusion (how much empty space is around a point?).
+
+The GPU runs this loop for millions of pixels in parallel. That's the whole trick behind real-time fractal flight.
+
+@@ Coloring: palettes, bands & orbit traps
+Coloring is where a fractal gets much of its personality.
+* Palettes: Fractint used 256-entry palettes, the VGA hardware limit. The "Fractint VGA" palette is the exact power-on palette of an IBM VGA card.
+* Bands vs smooth: whole iteration counts make bands. The "continuous" iteration count adds a fraction based on how far past the bailout the orbit landed, which removes the steps.
+* Orbit traps: while iterating, remember how close the orbit came to a point, a line or a plane. The distance is a smooth value that shows hidden structure. Most 3D fractals here are colored this way.
+* Color cycling: rotating the palette makes colors flow through the image. Fractint could do this instantly, because the VGA card let you rewrite its 256 palette entries without redrawing a single pixel.
+
+@@ Precision: why deep zooms get blocky
+Computers store numbers with a fixed number of digits. A 32-bit float keeps about 7 significant digits. Zoom in 100,000x and neighboring pixels differ only in the 7th digit, so they all compute the same value and you see blocks.
+* 64-bit doubles keep about 16 digits, good to about 10^13x zoom. Classic 2D mode switches to them automatically (Precision: Auto).
+* Past that you need arbitrary precision, or "perturbation theory": compute one reference orbit precisely and treat nearby pixels as tiny differences from it. That is how modern deep-zoom videos go past 10^1000x.
+* Fractint's name means FRACTal INTeger: it used fast fixed-point integer math, because most 1988 PCs had no floating-point chip at all.
+
+@@ Lighting: real-time vs path tracing
+Real-time mode uses the classic tricks: light from one sun, soft shadows estimated from the DE, and ambient occlusion from sampling the DE near the surface. It's fast enough to fly through.
+
+Path-traced mode simulates light physically. Each sample bounces rays around the scene at random, picking up color from every surface they touch. One sample is noisy. Averaging hundreds gives soft shadows, color bleeding and indirect light for free. Hold the camera still and watch it converge. This is how film renderers work, running here on your GPU in seconds.
+
+@@ From Fractint to the GPU: a short history
+* 1918: Gaston Julia and Pierre Fatou study iterating complex functions, with no way to draw the pictures.
+* 1980: Mandelbrot sees the first rough computer plots of the set that now bears his name. Brooks and Matelski had published a crude plot in 1978.
+* 1985: Scientific American's "Computer Recreations" column puts the Mandelbrot set on the cover and starts a craze.
+* 1988: Bert Tyler writes FRACT386. With the "Stone Soup Group" it becomes Fractint: free, fast, integer-math fractals for the PC, with color cycling, 3D, PAR files, and more than a hundred fractal types.
+* 1989: Hart, Sandin and Kauffman ray trace quaternion Julia sets using distance estimation.
+* 2009 to 2011: fractalforums.com users find the Mandelbulb, Mandelbox, KIFS and pseudo-Kleinian fractals. GPU shaders make 3D fractals interactive.
+* Today: a single GPU does more fractal math in a second than every 1990 PC running Fractint could do in a day.
+
+@@ Make your own fractal
+Every 3D fractal in this app is a plain text file in the fractals/ folder (Help > Open the fractals folder). A file needs:
+$ // @name My Fractal
+$ // @param float scale = 2 [1, 3] "Scale" -- what it does
+$ float DE(vec3 p, inout vec4 trap) { ... return distance; }
+Copy one of the existing files, change the math, and save. The app reloads it immediately and shows any compile errors on the Fractal tab. Parameters become sliders automatically, and the lines between @about and @end become the lesson in this panel.

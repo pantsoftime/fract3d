@@ -1,0 +1,13 @@
+; Inside a scale-2 Mandelbox. Every room contains smaller rooms. Fly with WASD.
+fractal = mandelbox
+param.scale = 2
+camera.pos = 0 0 -4.2
+camera.target = 0 0 0
+light.floor = 0
+light.skyIntensity = 2.2
+light.sunElevation = 75
+light.glow = 0.6
+light.glowColor = 1.0 0.6 0.3
+post.exposure = 1.6
+color.palette = Gold
+color.scale = 1.5

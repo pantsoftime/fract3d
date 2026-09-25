@@ -1,0 +1,8 @@
+; Seahorse Valley, between the main cardioid and the period-2 bulb, with smooth coloring.
+mode = 2d
+color.palette = Ultra Fractal
+classic.banded = 0
+classic.colorDensity = 4
+classic.center = -0.743643887 0.131825904
+classic.height = 0.00012
+classic.maxIter = 2000

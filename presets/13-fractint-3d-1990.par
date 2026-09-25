@@ -1,0 +1,7 @@
+; The same terrain through a 1990 VGA card: 256 colors, dithering, chunky pixels.
+fractal = landscape
+color.palette = Fractint VGA (default)
+color.scale = 1
+post.retro = 1
+post.pixelSize = 2
+post.scanlines = 0.2

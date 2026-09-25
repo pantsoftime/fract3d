@@ -1,0 +1,9 @@
+; A 15-billion-times zoom. Single precision would turn this into blocks; doubles keep it sharp.
+mode = 2d
+color.palette = Ultra Fractal
+classic.banded = 0
+classic.colorDensity = 6
+classic.center = -0.743643887037151 0.131825904205330
+classic.height = 2e-10
+classic.maxIter = 6000
+classic.fp64 = 2

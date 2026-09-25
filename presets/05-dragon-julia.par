@@ -1,0 +1,10 @@
+; The Julia set for c = -0.8 + 0.156i: connected, because c is just inside the Mandelbrot set.
+mode = 2d
+color.palette = Twilight
+classic.banded = 0
+classic.colorDensity = 5
+classic.julia = 1
+classic.juliaC = -0.8 0.156
+classic.center = 0 0
+classic.height = 2.6
+classic.maxIter = 800

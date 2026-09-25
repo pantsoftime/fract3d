@@ -1,0 +1,6 @@
+; A 3D Julia set of the Mandelbulb formula: one fixed c for every point.
+fractal = mandelbulb
+param.julia = 1
+param.juliaC = 0.35 -0.45 0.25
+camera.pos = 1.9 1.0 -2.1
+camera.target = 0 -0.1 0

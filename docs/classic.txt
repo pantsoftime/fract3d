@@ -1,0 +1,48 @@
+@@ Mandelbrot
+# z -> z^2 + c
+$ z0 = 0,  c = the pixel
+$ inside if |z| stays <= 2 forever
+The most famous object in mathematics: a cardioid with bulbs attached, each with smaller bulbs, and filaments decorated with tiny copies of the whole set.
+
+# Things to try
+* Zoom into "Seahorse Valley", the gap between the cardioid and the big circle on its left (about -0.75 + 0.1i).
+* Press O and move the mouse. Inside the main cardioid the orbit spirals into a single point. Inside the circle to its left it bounces between two points. Each bulb has its own period.
+* Right-click anywhere near the edge to see that point's Julia set.
+* Press C for color cycling, just like 1990.
+
+@@ Burning Ship
+# z -> (|Re z| + i|Im z|)^2 + c
+Take the absolute value of both parts of z before squaring. That small change breaks the smooth symmetry of the Mandelbrot set and gives something jagged. Michael Michelitsch and Otto Rössler described it in 1992. The famous view shows a burning ship with masts and flames, near -1.76 - 0.03i. This app flips the image vertically so the ship sails upright.
+
+# Things to try
+* Zoom into the "armada" of small ships along the left antenna.
+* Lift it into 3D: the flames become a mountain range.
+
+@@ Tricorn (Mandelbar)
+# z -> conj(z)^2 + c
+Take the complex conjugate (flip the sign of the imaginary part) before squaring. The result has three-fold symmetry and a three-cornered shape: the "tricorn", named by John Milnor. Its boundary contains curves where the image looks "broken", which don't occur in the Mandelbrot set.
+
+@@ Multibrot
+# z -> z^n + c
+Raise z to a higher power and the Mandelbrot set grows n-1 fold symmetry. Power 3 has two lobes, power 4 has three, and so on. It's the 2D ancestor of the Mandelbulb, which uses power 8 in 3D.
+
+@@ Newton (z^3 - 1)
+# z -> z - (z^3 - 1) / (3 z^2)
+Newton's method is a school technique for solving equations: guess, then slide down the tangent line to a better guess. For z^3 = 1 there are three answers (three roots). Arthur Cayley asked in 1879 which root each starting point would find. For real numbers the answer is simple, but for complex starting points the three basins meet in an infinitely intricate fractal: wherever two colors meet, the third is there too.
+
+Each basin gets its own part of the palette ("Root color spread"), and the bands show how many steps it took.
+
+@@ Phoenix
+# z -> z^2 + c + p * z_previous
+Shigehiro Ushiki's 1988 formula remembers the previous value of z as well as the current one. The extra memory creates swirling, feathery shapes. The classic Julia version uses c = 0.5667 and p = -0.5.
+
+# Things to try
+* Tick "Julia set", then set c real = 0.5667, c imag = 0 and Phoenix p = (-0.5, 0).
+
+@@ Lambda
+# z -> lambda * z * (1 - z)
+The complex version of the logistic map, the population model that made "chaos" famous (Robert May, 1976). In the parameter plane (Julia unticked) we start from the critical point z = 1/2 and vary lambda. Its Julia sets are Fractint classics: right-click the parameter plane to explore them.
+
+@@ Magnet I
+# z -> ((z^2 + c - 1) / (2z + c - 2))^2
+This comes from physics, not art: renormalization studies of magnetic materials (the Ising model) produce this map. It has two kinds of attracting behavior: escape to infinity, or settle at z = 1. The fractal is where the two compete. Fractint shipped it as the magnet1m and magnet1j types.

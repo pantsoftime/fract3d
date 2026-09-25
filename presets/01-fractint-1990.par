@@ -1,0 +1,5 @@
+; The default Fractint Mandelbrot: VGA palette, one color per iteration. Press C for color cycling, O for orbits.
+mode = 2d
+color.palette = Fractint VGA (default)
+classic.banded = 1
+classic.maxIter = 150

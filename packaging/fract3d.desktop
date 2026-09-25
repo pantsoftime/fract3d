@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Fract3D
+GenericName=3D Fractal Explorer
+Comment=Explore and learn about fractals in 3D, in the spirit of Fractint
+Exec=fract3d
+Icon=fract3d
+Terminal=false
+Categories=Education;Math;Graphics;Science;
+Keywords=fractal;mandelbrot;mandelbulb;julia;fractint;math;
