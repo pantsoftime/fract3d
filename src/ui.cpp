@@ -228,7 +228,7 @@ void App::drawUI() {
     if (view.mode == ViewMode::Classic2D && view.cs.showOrbit) drawOrbitOverlay();
     if (view.mode == ViewMode::Classic2D && ui.showJuliaInset) drawJuliaInset();
     if (ui.showHelp) drawHelp();
-    if (ui.showPoster || poster.active) drawPosterDialog();
+    if (ui.showPoster || (poster.active && !poster.toVideo)) drawPosterDialog();  // video frames: see the path window
     if (ui.showDemo) ImGui::ShowDemoWindow(&ui.showDemo);
     if (ui.showFormulaEditor) drawFormulaEditor();
     if (ui.showGradientEditor) drawGradientEditor();
@@ -288,6 +288,7 @@ void App::drawMenuBar() {
         if (ImGui::MenuItem(camPath.playing ? "Stop" : "Play path", nullptr, false, camPath.keys.size() >= 2)) {
             camPath.playing = !camPath.playing;
             camPath.playStart = now - (camPath.time >= pathDuration() ? 0 : camPath.time);
+            if (!camPath.playing) endPathPreview();
         }
         ImGui::MenuItem("Camera path & video...", nullptr, &ui.showPathWindow);
         ImGui::EndMenu();
@@ -924,6 +925,7 @@ void App::drawPathWindow() {
     if (ImGui::Button(camPath.playing ? "Stop" : "Play")) {
         camPath.playing = !camPath.playing;
         if (camPath.playing) camPath.playStart = now - (camPath.time >= dur ? 0 : camPath.time);
+        else endPathPreview();
     }
     ImGui::SameLine();
     ImGui::Checkbox("Loop", &camPath.loop);
@@ -933,6 +935,7 @@ void App::drawPathWindow() {
         camPath.playing = false;
         applyPathTime(camPath.time);
     }
+    if (ImGui::IsItemDeactivatedAfterEdit()) endPathPreview();
     ImGui::EndDisabled();
 
     ImGui::SeparatorText("Save");
@@ -1458,6 +1461,7 @@ void App::drawPosterDialog() {
         double el = glfwGetTime() - poster.started;
         if (prog > 0.01f) ImGui::TextDisabled("%.0fs elapsed, about %.0fs left", el, el / prog - el);
         if (ImGui::Button("Cancel")) {
+            if (poster.toVideo) cancelVideo();  // (not normally reachable: video frames don't show this dialog)
             poster.active = false;
             poster.target.release();
             poster.index.release();

@@ -20,7 +20,8 @@ static void usage() {
         "  --gl-debug           print OpenGL errors and performance warnings\n"
         "  --formula NAME       start in Classic 2D with a formula from formulas/*.frm\n"
         "  --path FILE          load a camera path (.f3dpath); with --render out.mp4 it's exported\n"
-        "  --fps N              frame rate for video export (default 30)\n");
+        "  --fps N              frame rate for video export (default 30)\n"
+        "  --path-time T        with --path and --render out.png: render the path at T seconds\n");
 }
 
 int main(int argc, char** argv) {
@@ -60,6 +61,7 @@ int main(int argc, char** argv) {
         else if (a == "--open") o.openWindows.push_back(next());  // testing: open a window at start
         else if (a == "--path") o.pathFile = next();
         else if (a == "--fps") o.videoFps = (float)atof(next().c_str());
+        else if (a == "--path-time") o.pathTime = (float)atof(next().c_str());
         else if (a == "--self-test") o.selfTest = o.hidden = true;
         else if (a == "--orbit") o.orbitOn = true;
         else if (a == "--gl-debug-verbose") o.glDebug = o.glDebugVerbose = true;

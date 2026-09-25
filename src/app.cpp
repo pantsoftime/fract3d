@@ -197,6 +197,10 @@ bool App::init(const CliOptions& opts) {
         lastFrameTime = glfwGetTime();
         return true;
     }
+    if (session.cli.pathTime >= 0 && !camPath.keys.empty()) {
+        applyPathTime(session.cli.pathTime);  // one frame of the path (tests, stills)
+        endPathPreview();
+    }
     if (!session.cli.shotPath.empty()) {
         int w = session.cli.shotW ? session.cli.shotW : fbW, h = session.cli.shotH ? session.cli.shotH : fbH;
         int s = session.cli.shotSamples ? session.cli.shotSamples : (view.rs.renderMode ? 256 : 32);
@@ -318,6 +322,12 @@ bool App::selectFormula(const std::string& name) {
 }
 
 bool App::compileFormula() {
+    // Keyframes, undo and PAR loads ask for the same formula again and again; the GPU
+    // compile (and the landscape rebuild it causes) only happens when something changed.
+    if (view.formulaSource == compiledSource && std::equal(view.fn, view.fn + 4, compiledFn) && rend.hasCustomFormula()) {
+        formulaError.clear();
+        return true;
+    }
     TranspiledFormula t = transpileFormula(view.formulaSource, view.fn);
     if (!t.ok) {
         formulaError = t.error;
@@ -333,6 +343,8 @@ bool App::compileFormula() {
     formulaError.clear();
     formulaInfo = t;
     formulaGeneration++;
+    compiledSource = view.formulaSource;
+    std::copy(view.fn, view.fn + 4, compiledFn);
     return true;
 }
 
@@ -382,7 +394,8 @@ std::string App::historyLabel() const {
 // A new entry is recorded once the view has stayed the same for 0.6 s after a
 // change, so a slider drag or a zoom becomes one undo step, not hundreds.
 void App::recordHistory() {
-    if (dragButton >= 0 || flying || camAnim.active || ImGui::IsAnyItemActive()) {
+    // (a playing camera path or a video export moves the view on its own: not the user's steps)
+    if (dragButton >= 0 || flying || camAnim.active || camPath.playing || video.active || ImGui::IsAnyItemActive()) {
         history.changedAt = now;
         return;
     }
@@ -495,6 +508,20 @@ int App::selfTest() {
     view.cs.cx = 5;
     loadParText(deepPar, "deep", true);
     check(view.hpRe == keepRe, "PAR files keep every digit of a deep-zoom center");
+    // camera path from a deep keyframe out to a shallow one (review r2 1.2): near the end
+    // the center must be most of the way to the shallow keyframe's, not stuck at the deep one
+    camPath = CameraPath();
+    camPath.keys.resize(2);
+    camPath.keys[0].par = "mode = 2d\nclassic.center = 0 1\nclassic.centerHP = 0 1\nclassic.height = 1e-20\n";
+    camPath.keys[1].par = "mode = 2d\nclassic.center = -0.6 0\nclassic.height = 3\n";
+    camPath.keys[0].duration = 1;
+    applyPathTime(0.99f);
+    check(view.cs.cx < -0.3 && std::abs(hp::toDouble(view.hpRe) - view.cs.cx) < 1e-9,
+          "a deep-to-shallow path heads for the shallow center");
+    applyPathTime(1.0f);
+    check(view.cs.cx == -0.6 && view.cs.height == 3.0, "...and ends exactly on it");
+    endPathPreview();
+    camPath = CameraPath();
     // hostile values are repaired
     loadParText("mode = 2d\nclassic.formula = 99\nclassic.maxIter = -3\npost.tonemap = 7\n", "bad", true);
     check(view.cs.formula < kClassicFormulaCount && view.cs.maxIter >= 1 && view.rs.tonemap <= 2, "hostile PAR values are sanitized");
@@ -687,7 +714,7 @@ void App::setMode(ViewMode m) {
 void App::frame() {
     // Nothing can change on screen until the user does something: sleep until an
     // event arrives (waking now and then so edited shader files still reload).
-    if (idle) glfwWaitEventsTimeout(0.25);
+    if (idleWait > 0) glfwWaitEventsTimeout(idleWait);
     else glfwPollEvents();
     now = glfwGetTime();
     double rawDt = now - lastFrameTime;
@@ -778,27 +805,29 @@ void App::frame() {
         quit = true;
     }
     glfwSwapBuffers(win);
-    idle = computeIdle();
+    idleWait = computeIdle();
 }
 
-bool App::computeIdle() {
-    if (session.cli.hidden) return false;  // headless renders and tests run flat out
+// How long the next frame may wait for input: 0 while anything is still being drawn
+// or animated. The long wait still wakes now and then so edited files reload.
+double App::computeIdle() {
+    if (session.cli.hidden) return 0;  // headless renders and tests run flat out
     if (poster.active || job2D.active || camAnim.active || dragButton >= 0 || flying || gamepadActive || camPath.playing ||
-        video.active)
-        return false;
-    for (int j = GLFW_JOYSTICK_1; j <= GLFW_JOYSTICK_LAST; j++)
-        if (glfwJoystickIsGamepad(j)) return false;  // gamepads are polled, not event-driven
-    if (view.rs.cycleSpeed != 0.0f || glfwGetTime() < ui.toastUntil) return false;
+        video.active || refPending || (inset.job.active && view.mode == ViewMode::Classic2D))
+        return 0;
+    if (view.rs.cycleSpeed != 0.0f || glfwGetTime() < ui.toastUntil) return 0;
     if (!animPaused)
         for (auto& p : fractal().params)
-            if (p.animate) return false;
+            if (p.animate) return 0;
     if (view.mode == ViewMode::Fractal3D) {
-        if (rend.status(fractal()) == Renderer::ProgStatus::Compiling) return false;
-        if (interactive || samples < (view.rs.renderMode ? view.rs.maxSamplesPT : view.rs.maxSamplesRT)) return false;
+        if (rend.status(fractal()) == Renderer::ProgStatus::Compiling) return 0;
+        if (interactive || samples < (view.rs.renderMode ? view.rs.maxSamplesPT : view.rs.maxSamplesRT)) return 0;
     } else if (interactive) {
-        return false;
+        return 0;
     }
-    return true;
+    for (int j = GLFW_JOYSTICK_1; j <= GLFW_JOYSTICK_LAST; j++)
+        if (glfwJoystickIsGamepad(j)) return 0.05;  // gamepads are polled, not event-driven: check often
+    return 0.25;
 }
 
 // ------------------------------------------------------------------ keys

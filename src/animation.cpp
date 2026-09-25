@@ -41,13 +41,19 @@ void App::addKeyframe() {
 void App::parseKeyframes() {
     if (camPath.parsed) return;
     std::string current = parText();
+    // loading keyframes resets their fractals' parameters: keep every fractal's as they are
+    std::vector<std::vector<Param>> keepParams;
+    for (auto& f : lib_.all()) keepParams.push_back(f.params);
     for (auto& k : camPath.keys) {
         loadParText(k.par, "keyframe", true);
+        syncCenter();  // every keyframe gets its exact 2D center (deep ones from classic.centerHP)
         k.v = view;
         k.fractalKey = fractal().key;
         k.params.clear();
         for (auto& p : fractal().params) k.params.push_back({p.value[0], p.value[1], p.value[2], p.value[3]});
     }
+    for (size_t i = 0; i < keepParams.size() && i < lib_.all().size(); i++)
+        if (lib_.all()[i].params.size() == keepParams[i].size()) lib_.all()[i].params = keepParams[i];
     loadParText(current, "view", true);
     camPath.parsed = true;
 }
@@ -92,6 +98,7 @@ void App::applyPathTime(float t) {
         t = std::clamp(t, 0.0f, pathDuration());
         while (seg < n - 2 && t > keys[seg].duration) t -= keys[seg].duration, seg++;
         u = std::clamp(t / std::max(keys[seg].duration, 0.01f), 0.0f, 1.0f);
+        if (u >= 1.0f) seg = n - 1, u = 0.0f;  // the very end: exactly the last keyframe, switches included
     }
     const Keyframe& B = keys[seg];
     const Keyframe& C = keys[std::min(seg + 1, n - 1)];
@@ -108,7 +115,7 @@ void App::applyPathTime(float t) {
         splineFields(v.cs, A2.v.cs, B.v.cs, C.v.cs, D2.v.cs, u, [](Classic2DSettings& x, auto&& f) { visitClassic(x, f); });
         // 2D zooms: constant zoom rate (log height), and the destination stays put on screen
         double hb = B.v.cs.height, hc = C.v.cs.height;
-        double h = std::exp(std::log(hb) + (std::log(hc) - std::log(hb)) * u);
+        double h = u <= 0.0f ? hb : std::exp(std::log(hb) + (std::log(hc) - std::log(hb)) * u);  // (exact at keyframes)
         double w = std::abs(hb - hc) > 1e-12 * hb ? (hb - h) / (hb - hc) : u;
         v.cs.height = h;
         v.cs.cx = B.v.cs.cx + (C.v.cs.cx - B.v.cs.cx) * w;
@@ -145,6 +152,14 @@ void App::applyPathTime(float t) {
     if (formulaChanged && !view.formulaSource.empty()) compileFormula();
     applyPalette();
     auto& params = fractal().params;
+    // the path drives the parameters now; their own animation comes back afterwards
+    auto saved = std::find_if(camPath.savedAnim.begin(), camPath.savedAnim.end(),
+                              [&](auto& e) { return e.first == fractal().key; });
+    if (saved == camPath.savedAnim.end()) {
+        std::vector<char> flags;
+        for (auto& p : params) flags.push_back(p.animate);
+        camPath.savedAnim.push_back({fractal().key, flags});
+    }
     for (size_t i = 0; i < params.size() && i < B.params.size(); i++) {
         auto& p = params[i];
         bool smooth = sameScene && i < C.params.size() && p.type != ParamType::Int && p.type != ParamType::Bool &&
@@ -162,6 +177,16 @@ void App::applyPathTime(float t) {
     }
 }
 
+void App::endPathPreview() {
+    for (auto& [key, flags] : camPath.savedAnim) {
+        int idx = lib_.indexOf(key);
+        if (idx < 0) continue;
+        auto& params = lib_.all()[idx].params;
+        for (size_t i = 0; i < params.size() && i < flags.size(); i++) params[i].animate = flags[i];
+    }
+    camPath.savedAnim.clear();
+}
+
 void App::updatePathPlayback() {
     if (!camPath.playing) return;
     camPath.time = (float)(now - camPath.playStart);
@@ -173,6 +198,9 @@ void App::updatePathPlayback() {
         } else {
             camPath.playing = false;
             camPath.time = dur;
+            applyPathTime(camPath.time);
+            endPathPreview();
+            return;
         }
     }
     applyPathTime(camPath.time);
@@ -292,6 +320,7 @@ void App::finishVideo(bool ok) {
     int status = 0;
     waitpid(video.pid, &status, 0);
     ok = ok && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    endPathPreview();
     loadParText(video.restorePar, "view", true);
     char buf[512];
     snprintf(buf, sizeof buf, "%s %s (%d frames, %.0fs)", ok ? "Saved" : "Video export FAILED:", video.out.c_str(), video.frame,

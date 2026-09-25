@@ -43,6 +43,7 @@ struct CliOptions {
     std::vector<std::string> openWindows;  // --open gradient|formula|help|render|path
     std::string pathFile;                  // camera path to load (--path); with --render x.mp4 it's exported
     float videoFps = 30;
+    float pathTime = -1;  // --path-time: render the camera path at this time (with --render x.png)
 };
 
 // Everything that defines what's on screen. (Fractal parameter values live with
@@ -156,7 +157,7 @@ public:
 private:
     // ---- loop
     void frame();
-    bool computeIdle();
+    double computeIdle();
     void handleKeys();
     void input3D(float dt);
     void input2D(float dt);
@@ -214,6 +215,8 @@ public:
     Renderer rend;
     std::vector<FormulaDef> formulas;  // formulas/*.frm (built-in, then the user's)
     std::string formulaError;
+    std::string compiledSource;  // what the renderer has now (compileFormula skips identical requests)
+    int compiledFn[4] = {-1, -1, -1, -1};
     TranspiledFormula formulaInfo;     // what the current formula uses (fn1..4, p1..3)
 
     // progressive 3D accumulation
@@ -337,7 +340,11 @@ public:
         float fps = 30;
         int videoW = 1920, videoH = 1080, videoSamples = 32;
         int encoder = 0;  // 0 libx264, 1 NVIDIA NVENC
+        // Parameter animation is off while a path drives the view; the flags are
+        // saved here the first time the path moves the view and restored afterwards.
+        std::vector<std::pair<std::string, std::vector<char>>> savedAnim;
     } camPath;
+    void endPathPreview();  // playback/scrubbing ended: parameter animation comes back
     struct VideoJob {
         bool active = false;
         int fd = -1;
@@ -365,7 +372,7 @@ public:
     bool fullscreen = false;
     int savedWin[4] = {0, 0, 1600, 900};
     bool quit = false;
-    bool idle = false;  // converged and nothing animating: wait for input instead of redrawing
+    double idleWait = 0;  // > 0: nothing to draw, so wait this long for input instead of redrawing
     std::vector<std::filesystem::path> droppedFiles;  // from the window's drop callback
     void openDroppedFile(const std::filesystem::path& p);
     double lastSessionSave = 0;

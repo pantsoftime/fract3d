@@ -1,0 +1,12 @@
+; review r2 1.2: a zoom out from a deep keyframe must end on the shallow keyframe's center
+---- keyframe 1 deep
+mode = 2d
+classic.center = 0 1
+classic.centerHP = 0 1
+classic.height = 1e-20
+classic.maxIter = 2000
+---- keyframe 1 shallow
+mode = 2d
+classic.center = -0.6 0
+classic.height = 3
+classic.maxIter = 256

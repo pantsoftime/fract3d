@@ -1,0 +1,5 @@
+mode = 2d
+classic.center = 0 1
+classic.centerHP = 0 1
+classic.height = 1e-20
+classic.maxIter = 2000

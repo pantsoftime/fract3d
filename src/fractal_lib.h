@@ -44,6 +44,7 @@ struct Fractal {
     std::string parseError;
 
     Param* find(const std::string& id);
+    const Param* find(const std::string& id) const;
     std::string uniformDecls() const;
 };
 

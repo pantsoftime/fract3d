@@ -149,6 +149,17 @@ if(FRACT3D_TESTS)
              COMMAND fract3d --path ${CMAKE_SOURCE_DIR}/tests/menger-twist.f3dpath --render ${TEST_OUT}/path.mp4
                      --size 160x90 --samples 1 --fps 5)
   endif()
+  # camera paths arrive exactly at their keyframes (both ends of a deep-to-shallow zoom)
+  foreach(end first:0 last:1)
+    string(REPLACE ":" ";" parts ${end})
+    list(GET parts 0 which)
+    list(GET parts 1 t)
+    add_test(NAME path.deep-to-shallow-${which}
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:fract3d> -DDIFF=$<TARGET_FILE:imgdiff>
+                     -DPATHFILE=${CMAKE_SOURCE_DIR}/tests/paths/deep-to-shallow.f3dpath -DTIME=${t}
+                     -DPAR=${CMAKE_SOURCE_DIR}/tests/paths/deep-to-shallow-${which}.par -DOUT=${TEST_OUT}
+                     -DNAME=path-${which} -DSIZE=160x90 -P ${CMAKE_SOURCE_DIR}/tests/path_endpoint.cmake)
+  endforeach()
   add_test(NAME ui.path-window COMMAND fract3d --fractal menger --path ${CMAKE_SOURCE_DIR}/tests/menger-twist.f3dpath
                                        --open path --ui-shot ${TEST_OUT}/ui-path.png --size 1600x900 --frames 20)
 

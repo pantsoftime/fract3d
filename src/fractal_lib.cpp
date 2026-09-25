@@ -42,6 +42,7 @@ Param* Fractal::find(const std::string& id) {
         if (p.id == id) return &p;
     return nullptr;
 }
+const Param* Fractal::find(const std::string& id) const { return const_cast<Fractal*>(this)->find(id); }
 
 std::string Fractal::uniformDecls() const {
     std::string s;

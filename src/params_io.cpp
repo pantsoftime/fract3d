@@ -85,7 +85,11 @@ std::string App::parText() const {
     if (!view.hpRe.empty() && view.cs.cx == view.hpShadow[0] && view.cs.cy == view.hpShadow[1] &&
         (view.hpRe != hp::fromDouble(view.cs.cx) || view.hpIm != hp::fromDouble(view.cs.cy)))
         o << "classic.centerHP = " << view.hpRe << " " << view.hpIm << "\n";  // deep zoom: every digit counts
-    if (view.mode == ViewMode::Classic2D && view.cs.formula == kCustomFormula) {
+    // the user formula, when the view uses it (2D, or the landscape's "Custom formula" choice)
+    const Param* lf = f.key == "landscape" ? f.find("formula") : nullptr;
+    bool usesFormula = view.mode == ViewMode::Classic2D ? view.cs.formula == kCustomFormula
+                                                        : lf && std::lround(lf->value[0]) == 5;
+    if (usesFormula) {
         std::string src = view.formulaSource;  // one line: newlines become \n
         std::string esc;
         for (char ch : src) esc += ch == '\n' ? std::string("\\n") : ch == '\\' ? std::string("\\\\") : std::string(1, ch);
@@ -146,7 +150,12 @@ bool App::loadParText(const std::string& text, const std::string& label, bool qu
     // Start from the fractal's defaults and curated look, so a hand-written PAR
     // only needs the keys it wants to change. Saved PARs contain every key anyway.
     Fractal& f = fractal();
+    RenderSettings perf = view.rs;  // performance preferences aren't part of a view
     view.rs = RenderSettings();
+    copyFields(view.rs, perf, kPerf, [](RenderSettings& x, auto&& fn) { visitRender(x, fn); });
+    view.cs = Classic2DSettings();
+    view.hpRe.clear();  // re-derived from classic.center unless the PAR has classic.centerHP
+    view.hpIm.clear();
     view.rs.stepFactor = f.hints.stepFactor;
     view.rs.detail = f.hints.detail;
     view.rs.maxSteps = f.hints.maxSteps;
@@ -182,6 +191,39 @@ bool App::loadParText(const std::string& text, const std::string& label, bool qu
             p.animate = true;
         }
     }
+    // The formula comes before the settings: a formula's suggested view (@view, @p1)
+    // is only a default, and the PAR's own classic.* keys win.
+    // (The formula and palette editors' contents are the user's work: a PAR without
+    // formula.* or color.gradient keys doesn't use them, so they're left alone.)
+    int fn[4] = {view.fn[0], view.fn[1], view.fn[2], view.fn[3]};
+    bool hasFn = kv.count("formula.fn") > 0;
+    if (hasFn) {
+        std::istringstream is(kv["formula.fn"]);
+        for (int& x : fn) is >> x;
+        for (int& x : fn) x = std::clamp(x, 0, kFormulaFunctionCount - 1);
+    }
+    if (kv.count("formula.source")) {
+        std::string src, esc = kv["formula.source"];
+        for (size_t i = 0; i < esc.size(); i++) {
+            if (esc[i] == '\\' && i + 1 < esc.size()) {
+                src += esc[i + 1] == 'n' ? '\n' : esc[i + 1];
+                i++;
+            } else {
+                src += esc[i];
+            }
+        }
+        view.formulaSource = src;
+        ui.formulaEdit = src;
+        std::copy(fn, fn + 4, view.fn);
+        if (kv.count("formula.name")) view.formulaName = kv["formula.name"];
+        if (!compileFormula()) toast("The formula in this PAR has an error: " + formulaError, 6);
+    } else if (kv.count("formula.name")) {
+        if (!selectFormula(kv["formula.name"])) toast("PAR uses formula '" + kv["formula.name"] + "', which isn't installed", 5);
+        if (hasFn) {
+            std::copy(fn, fn + 4, view.fn);
+            compileFormula();
+        }
+    }
     visitSettings(view.rs, view.cs, [&](const char* name, auto* ptr, int n) {
         auto it = kv.find(name);
         if (it == kv.end()) return;
@@ -211,28 +253,6 @@ bool App::loadParText(const std::string& text, const std::string& label, bool qu
     if (kv.count("color.palette")) {
         for (int i = 0; i < (int)palettes.size(); i++)
             if (palettes[i].name == kv["color.palette"]) view.rs.palette = i;
-    }
-    if (kv.count("formula.fn")) {
-        std::istringstream is(kv["formula.fn"]);
-        for (int& x : view.fn) is >> x;
-        for (int& x : view.fn) x = std::clamp(x, 0, kFormulaFunctionCount - 1);
-    }
-    if (kv.count("formula.source")) {
-        std::string src, esc = kv["formula.source"];
-        for (size_t i = 0; i < esc.size(); i++) {
-            if (esc[i] == '\\' && i + 1 < esc.size()) {
-                src += esc[i + 1] == 'n' ? '\n' : esc[i + 1];
-                i++;
-            } else {
-                src += esc[i];
-            }
-        }
-        view.formulaSource = src;
-        ui.formulaEdit = src;
-        if (kv.count("formula.name")) view.formulaName = kv["formula.name"];
-        if (!compileFormula()) toast("The formula in this PAR has an error: " + formulaError, 6);
-    } else if (kv.count("formula.name")) {
-        selectFormula(kv["formula.name"]);
     }
     if (kv.count("classic.centerHP")) {
         std::istringstream is(kv["classic.centerHP"]);
