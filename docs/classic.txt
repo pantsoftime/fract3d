@@ -47,6 +47,19 @@ The complex version of the logistic map, the population model that made "chaos" 
 # z -> ((z^2 + c - 1) / (2z + c - 2))^2
 This comes from physics, not art: renormalization studies of magnetic materials (the Ising model) produce this map. It has two kinds of attracting behavior: escape to infinity, or settle at z = 1. The fractal is where the two compete. Fractint shipped it as the magnet1m and magnet1j types.
 
+@@ Custom formula
+# Write your own, the Fractint way
+Fractint's most loved feature was the formula file: a few lines of text that define a whole new fractal. The same works here.
+$ Name { init : loop, test }
+$ Spider { z = c = pixel : z = z*z + c, c = c/2 + z, |z| <= 4 }
+Everything before the colon runs once per pixel; after it comes the loop, and its last line is the "keep going" test. When the test becomes false, the pixel is colored by how many steps it took. |z| is the squared size of z, exactly as in Fractint.
+
+# Things to try
+* Pick a formula from the list, then press "Edit formula..." and change a number. Ctrl+Enter compiles it.
+* FnMandel with fn1 = sin, cos, exp or cosh: one formula, four different worlds.
+* "Lift into 3D landscape" works with your formula too.
+* Put your own .frm files in ~/.config/fract3d/formulas, or drop one onto the window.
+
 @@ Coloring: Binary decomposition
 # Which half-plane did z escape into?
 At the moment z escapes, look at the sign of its imaginary part and shift the color by half a palette when it's positive. The bands split into a checkerboard of cells.

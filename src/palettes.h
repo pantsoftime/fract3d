@@ -14,6 +14,16 @@ struct CosinePalette {
     float c[3] = {1.0f, 1.0f, 1.0f}, d[3] = {0.0f, 0.33f, 0.67f};
 };
 
+// A color at a position 0..1 along the palette. The gradient wraps around from
+// the last stop back to the first, so palettes tile seamlessly.
+struct GradientStop {
+    float t;
+    float rgb[3];
+};
+Palette makeGradientPalette(const std::string& name, std::vector<GradientStop> stops);
+// Samples n evenly spaced stops from any palette (to start editing from it).
+std::vector<GradientStop> sampleStops(const Palette& p, int n);
+
 std::vector<Palette> builtinPalettes();
 Palette makeCosinePalette(const std::string& name, const CosinePalette& cp);
 Palette vgaDefaultPalette();

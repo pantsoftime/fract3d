@@ -231,6 +231,7 @@ void App::drawUI() {
     if (ui.showPoster || poster.active) drawPosterDialog();
     if (ui.showDemo) ImGui::ShowDemoWindow(&ui.showDemo);
     if (ui.showFormulaEditor) drawFormulaEditor();
+    if (ui.showGradientEditor) drawGradientEditor();
     drawToast();
 }
 
@@ -504,6 +505,16 @@ void App::drawColorTab() {
         if (ch) applyPalette();
         helpTip("Inigo Quilez's procedural palette: one cosine wave per color channel. Keep c whole numbers so the palette wraps smoothly.");
     }
+    if (ImGui::Button("Edit gradient...")) {
+        if (view.rs.palette != gradientPaletteIdx) {  // start from whatever palette is showing
+            view.gradient = sampleStops(palettes[view.rs.palette], 8);
+            view.rs.palette = gradientPaletteIdx;
+            applyPalette();
+        }
+        ui.showGradientEditor = true;
+    }
+    helpTip("Design your own palette from color stops - a nod to Fractint's palette editor.");
+    ImGui::SameLine();
     if (ImGui::Button("Save palette as .map")) {
         std::string name = palettes[view.rs.palette].name;
         for (auto& ch : name)
@@ -796,6 +807,99 @@ void App::drawJuliaInset() {
     ImGui::End();
 }
 
+// ------------------------------------------------------------------ gradient editor
+void App::drawGradientEditor() {
+    float fs_ = ImGui::GetFontSize();
+    ImGui::SetNextWindowPos(ImVec2(fs_ * 26, fs_ * 3.0f), ImGuiCond_FirstUseEver);  // right of the control panel
+    if (!ImGui::Begin("Gradient editor", &ui.showGradientEditor, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::End();
+        return;
+    }
+    auto& stops = view.gradient;
+    bool changed = false;
+    ui.gradientSel = std::clamp(ui.gradientSel, 0, std::max((int)stops.size() - 1, 0));
+    const Palette& pal = palettes[gradientPaletteIdx];
+
+    // the gradient bar: click to add a stop there
+    float w = fs_ * 28, h = fs_ * 2.0f;
+    ImVec2 o = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    for (int i = 0; i < 256; i++)
+        dl->AddRectFilled(ImVec2(o.x + w * i / 256, o.y), ImVec2(o.x + w * (i + 1) / 256 + 1, o.y + h),
+                          IM_COL32(pal.rgba[i * 4], pal.rgba[i * 4 + 1], pal.rgba[i * 4 + 2], 255));
+    ImGui::InvisibleButton("bar", ImVec2(w, h));
+    if (ImGui::IsItemClicked(0) && stops.size() < 64) {
+        float t = (ImGui::GetIO().MousePos.x - o.x) / w;
+        int k = std::clamp((int)(t * 256), 0, 255);
+        stops.push_back({t, {pal.rgba[k * 4] / 255.0f, pal.rgba[k * 4 + 1] / 255.0f, pal.rgba[k * 4 + 2] / 255.0f}});
+        ui.gradientSel = (int)stops.size() - 1;
+        changed = true;
+    }
+    ImGui::SetItemTooltip("Click to add a color stop here");
+
+    // stop handles below the bar: drag to move, right-click to delete
+    float hy = o.y + h + 2, hs = fs_ * 0.55f;
+    int remove = -1;
+    for (int i = 0; i < (int)stops.size(); i++) {
+        float x = o.x + stops[i].t * w;
+        ImGui::SetCursorScreenPos(ImVec2(x - hs, hy));
+        ImGui::PushID(i);
+        ImGui::InvisibleButton("stop", ImVec2(hs * 2, hs * 2));
+        if (ImGui::IsItemActivated()) ui.gradientSel = i;
+        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(0)) {
+            stops[i].t = std::clamp((ImGui::GetIO().MousePos.x - o.x) / w, 0.0f, 0.999f);
+            changed = true;
+        }
+        if (ImGui::IsItemClicked(1) && stops.size() > 1) remove = i;
+        ImGui::SetItemTooltip("Drag to move, right-click to delete");
+        ImGui::PopID();
+        ImU32 col = IM_COL32((int)(stops[i].rgb[0] * 255), (int)(stops[i].rgb[1] * 255), (int)(stops[i].rgb[2] * 255), 255);
+        ImVec2 tip(x, hy), l(x - hs, hy + hs * 1.6f), r(x + hs, hy + hs * 1.6f);
+        dl->AddTriangleFilled(tip, r, l, col);
+        dl->AddTriangle(tip, r, l, i == ui.gradientSel ? IM_COL32(255, 255, 255, 255) : IM_COL32(0, 0, 0, 200),
+                        i == ui.gradientSel ? 2.5f : 1.0f);
+    }
+    if (remove >= 0) {
+        stops.erase(stops.begin() + remove);
+        ui.gradientSel = std::min(ui.gradientSel, (int)stops.size() - 1);
+        changed = true;
+    }
+    ImGui::SetCursorScreenPos(ImVec2(o.x, hy + hs * 2.2f));
+
+    if (!stops.empty()) {
+        auto& s = stops[ui.gradientSel];
+        ImGui::SetNextItemWidth(fs_ * 12);
+        changed |= ImGui::SliderFloat("Position", &s.t, 0.0f, 0.999f, "%.3f");
+        changed |= ImGui::ColorPicker3("##color", s.rgb, ImGuiColorEditFlags_NoSidePreview | ImGuiColorEditFlags_PickerHueWheel);
+    }
+    if (ImGui::Button("Reverse")) {
+        for (auto& s : stops) s.t = std::fmod(1.0f - s.t, 1.0f);
+        changed = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Spread evenly")) {
+        std::sort(stops.begin(), stops.end(), [](auto& a, auto& b) { return a.t < b.t; });
+        for (size_t i = 0; i < stops.size(); i++) stops[i].t = (float)i / stops.size();
+        changed = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::BeginCombo("##from", "Start from palette...", ImGuiComboFlags_HeightLarge)) {
+        for (int i = 0; i < gradientPaletteIdx; i++)
+            if (ImGui::Selectable(palettes[i].name.c_str())) {
+                stops = sampleStops(palettes[i], 8);
+                ui.gradientSel = 0;
+                changed = true;
+            }
+        ImGui::EndCombo();
+    }
+    ImGui::TextDisabled("%d stops - saved with your view. To export it: Color > Save palette as .map", (int)stops.size());
+    if (changed) {
+        view.rs.palette = gradientPaletteIdx;
+        applyPalette();
+    }
+    ImGui::End();
+}
+
 // ------------------------------------------------------------------ formulas
 void App::drawFormulaControls() {
     const FormulaDef* cur = findFormula(view.formulaName);
@@ -840,6 +944,7 @@ void App::drawFormulaControls() {
 void App::drawFormulaEditor() {
     float fs_ = ImGui::GetFontSize();
     ImGui::SetNextWindowSize(ImVec2(fs_ * 34, fs_ * 26), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f, fs_ * 3.0f), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.0f));
     if (!ImGui::Begin("Formula editor", &ui.showFormulaEditor)) {
         ImGui::End();
         return;
@@ -973,6 +1078,14 @@ void App::drawLearnPanel() {
                         found = true;
                     }
                 if (!found) ImGui::TextDisabled("(no notes for this formula yet)");
+                if (view.cs.formula == kCustomFormula) {  // the formula file's own description
+                    const FormulaDef* fd = findFormula(view.formulaName);
+                    ImGui::SeparatorText(view.formulaName.c_str());
+                    if (fd && !fd->comment.empty()) ImGui::TextWrapped("%s", fd->comment.c_str());
+                    ImGui::PushFont(ui.fontMono, 0.0f);
+                    ImGui::TextUnformatted(view.formulaSource.c_str());
+                    ImGui::PopFont();
+                }
                 // ...and the coloring method, if it isn't the default
                 if (view.cs.coloring > 0)
                     for (auto& [title, body] : sections(ui.classicText))

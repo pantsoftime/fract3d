@@ -70,22 +70,43 @@ struct Stop { float t; uint32_t hex; };
 
 // Gradient through the stops; the last stop wraps to the first so the palette
 // tiles seamlessly when the color index repeats.
-static Palette gradient(const std::string& name, std::vector<Stop> stops) {
+Palette makeGradientPalette(const std::string& name, std::vector<GradientStop> stops) {
     Palette p = blank(name);
-    stops.push_back({1.0f, stops.front().hex});
+    if (stops.empty()) stops.push_back({0.0f, {0.5f, 0.5f, 0.5f}});
+    for (auto& s : stops) s.t = s.t - std::floor(s.t);
+    std::sort(stops.begin(), stops.end(), [](const GradientStop& a, const GradientStop& b) { return a.t < b.t; });
+    // one copy of the first stop past the end makes the last interval wrap around
+    GradientStop wrap = stops.front();
+    wrap.t += 1.0f;
+    stops.push_back(wrap);
     for (int i = 0; i < 256; i++) {
         float t = i / 256.0f;
+        if (t < stops.front().t) t += 1.0f;  // before the first stop: in the wrapping interval
         size_t k = 0;
         while (k + 2 < stops.size() && t >= stops[k + 1].t) k++;
-        const Stop &a = stops[k], &b = stops[k + 1];
+        const GradientStop &a = stops[k], &b = stops[k + 1];
         float u = std::clamp((t - a.t) / std::max(b.t - a.t, 1e-6f), 0.0f, 1.0f);
         u = u * u * (3 - 2 * u);
-        auto ch = [](uint32_t h, int s) { return ((h >> s) & 0xff) / 255.0f; };
-        put(p, i, ch(a.hex, 16) + (ch(b.hex, 16) - ch(a.hex, 16)) * u,
-            ch(a.hex, 8) + (ch(b.hex, 8) - ch(a.hex, 8)) * u,
-            ch(a.hex, 0) + (ch(b.hex, 0) - ch(a.hex, 0)) * u);
+        put(p, i, a.rgb[0] + (b.rgb[0] - a.rgb[0]) * u, a.rgb[1] + (b.rgb[1] - a.rgb[1]) * u,
+            a.rgb[2] + (b.rgb[2] - a.rgb[2]) * u);
     }
     return p;
+}
+
+std::vector<GradientStop> sampleStops(const Palette& p, int n) {
+    std::vector<GradientStop> out;
+    for (int i = 0; i < n; i++) {
+        int k = i * 256 / n;
+        out.push_back({(float)i / n, {p.rgba[k * 4] / 255.0f, p.rgba[k * 4 + 1] / 255.0f, p.rgba[k * 4 + 2] / 255.0f}});
+    }
+    return out;
+}
+
+static Palette gradient(const std::string& name, const std::vector<Stop>& hexStops) {
+    std::vector<GradientStop> stops;
+    auto ch = [](uint32_t h, int s) { return ((h >> s) & 0xff) / 255.0f; };
+    for (auto& s : hexStops) stops.push_back({s.t, {ch(s.hex, 16), ch(s.hex, 8), ch(s.hex, 0)}});
+    return makeGradientPalette(name, stops);
 }
 
 std::vector<Palette> builtinPalettes() {

@@ -6,6 +6,7 @@
 #include "settings.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include <algorithm>
 #include <cstdio>
@@ -70,6 +71,11 @@ std::string App::parText() const {
     o << "camera.pos = " << view.cam.pos.x << " " << view.cam.pos.y << " " << view.cam.pos.z << "\n";
     o << "camera.yaw = " << view.cam.yaw << "\ncamera.pitch = " << view.cam.pitch << "\ncamera.distance = " << view.cam.distance << "\n";
     o << "color.palette = " << palettes[view.rs.palette].name << "\n";
+    if (view.rs.palette == gradientPaletteIdx) {
+        o << "color.gradient =";
+        for (auto& s : view.gradient) o << " " << s.t << " " << s.rgb[0] << " " << s.rgb[1] << " " << s.rgb[2] << ";";
+        o << "\n";
+    }
     if (view.rs.palette == customPaletteIdx) {
         o << "color.cosine =";
         for (auto* arr : {view.cosine.a, view.cosine.b, view.cosine.c, view.cosine.d})
@@ -183,6 +189,21 @@ bool App::loadParText(const std::string& text, const std::string& label, bool qu
         std::istringstream is(kv["color.cosine"]);
         for (auto* arr : {view.cosine.a, view.cosine.b, view.cosine.c, view.cosine.d})
             for (int k = 0; k < 3; k++) is >> arr[k];
+    }
+    if (kv.count("color.gradient")) {
+        std::vector<GradientStop> g;
+        std::istringstream is(kv["color.gradient"]);
+        std::string stop;
+        while (std::getline(is, stop, ';')) {
+            GradientStop s;
+            std::istringstream ss(stop);
+            if (ss >> s.t >> s.rgb[0] >> s.rgb[1] >> s.rgb[2] && std::isfinite(s.t)) {
+                for (float& c : s.rgb) c = std::isfinite(c) ? std::clamp(c, 0.0f, 1.0f) : 0.5f;
+                g.push_back(s);
+            }
+            if (g.size() >= 64) break;
+        }
+        if (!g.empty()) view.gradient = g;
     }
     if (kv.count("color.palette")) {
         for (int i = 0; i < (int)palettes.size(); i++)

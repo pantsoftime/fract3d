@@ -114,6 +114,8 @@ bool App::init(const CliOptions& opts) {
     }
     customPaletteIdx = (int)palettes.size();
     palettes.push_back(makeCosinePalette("Custom (cosine editor)", view.cosine));
+    gradientPaletteIdx = (int)palettes.size();
+    palettes.push_back(makeGradientPalette("Custom (gradient editor)", view.gradient));
 
     refreshDocs();
     // a user formula is always compiled, so "Custom formula" works from the start
@@ -145,6 +147,21 @@ bool App::init(const CliOptions& opts) {
     }
     if (session.cli.pathTrace >= 0) view.rs.renderMode = session.cli.pathTrace;
     ui.showJuliaInset = session.cli.insetOn;
+    for (auto& w : session.cli.openWindows) {
+        if (w == "gradient") {
+            view.gradient = sampleStops(palettes[view.rs.palette], 8);
+            view.rs.palette = gradientPaletteIdx;
+            applyPalette();
+            ui.showGradientEditor = true;
+        } else if (w == "formula") {
+            ui.formulaEdit = view.formulaSource;
+            ui.showFormulaEditor = true;
+        } else if (w == "help") {
+            ui.showHelp = true;
+        } else if (w == "render") {
+            ui.showPoster = true;
+        }
+    }
     if (session.cli.orbitOn) view.cs.showOrbit = true;
     sanitize(view.rs);
     sanitize(view.cs);
@@ -314,8 +331,9 @@ void App::openDroppedFile(const fs::path& p) {
         Palette pal;
         if (!loadMapFile(p.string(), pal)) return toast("Couldn't read palette " + p.filename().string(), 4);
         pal.name = "MAP: " + pal.name;
-        palettes.insert(palettes.begin() + customPaletteIdx, pal);  // keep the custom one last
+        palettes.insert(palettes.begin() + customPaletteIdx, pal);  // keep the two editable ones last
         view.rs.palette = customPaletteIdx++;
+        gradientPaletteIdx++;
         applyPalette();
         toast("Palette " + pal.name + " loaded", 3);
     } else {
@@ -505,6 +523,8 @@ void App::applyPalette() {
     view.rs.palette = std::clamp(view.rs.palette, 0, (int)palettes.size() - 1);
     if (view.rs.palette == customPaletteIdx)
         palettes[customPaletteIdx] = makeCosinePalette("Custom (cosine editor)", view.cosine);
+    if (view.rs.palette == gradientPaletteIdx)
+        palettes[gradientPaletteIdx] = makeGradientPalette("Custom (gradient editor)", view.gradient);
     rend.setPalette(palettes[view.rs.palette]);
     paletteVersion++;
 }

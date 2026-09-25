@@ -36,6 +36,7 @@ struct CliOptions {
     // testing aids for --ui-shot runs (there's no real mouse in a hidden window)
     float fakeMouse[2] = {-1, -1};
     bool insetOn = false, orbitOn = false;
+    std::vector<std::string> openWindows;  // --open gradient|formula|help|render
 };
 
 // Everything that defines what's on screen. (Fractal parameter values live with
@@ -47,6 +48,8 @@ struct ViewState {
     RenderSettings rs;
     Classic2DSettings cs;
     CosinePalette cosine;  // the editable "Custom (cosine editor)" palette
+    std::vector<GradientStop> gradient = {{0.0f, {0.02f, 0.03f, 0.18f}}, {0.3f, {0.2f, 0.5f, 0.9f}},
+                                          {0.55f, {1.0f, 0.95f, 0.8f}}, {0.8f, {0.9f, 0.45f, 0.1f}}};
     // the user formula (Classic 2D "Custom formula", and the landscape's)
     std::string formulaName = "Mandel";
     std::string formulaSource;
@@ -87,6 +90,8 @@ struct UiState {
     std::vector<std::pair<std::filesystem::path, std::string>> tourStops;  // preset + its description
     std::filesystem::file_time_type docsTime{}, presetsTime{}, formulasTime{};
     bool showFormulaEditor = false;
+    bool showGradientEditor = false;
+    int gradientSel = 0;  // selected stop in the gradient editor
     std::string formulaEdit;  // text in the editor (compiled on request)
 };
 
@@ -174,6 +179,7 @@ private:
     void drawLesson(const std::string& text);
     void drawFormulaControls();
     void drawJuliaInset();
+    void drawGradientEditor();
     void drawFormulaEditor();
     bool paramWidget(Param& p);
 
@@ -187,7 +193,8 @@ public:
     int fbW = 1280, fbH = 800, winW = 1280, winH = 800;
     FractalLibrary lib_;
     std::vector<Palette> palettes;
-    int customPaletteIdx = -1;  // index of the editable cosine palette
+    int customPaletteIdx = -1;    // index of the editable cosine palette
+    int gradientPaletteIdx = -1;  // index of the editable gradient palette (always last)
     float cycleOffset = 0.0f;
     float lastCycleSpeed = 24.0f;  // what C turns cycling back on to
     int paletteVersion = 0;
