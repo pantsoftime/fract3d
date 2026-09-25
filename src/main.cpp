@@ -22,6 +22,7 @@ static void usage() {
         "  --formula NAME       start in Classic 2D with a formula from formulas/*.frm\n"
         "  --frm FILE           load more formulas from a .frm file\n"
         "  --path FILE          load a camera path (.f3dpath); with --render out.mp4 it's exported\n"
+        "                       (or --render dir/frame-%%05d.png: numbered PNG images)\n"
         "  --fps N              frame rate for video export (default 30)\n"
         "  --path-time T        with --path and --render out.png: render the path at T seconds\n");
 }

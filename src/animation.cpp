@@ -6,6 +6,7 @@
 // keeping the target in place, and switches (fractal, mode, toggles) change at
 // the keyframe. Export renders each frame at full quality and pipes it to ffmpeg.
 #include "app.h"
+#include "pngmeta.h"
 #include "settings.h"
 
 #define GLFW_INCLUDE_NONE
@@ -268,6 +269,32 @@ bool App::loadPath(const fs::path& p) {
 }
 
 // ------------------------------------------------------------------ video export
+// "frame-%05d.png": one %d (optionally %0Nd) makes an image sequence. Formatted by
+// hand, so a stray % in a file name can never reach printf.
+static bool sequenceName(const std::string& pattern, int frame, std::string* out) {
+    size_t at = std::string::npos, len = 0;
+    int width = 0;
+    for (size_t i = 0; i < pattern.size(); i++) {
+        if (pattern[i] != '%') continue;
+        size_t j = i + 1;
+        int w = 0;
+        while (j < pattern.size() && isdigit((unsigned char)pattern[j])) w = w * 10 + (pattern[j++] - '0');
+        if (j >= pattern.size() || pattern[j] != 'd' || at != std::string::npos || w > 12) return false;
+        at = i, len = j + 1 - i, width = w;
+        i = j;
+    }
+    if (at == std::string::npos) return false;
+    if (out) {
+        std::string n = std::to_string(frame);
+        if ((int)n.size() < width) n.insert(0, width - n.size(), '0');
+        *out = pattern.substr(0, at) + n + pattern.substr(at + len);
+    }
+    return true;
+}
+bool isImageSequence(const std::string& path) {
+    return path.size() > 4 && path.compare(path.size() - 4, 4, ".png") == 0 && sequenceName(path, 0, nullptr);
+}
+
 // Frames are rendered with the high-res renderer and piped (raw RGBA) to an
 // ffmpeg child process started without a shell.
 bool App::startVideo(const std::string& out) {
@@ -275,6 +302,21 @@ bool App::startVideo(const std::string& out) {
     if (camPath.keys.size() < 2) {
         toast("A camera path needs at least two keyframes (press K to add the current view)", 4);
         return false;
+    }
+    if (isImageSequence(out)) {  // lossless PNG frames, each carrying its view; no ffmpeg needed
+        std::error_code ec;
+        fs::create_directories(fs::path(out).parent_path(), ec);
+        if (video.finishing) pollVideoEncoder(true);
+        video = VideoJob();
+        video.sequence = true;
+        video.active = true;
+        video.out = out;
+        video.frames = std::max(2, (int)std::ceil(pathDuration() * camPath.fps) + 1);
+        video.restorePar = parText();
+        video.started = glfwGetTime();
+        camPath.playing = false;
+        nextVideoFrame();
+        return true;
     }
     int fds[2];
     if (pipe(fds) != 0) return false;
@@ -324,6 +366,18 @@ void App::nextVideoFrame() {
 }
 
 void App::videoFrameRendered(const std::vector<uint8_t>& rgba) {
+    if (video.sequence) {
+        std::string name;
+        sequenceName(video.out, video.frame, &name);
+        if (!writePngWithText(name, camPath.videoW, camPath.videoH, rgba.data(), poster.par)) {
+            finishVideo(false);
+            return;
+        }
+        if (++video.frame >= video.frames) finishVideo(true);
+        else if (video.frame == session.cli.cancelAfterFrames) cancelVideo();
+        else nextVideoFrame();
+        return;
+    }
     size_t left = rgba.size();
     const uint8_t* p = rgba.data();
     while (left > 0) {
@@ -346,25 +400,30 @@ void App::videoFrameRendered(const std::vector<uint8_t>& rgba) {
 void App::finishVideo(bool ok) {
     if (!video.active) return;
     video.active = false;
-    close(video.fd);
-    video.fd = -1;
-    signal(SIGPIPE, video.oldSigpipe ? video.oldSigpipe : SIG_DFL);
-    if (!ok) kill(video.pid, SIGTERM);  // no point letting it encode a broken or abandoned file
+    if (!video.sequence) {
+        close(video.fd);
+        video.fd = -1;
+        signal(SIGPIPE, video.oldSigpipe ? video.oldSigpipe : SIG_DFL);
+        if (!ok) kill(video.pid, SIGTERM);  // no point letting it encode a broken or abandoned file
+    }
     video.ok = ok;
     video.finishing = true;
     endPathPreview();
     loadParText(video.restorePar, "view", true);
-    if (ok) toast("Finishing " + video.out + " ...", 60);
+    if (ok && !video.sequence) toast("Finishing " + video.out + " ...", 60);
     pollVideoEncoder();
 }
 
 void App::pollVideoEncoder(bool wait) {
     if (!video.finishing) return;
-    int status = 0;
-    pid_t r = waitpid(video.pid, &status, wait ? 0 : WNOHANG);
-    if (r == 0) return;  // still encoding
+    bool ok = video.ok;
+    if (!video.sequence) {
+        int status = 0;
+        pid_t r = waitpid(video.pid, &status, wait ? 0 : WNOHANG);
+        if (r == 0) return;  // still encoding
+        ok = ok && r == video.pid && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    }
     video.finishing = false;
-    bool ok = video.ok && r == video.pid && WIFEXITED(status) && WEXITSTATUS(status) == 0;
     char buf[512];
     if (video.cancelled)
         snprintf(buf, sizeof buf, "Video export cancelled after %d frames", video.frame);

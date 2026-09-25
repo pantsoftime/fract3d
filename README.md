@@ -42,7 +42,7 @@ Mandelbulb, Mandelbox, Menger sponge, Sierpinski tetrahedron, Kaleidoscopic IFS,
 
 **Formula files.** Fractint-style `.frm` formulas (`Name { init : loop, test }`, with `|z|`, `if/elseif/else/endif`, `fn1..fn4`, `p1..p5`, `maxit`, `whitesq` and Fractint's function list) are transpiled to GPU code; thirteen classics ship in `formulas/`, and the editor compiles yours with Ctrl+Enter. They work in 2D and as 3D landscapes, and a CPU interpreter of the same language drives the orbit viewer (and checks the GPU in the tests).
 
-**Animation.** Add keyframes (K), and the app flies smoothly between them - camera, lighting, colors and every parameter are interpolated; 2D zooms keep a constant zoom rate. Export to MP4 through ffmpeg (x264 or NVENC).
+**Animation.** Add keyframes (K), and the app flies smoothly between them - camera, lighting, colors and every parameter are interpolated; 2D zooms keep a constant zoom rate. Export to MP4 through ffmpeg (x264 or NVENC), or as numbered lossless PNGs (each frame carries its view).
 
 **Your work is never lost.** Undo/redo with a history of views (Ctrl+Z / Ctrl+Y), the last session reopens at startup, and every screenshot carries its complete view inside the PNG: drop it back on the window to continue from exactly there.
 
@@ -133,6 +133,9 @@ Parameter types are `float`, `int`, `bool`, `vec2`, `vec3`, `vec4`, `color` and 
 fract3d [--fractal KEY] [--par FILE|IMAGE.png] [--2d] [--formula NAME] [--pt|--rt] [--theme modern|fractint]
 fract3d --par presets/07-mandelbulb-path-traced.par --render out.png --size 3840x2160 --samples 1024
 fract3d --path my.f3dpath --render flight.mp4 --size 1920x1080 --fps 30 --samples 64
+fract3d --path my.f3dpath --render frames/f-%05d.png          # numbered PNGs instead of a video
+fract3d --path my.f3dpath --path-time 2.5 --render still.png  # one moment of a path
+fract3d --par collection.par --par-entry Seahorse --render out.png   # a Fractint PAR entry
 ```
 
 `--render` renders offscreen and exits (images, or videos with `--path`). `--gl-debug` reports OpenGL errors.

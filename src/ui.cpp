@@ -1006,9 +1006,11 @@ void App::drawPathWindow() {
     ImGui::SliderFloat("Frames per second", &camPath.fps, 10.0f, 120.0f, "%.0f");
     ImGui::SetNextItemWidth(fs_ * 8);
     ImGui::SliderInt("Samples per frame (3D)", &camPath.videoSamples, 1, 1024, "%d", ImGuiSliderFlags_Logarithmic);
-    const char* enc[] = {"H.264 (x264, best quality)", "H.264 (NVIDIA NVENC, fast)"};
+    const char* enc[] = {"H.264 (x264, best quality)", "H.264 (NVIDIA NVENC, fast)", "PNG images (lossless, no ffmpeg)"};
     ImGui::SetNextItemWidth(fs_ * 14);
-    ImGui::Combo("Encoder", &camPath.encoder, enc, 2);
+    ImGui::Combo("Encoder", &camPath.encoder, enc, 3);
+    helpTip("PNG images: one numbered file per frame in a new folder - lossless, for editing elsewhere; each "
+            "frame also carries its view, so any of them can be dropped back onto the window.");
     int frames = std::max(2, (int)std::ceil(dur * camPath.fps) + 1);
     ImGui::TextDisabled("%.1f s -> %d frames", dur, frames);
     ImGui::BeginDisabled(keys.size() < 2);
@@ -1016,10 +1018,11 @@ void App::drawPathWindow() {
         const char* home = std::getenv("HOME");
         fs::path vids = home ? fs::path(home) / "Videos" / "fract3d" : session.picturesDir;
         fs::create_directories(vids, ec);
-        startVideo((vids / ("fract3d-" + timestampName() + ".mp4")).string());
+        std::string name = "fract3d-" + timestampName();
+        startVideo(camPath.encoder == 2 ? (vids / name / "frame-%05d.png").string() : (vids / (name + ".mp4")).string());
     }
     ImGui::EndDisabled();
-    ImGui::TextDisabled("Saved to ~/Videos/fract3d (needs ffmpeg).");
+    ImGui::TextDisabled(camPath.encoder == 2 ? "Saved to a new folder in ~/Videos/fract3d." : "Saved to ~/Videos/fract3d (needs ffmpeg).");
     ImGui::End();
 }
 

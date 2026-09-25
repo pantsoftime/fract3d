@@ -361,7 +361,7 @@ public:
         float time = 0;
         float fps = 30;
         int videoW = 1920, videoH = 1080, videoSamples = 32;
-        int encoder = 0;  // 0 libx264, 1 NVIDIA NVENC
+        int encoder = 0;  // 0 libx264, 1 NVIDIA NVENC, 2 PNG images
         // Parameter animation is off while a path drives the view; the flags are
         // saved here the first time the path moves the view and restored afterwards.
         std::vector<std::pair<std::string, std::vector<char>>> savedAnim;
@@ -377,6 +377,7 @@ public:
         std::string out, restorePar;
         double started = 0;
         void (*oldSigpipe)(int) = nullptr;
+        bool sequence = false;  // PNG images ("frame-%05d.png") instead of an ffmpeg video
     } video;
     void addKeyframe();
     void parseKeyframes();
@@ -407,3 +408,4 @@ public:
 };
 
 std::string timestampName();
+bool isImageSequence(const std::string& path);  // "frames/f-%05d.png": a video as numbered PNGs

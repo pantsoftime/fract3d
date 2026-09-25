@@ -213,6 +213,10 @@ if(FRACT3D_TESTS)
                      -DPAR=${CMAKE_SOURCE_DIR}/tests/paths/deep-to-shallow-${which}.par -DOUT=${TEST_OUT}
                      -DNAME=path-${which} -DSIZE=160x90 -P ${CMAKE_SOURCE_DIR}/tests/path_endpoint.cmake)
   endforeach()
+  # a camera path as numbered PNG images (no ffmpeg needed); each frame carries its view
+  add_test(NAME video.png-sequence
+           COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:fract3d> -DPATHFILE=${CMAKE_SOURCE_DIR}/tests/menger-twist.f3dpath
+                   -DOUT=${TEST_OUT}/sequence -P ${CMAKE_SOURCE_DIR}/tests/png_sequence.cmake)
   add_test(NAME ui.path-window COMMAND fract3d --fractal menger --path ${CMAKE_SOURCE_DIR}/tests/menger-twist.f3dpath
                                        --open path --ui-shot ${TEST_OUT}/ui-path.png --size 1600x900 --frames 20)
 

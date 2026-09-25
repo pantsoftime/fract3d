@@ -198,6 +198,7 @@ bool App::init(const CliOptions& opts) {
         return true;
     }
     auto isVideo = [](const std::string& p) {
+        if (isImageSequence(p)) return true;  // frame-%05d.png
         for (const char* e : {".mp4", ".mkv", ".mov", ".webm"})
             if (p.size() > 4 && p.compare(p.size() - strlen(e), strlen(e), e) == 0) return true;
         return false;
@@ -596,6 +597,10 @@ int App::selfTest() {
     check(lc && lc->precise(0) == -0.743643887037151, "...and so does its PAR");
     flattenTo2D();
     check(view.cs.cx == -0.743643887037151 && view.cs.cy == 0.13182590420533, "Flatten to 2D brings it back");
+    // image-sequence names: exactly one %d / %0Nd, nothing printf could misread
+    check(isImageSequence("out/f-%05d.png") && isImageSequence("f%d.png") && !isImageSequence("f-%05d.mp4") &&
+              !isImageSequence("f%s%05d.png") && !isImageSequence("f%d%d.png") && !isImageSequence("plain.png"),
+          "PNG sequence patterns are recognized safely");
     // hostile values are repaired
     loadParText("mode = 2d\nclassic.formula = 99\nclassic.maxIter = -3\npost.tonemap = 7\n", "bad", true);
     check(view.cs.formula < kClassicFormulaCount && view.cs.maxIter >= 1 && view.rs.tonemap <= 2, "hostile PAR values are sanitized");
