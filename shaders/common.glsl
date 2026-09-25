@@ -96,9 +96,13 @@ uint pcgHash(uint v) {
 // pixel then shifts its points by a blue-noise value (Cranley-Patterson
 // rotation), which spreads the remaining error as fine, even grain instead of
 // clumps: the image looks better long before it converges.
+//
+// The mask is 64x64, so on its own every 64th pixel would get the very same
+// samples and the noise would repeat as a faint grid. Each 64x64 tile of the
+// screen therefore gets its own scrambling seed and its own offset into the mask.
 uniform sampler2D uBlueNoise;  // 64x64, two independent void-and-cluster masks
-uint g_sampleIndex, g_dim;
-ivec2 g_pixel;
+uint g_sampleIndex, g_dim, g_tileSeed;
+ivec2 g_pixel, g_tileShift;
 
 uint lkPermute(uint x, uint seed) {  // Laine-Karras style hash permutation
     x += seed;
@@ -120,15 +124,18 @@ void rngSeed(uvec2 pixel, uint frame) {
     g_pixel = ivec2(pixel);
     g_sampleIndex = frame;
     g_dim = 0u;
+    uvec2 tile = pixel >> 6u;
+    g_tileSeed = pcgHash(tile.x * 0x8da6b343u ^ pcgHash(tile.y + 0x68e31da4u));
+    g_tileShift = ivec2(g_tileSeed & 63u, (g_tileSeed >> 6u) & 63u);
 }
 vec2 rand2() {
-    uint seed = pcgHash(g_dim * 0x9E3779B9u + 0x5bd1e995u);
+    uint seed = pcgHash(g_dim * 0x9E3779B9u + 0x5bd1e995u ^ g_tileSeed);
     uint idx = nestedScramble(g_sampleIndex, seed);  // shuffle: decorrelates dimension pairs
     uvec2 s = uvec2(bitfieldReverse(idx), sobolDim1(idx));
     s.x = nestedScramble(s.x, pcgHash(seed ^ 0xa511e9b3u));
     s.y = nestedScramble(s.y, pcgHash(seed ^ 0x63d83595u));
     // a different, fixed window of the blue-noise tile for every dimension pair
-    vec2 shift = texelFetch(uBlueNoise, (g_pixel + ivec2(int(g_dim) * 23, int(g_dim) * 41)) & 63, 0).rg;
+    vec2 shift = texelFetch(uBlueNoise, (g_pixel + g_tileShift + ivec2(int(g_dim) * 23, int(g_dim) * 41)) & 63, 0).rg;
     g_dim++;
     return fract(vec2(s) * (1.0 / 4294967296.0) + shift);
 }
