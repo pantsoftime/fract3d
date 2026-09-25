@@ -105,7 +105,7 @@ void Renderer::shutdown() {
         for (auto& p : row) p = Program();
     accum.release();
     index2D.release();
-    state2D_.release();
+    for (auto& s : state2D_) s.release();
     probeRT_.release();
     shotRT_.release();
     for (auto& f : probeFence_)
@@ -377,12 +377,14 @@ int Renderer::bandRowsFor(int width) const {
     return std::max(1, kBandPixels / std::max(width, 1));
 }
 
-bool Renderer::dispatch2D(IndexTarget& out, const Classic2DSettings& cs, int y0, int rows, int chunk, bool first) {
+bool Renderer::dispatch2D(IndexTarget& out, const Classic2DSettings& cs, int y0, int rows, int chunk, bool first,
+                          int stateSlot) {
+    StateImages& state = state2D_[stateSlot & 1];
     bool custom = cs.formula == kCustomFormula;
     Program* pp = classicProgram(classicUsesFp64(cs, out.h), custom);
     if (!pp) return false;
     Program& p = *pp;
-    if (!state2D_.ensure(out.w, bandRowsFor(out.w))) return false;
+    if (!state.ensure(out.w, bandRowsFor(out.w))) return false;
     p.set("uBandOrigin", 0, y0);
     p.set("uBandSize", out.w, rows);
     p.set("uFirstPass", first ? 1 : 0);
@@ -406,7 +408,7 @@ bool Renderer::dispatch2D(IndexTarget& out, const Classic2DSettings& cs, int y0,
     p.set("uP1", cs.p1[0], cs.p1[1]);
     p.set("uP2", cs.p2[0], cs.p2[1]);
     p.set("uP3", cs.p3[0], cs.p3[1]);
-    for (int i = 0; i < 4; i++) glBindImageTexture(i, state2D_.tex[i], 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA32UI);
+    for (int i = 0; i < 4; i++) glBindImageTexture(i, state.tex[i], 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA32UI);
     glBindImageTexture(4, out.value, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_R32F);
     glBindImageTexture(5, out.aux, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_R8);
     p.use();

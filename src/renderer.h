@@ -58,7 +58,9 @@ public:
     // ---- 2D: resumable escape-time compute. One call runs up to `chunk` more
     // iterations for every pixel of rows [y0, y0 + rows) of `out` (target pixels).
     // `first` starts the band's orbits. Pixels write `out` when they finish.
-    bool dispatch2D(IndexTarget& out, const Classic2DSettings& cs, int y0, int rows, int chunk, bool first);
+    // `stateSlot` picks the orbit-state images: 0 for the main view and posters, 1 for the Julia inset,
+    // so the two can progress independently.
+    bool dispatch2D(IndexTarget& out, const Classic2DSettings& cs, int y0, int rows, int chunk, bool first, int stateSlot = 0);
     int bandRowsFor(int width) const;  // rows per band so the orbit state stays small
     bool classicUsesFp64(const Classic2DSettings& cs, int targetH) const;
     // Transpiled user formula (see formula.h); empty to clear. Rebuilds the custom programs.
@@ -99,7 +101,7 @@ private:
     float formulaP_[6] = {0, 0, 0, 0, 0, 0};
     std::unordered_map<std::string, std::unique_ptr<FractalPrograms>> progs_;
     GLuint vao_ = 0, paletteTex_ = 0, retroLut_[2] = {0, 0}, blueNoise_ = 0;
-    StateImages state2D_;
+    StateImages state2D_[2];
     RenderTarget probeRT_, shotRT_;
     GLuint probePbo_[2] = {0, 0};
     GLsync probeFence_[2] = {nullptr, nullptr};

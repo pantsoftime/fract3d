@@ -130,6 +130,8 @@ bool App::init(const CliOptions& opts) {
         view.cs.formula = kCustomFormula;
     }
     if (session.cli.pathTrace >= 0) view.rs.renderMode = session.cli.pathTrace;
+    ui.showJuliaInset = session.cli.insetOn;
+    if (session.cli.orbitOn) view.cs.showOrbit = true;
     sanitize(view.rs);
     sanitize(view.cs);
     applyPalette();
@@ -146,7 +148,13 @@ bool App::init(const CliOptions& opts) {
 
 void App::shutdown() {
     if (!session.cli.hidden) savePrefs();
+    // every GL object must go before the context does
     poster.target.release();
+    poster.index.release();
+    work2D.release();
+    uiShotRT.release();
+    inset.index.release();
+    inset.image.release();
     rend.shutdown();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
@@ -445,6 +453,7 @@ void App::frame() {
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
+    if (session.cli.fakeMouse[0] >= 0) ImGui::GetIO().AddMousePosEvent(session.cli.fakeMouse[0], session.cli.fakeMouse[1]);
     ImGui::NewFrame();
 
     handleKeys();
@@ -482,7 +491,10 @@ void App::frame() {
     rend.setFormulaParams(view.cs.p1, view.cs.p2, view.cs.p3);
     if (poster.active) updatePoster();
     else if (view.mode == ViewMode::Fractal3D) render3D();
-    else render2D();
+    else {
+        render2D();
+        updateJuliaInset();
+    }
     if (view.mode == ViewMode::Fractal3D) updateProbe();
 
     // present
@@ -568,6 +580,7 @@ void App::handleKeys() {
             if (pressed((ImGuiKey)(ImGuiKey_1 + k)) && k < (int)lib_.all().size()) selectFractal(k, true);
     } else {
         if (pressed(ImGuiKey_O)) view.cs.showOrbit = !view.cs.showOrbit;
+        if (pressed(ImGuiKey_J)) ui.showJuliaInset = !ui.showJuliaInset;
         if (pressed(ImGuiKey_B)) view.cs.banded = !view.cs.banded;
         if (pressed(ImGuiKey_Home)) {
             view.cs.julia = 0;
@@ -857,7 +870,7 @@ void App::updateProbe() {
 }
 
 // ------------------------------------------------------------------ 2D rendering
-bool App::stepJob2D(Job2D& job, IndexTarget& target, double budgetMs) {
+bool App::stepJob2D(Job2D& job, IndexTarget& target, double budgetMs, int stateSlot) {
     int tw = target.w, th = target.h;
     int maxIter = std::max(job.cs.maxIter, 1);
     glFinish();  // drain earlier work so pass timings measure only ours
@@ -871,7 +884,7 @@ bool App::stepJob2D(Job2D& job, IndexTarget& target, double budgetMs) {
         int k = std::min(job.chunk, maxIter - job.itersDone);
         int y0 = th - job.row - job.bandRows;  // bands run top-down (GL rows count up)
         auto b0 = std::chrono::steady_clock::now();
-        if (!rend.dispatch2D(target, job.cs, y0, job.bandRows, std::max(k, 1), first)) {
+        if (!rend.dispatch2D(target, job.cs, y0, job.bandRows, std::max(k, 1), first, stateSlot)) {
             job.active = false;
             return false;
         }
@@ -950,6 +963,47 @@ void App::render2D() {
             work2D.release();
         }
         shownSig2D = job2D.sig;
+    }
+}
+
+// ------------------------------------------------------------------ Julia inset
+// Fractint could show the Julia set belonging to the point under the cursor
+// while you explored the Mandelbrot set. Same here: a small live preview.
+void App::updateJuliaInset() {
+    const auto& c0 = view.cs;
+    bool usable = ui.showJuliaInset && view.mode == ViewMode::Classic2D && !c0.julia && c0.formula != 4 &&
+                  c0.formula != kCustomFormula && ImGui::IsMousePosValid() && !ImGui::GetIO().WantCaptureMouse;
+    if (!usable) return;
+    ImGuiIO& io = ImGui::GetIO();
+    float sx = (float)fbW / std::max(winW, 1), sy = (float)fbH / std::max(winH, 1);
+    double ps = c0.height / fbH;
+    double px = c0.cx + (io.MousePos.x * sx - fbW * 0.5) * ps, py = c0.cy + (fbH * 0.5 - io.MousePos.y * sy) * ps;
+    if (c0.formula == 1) py = -py;  // Burning Ship is drawn flipped
+    int size = std::clamp(fbH / 3, 128, 512);
+    if (!inset.index.ensure(size, size) || !inset.image.ensure(size, size, GL_RGBA8, GL_LINEAR)) return;
+    if (px != inset.jx || py != inset.jy || (!inset.job.active && !inset.ready)) {
+        inset.jx = px;
+        inset.jy = py;
+        Job2D& j = inset.job;
+        j = Job2D();
+        j.active = true;
+        j.cs = c0;
+        j.cs.julia = true;
+        j.cs.jx = px;
+        j.cs.jy = py;
+        j.cs.cx = 0;
+        j.cs.cy = 0;
+        j.cs.height = 3.2;
+        j.cs.supersample = 1;
+        j.cs.maxIter = std::min(c0.maxIter, 2000);
+        j.chunk = j.cs.maxIter;
+        inset.ready = false;
+    }
+    if (inset.job.active && stepJob2D(inset.job, inset.index, 4.0, 1)) {
+        RenderSettings r = view.rs;
+        r.pixelSize = 1, r.scanlines = 0;
+        rend.display(ViewMode::Classic2D, nullptr, &inset.index, r, inset.job.cs, cycleOffset, size, size, inset.image.fbo);
+        inset.ready = true;
     }
 }
 

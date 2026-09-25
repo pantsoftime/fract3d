@@ -50,6 +50,12 @@ int main(int argc, char** argv) {
         else if (a == "--theme") o.theme = next() == "fractint" ? 1 : 0;
         else if (a == "--gl-debug") o.glDebug = true;
         else if (a == "--formula") o.formula = next();
+        else if (a == "--mouse") {  // testing: pretend the cursor is here (window coordinates)
+            std::string s = next();
+            if (sscanf(s.c_str(), "%f,%f", &o.fakeMouse[0], &o.fakeMouse[1]) != 2) { fprintf(stderr, "bad --mouse\n"); return 2; }
+        }
+        else if (a == "--inset") o.insetOn = true;
+        else if (a == "--orbit") o.orbitOn = true;
         else if (a == "--gl-debug-verbose") o.glDebug = o.glDebugVerbose = true;
         else if (a.size() > 4 && a.substr(a.size() - 4) == ".par") o.parFile = a;
         else { fprintf(stderr, "unknown option %s\n", a.c_str()); usage(); return 2; }

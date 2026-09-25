@@ -226,6 +226,7 @@ void App::drawUI() {
         drawHud();
     }
     if (view.mode == ViewMode::Classic2D && view.cs.showOrbit) drawOrbitOverlay();
+    if (view.mode == ViewMode::Classic2D && ui.showJuliaInset) drawJuliaInset();
     if (ui.showHelp) drawHelp();
     if (ui.showPoster || poster.active) drawPosterDialog();
     if (ui.showDemo) ImGui::ShowDemoWindow(&ui.showDemo);
@@ -742,6 +743,10 @@ void App::drawClassicPanel() {
     ImGui::SliderInt("Anti-aliasing", &view.cs.supersample, 1, 4, "%d x");
     helpTip("Computes N x N points per pixel and averages their colors. 2 is a good balance.");
     ImGui::Checkbox("Show orbit under cursor (O)", &view.cs.showOrbit);
+    ImGui::Checkbox("Julia preview under cursor (J)", &ui.showJuliaInset);
+    helpTip("A small live picture of the Julia set for the point under your mouse. Move along the edge of the Mandelbrot "
+            "set and watch the Julia set change: its shape copies the neighborhood you're pointing at, and it "
+            "shatters into dust as soon as you leave the set.");
     helpTip("Draws the sequence z0, z1, z2... for the point under your mouse. This is literally what's computed for every pixel.");
     ImGui::SeparatorText("Retro");
     const char* rm[] = {"Off", "VGA 256 colors", "EGA 16 colors"};
@@ -751,6 +756,31 @@ void App::drawClassicPanel() {
     ImGui::PopItemWidth();
     ImGui::Spacing();
     ImGui::TextDisabled("Drag: pan  |  Wheel/PgUp/PgDn: zoom\nRight-click / Space: Julia <-> Mandelbrot");
+    ImGui::End();
+}
+
+void App::drawJuliaInset() {
+    ImGuiIO& io = ImGui::GetIO();
+    float size = inset.image.w > 0 ? (float)inset.image.w / (fbW / std::max(io.DisplaySize.x, 1.0f)) : 200.0f;
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y - ImGui::GetFontSize() * 5.0f),
+                            ImGuiCond_FirstUseEver, ImVec2(0.5f, 1.0f));
+    ImGui::SetNextWindowBgAlpha(0.85f);
+    if (!ImGui::Begin("Julia preview (J)", &ui.showJuliaInset,
+                      ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav)) {
+        ImGui::End();
+        return;
+    }
+    bool applicable = !view.cs.julia && view.cs.formula != 4 && view.cs.formula != kCustomFormula;
+    if (!applicable) {
+        ImGui::TextDisabled("Available on the parameter plane of\nMandelbrot-type formulas.");
+    } else if (inset.ready && inset.image.tex) {
+        ImGui::Image((ImTextureID)(intptr_t)inset.image.tex, ImVec2(size, size), ImVec2(0, 1), ImVec2(1, 0));  // GL is bottom-up
+        ImGui::Text("c = %.6f %+.6fi", inset.jx, inset.jy);
+        ImGui::TextDisabled("Right-click the main view to open it.");
+    } else {
+        ImGui::Dummy(ImVec2(size, size));
+        ImGui::TextDisabled("Point at the Mandelbrot set...");
+    }
     ImGui::End();
 }
 
@@ -1061,6 +1091,7 @@ void App::drawHelp() {
                   {"Wheel / PgUp / PgDn", "zoom at the cursor"},
                   {"Right-click / Space", "Julia set of the point under the cursor (and back)"},
                   {"O", "show the orbit of the point under the cursor"},
+                  {"J", "live Julia-set preview for the point under the cursor"},
                   {"B", "toggle Fractint bands / smooth color"},
                   {"+ / -", "double / halve max iterations"},
                   {"Home", "reset view"}});

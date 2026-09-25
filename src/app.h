@@ -30,6 +30,9 @@ struct CliOptions {
     std::string formula;     // start in Classic 2D with this formula from the formula files
     bool glDebug = false;    // report OpenGL errors (always on in debug builds)
     bool glDebugVerbose = false;
+    // testing aids for --ui-shot runs (there's no real mouse in a hidden window)
+    float fakeMouse[2] = {-1, -1};
+    bool insetOn = false, orbitOn = false;
 };
 
 // Everything that defines what's on screen. (Fractal parameter values live with
@@ -64,6 +67,7 @@ struct Session {
 // Transient overlay state.
 struct UiState {
     bool showUI = true, showHelp = false, showDemo = false, showPoster = false;
+    bool showJuliaInset = false;
     ImFont* fontUI = nullptr;
     ImFont* fontMono = nullptr;
     ImFont* fontRetro = nullptr;
@@ -150,6 +154,7 @@ private:
     void drawToast();
     void drawLesson(const std::string& text);
     void drawFormulaControls();
+    void drawJuliaInset();
     void drawFormulaEditor();
     bool paramWidget(Param& p);
 
@@ -200,9 +205,19 @@ public:
     } job2D;
     IndexTarget work2D;
     // Advances a 2D job on `target` for up to budgetMs; returns true once the image is complete.
-    bool stepJob2D(Job2D& job, IndexTarget& target, double budgetMs);
+    bool stepJob2D(Job2D& job, IndexTarget& target, double budgetMs, int stateSlot = 0);
     std::vector<uint8_t> coreSig2D;   // last compute signature (without supersampling)
     std::vector<uint8_t> shownSig2D;  // signature of the complete image in index2D
+
+    // Julia preview inset (J): the Julia set for the point under the cursor
+    struct JuliaInset {
+        Job2D job;
+        IndexTarget index;
+        RenderTarget image;   // palette-mapped result, drawn by ImGui
+        double jx = 1e9, jy = 1e9;  // c of the image being shown/rendered
+        bool ready = false;
+    } inset;
+    void updateJuliaInset();
 
     // probe results
     float deAtCam = 1.0f, centerHitT = -1.0f;

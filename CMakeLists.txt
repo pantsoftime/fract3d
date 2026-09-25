@@ -126,6 +126,7 @@ if(FRACT3D_TESTS)
   endforeach()
   add_test(NAME formula.in-3d-landscape
            COMMAND fract3d --par ${CMAKE_SOURCE_DIR}/tests/custom-landscape.par --render ${TEST_OUT}/formula-3d.png --size 96x54 --samples 1)
+  add_test(NAME ui.julia-inset-and-orbit COMMAND fract3d --2d --inset --orbit --mouse 700,330 --ui-shot ${TEST_OUT}/ui-inset.png --size 1280x720 --frames 30)
   add_test(NAME ui.formula-2d COMMAND fract3d --formula Spider --ui-shot ${TEST_OUT}/ui-formula.png --size 1280x720 --frames 20)
 
   # the overlay UI (both themes, both modes) must draw without errors
