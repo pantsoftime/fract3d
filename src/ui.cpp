@@ -400,10 +400,20 @@ bool App::paramWidget(Param& p) {
     ImGui::PushID(p.id.c_str());
     bool changed = false;
     const char* lbl = p.label.c_str();
+    // An animated parameter shows its live value, so the slider follows the sweep.
+    // While you drag it, it shows (and sets) the value the sweep swings around.
+    float shown[4];
+    bool live = p.animate && ui.draggingParam != &p;
+    if (live) paramEffective(p, animTime, shown);
+    else std::copy(p.value, p.value + 4, shown);
+    auto commit = [&] {
+        for (int k = 0; k < 4; k++) p.value[k] = shown[k];
+    };
     switch (p.type) {
     case ParamType::Float:
-        changed = ImGui::SliderFloat(lbl, &p.value[0], p.minV, p.maxV, p.logScale ? "%.4g" : "%.3f",
-                                     p.logScale ? ImGuiSliderFlags_Logarithmic : 0);
+        if ((changed = ImGui::SliderFloat(lbl, &shown[0], p.minV, p.maxV, p.logScale ? "%.4g" : "%.3f",
+                                          p.logScale ? ImGuiSliderFlags_Logarithmic : 0)))
+            commit();
         break;
     case ParamType::Int: {
         int v = (int)std::lround(p.value[0]);
@@ -422,11 +432,13 @@ bool App::paramWidget(Param& p) {
         if ((changed = ImGui::Combo(lbl, &v, items.data(), (int)items.size()))) p.value[0] = (float)v;
         break;
     }
-    case ParamType::Vec2: changed = ImGui::SliderFloat2(lbl, p.value, p.minV, p.maxV, "%.3f"); break;
-    case ParamType::Vec3: changed = ImGui::SliderFloat3(lbl, p.value, p.minV, p.maxV, "%.3f"); break;
-    case ParamType::Vec4: changed = ImGui::SliderFloat4(lbl, p.value, p.minV, p.maxV, "%.3f"); break;
-    case ParamType::Color: changed = ImGui::ColorEdit3(lbl, p.value); break;
+    case ParamType::Vec2: if ((changed = ImGui::SliderFloat2(lbl, shown, p.minV, p.maxV, "%.3f"))) commit(); break;
+    case ParamType::Vec3: if ((changed = ImGui::SliderFloat3(lbl, shown, p.minV, p.maxV, "%.3f"))) commit(); break;
+    case ParamType::Vec4: if ((changed = ImGui::SliderFloat4(lbl, shown, p.minV, p.maxV, "%.3f"))) commit(); break;
+    case ParamType::Color: if ((changed = ImGui::ColorEdit3(lbl, shown))) commit(); break;
     }
+    if (ImGui::IsItemActive()) ui.draggingParam = &p;
+    else if (ui.draggingParam == &p) ui.draggingParam = nullptr;
     helpTip(p.desc.c_str());
     if (ImGui::BeginPopupContextItem("ctx")) {
         if (ImGui::MenuItem("Reset to default")) p.reset(), changed = true;
@@ -440,7 +452,8 @@ bool App::paramWidget(Param& p) {
                                                          : ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
         if (ImGui::SmallButton("~")) p.animate = !p.animate;
         ImGui::PopStyleColor();
-        helpTip("Animate: sweep this value back and forth over time. Space pauses all animation.");
+        helpTip("Animate: sweep this value back and forth over time; the slider follows it. Drag the slider to move "
+                "the middle of the sweep. Space pauses all animation.");
         if (p.animate) {
             ImGui::Indent();
             ImGui::SliderFloat("speed (Hz)", &p.animSpeed, 0.005f, 2.0f, "%.3f", ImGuiSliderFlags_Logarithmic);
@@ -1473,7 +1486,7 @@ void App::drawHelp() {
     table("h3d", {{"Left drag", "orbit around the target (the cursor hides so you can keep going)"},
                   {"Right drag", "look around (turn in place)"},
                   {"Middle drag / Shift+left drag", "pan"},
-                  {"Mouse wheel", "zoom toward the target"},
+                  {"Mouse wheel", "zoom in smoothly; slows down near surfaces and never goes through them"},
                   {"W A S D  /  arrows", "fly (speed adapts to the surface distance)"},
                   {"Q / E", "down / up"},
                   {"Shift", "fly 4x faster"},

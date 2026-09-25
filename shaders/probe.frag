@@ -24,10 +24,24 @@ void main() {
         outColor = vec4(sceneDE(uCamPos, trap), 0, 0, 1);
         return;
     }
-    float t = 0.0;
+    float t = 0.0, prevT = 0.0;
     for (int i = 0; i < uMaxSteps; i++) {
         float d = sceneDE(uCamPos + uProbeDir * t, trap);
-        if (d < max(t * uPixelAngle * uDetail, 1e-7)) { outColor = vec4(t, 0, 0, 1); return; }
+        if (d < max(t * uPixelAngle * uDetail, 1e-7)) {
+            if (d < 0.0 && i > 0) {
+                // overshot into the surface (height fields can): bisect back to the crossing,
+                // so the camera is never told there's more room ahead than there is
+                float a = prevT, b = t;
+                for (int k = 0; k < 12; k++) {
+                    float m = 0.5 * (a + b);
+                    if (sceneDE(uCamPos + uProbeDir * m, trap) < 0.0) b = m; else a = m;
+                }
+                t = a;
+            }
+            outColor = vec4(t, 0, 0, 1);
+            return;
+        }
+        prevT = t;
         t += d * uStepFactor;
         if (t > uMaxT) break;
     }

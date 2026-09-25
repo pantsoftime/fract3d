@@ -42,10 +42,11 @@ struct CliOptions {
     bool selfTest = false;
     // testing aids for --ui-shot runs (there's no real mouse in a hidden window)
     float fakeMouse[2] = {-1, -1};
-    bool insetOn = false, orbitOn = false;
+    bool insetOn = false, orbitOn = false, hideUi = false;
     std::vector<std::string> openWindows;  // --open gradient|formula|help|render|path
     std::string pathFile;                  // camera path to load (--path); with --render x.mp4 it's exported
     float videoFps = 30;
+    float wheel = 0;  // testing: mouse-wheel notches to apply at startup (--wheel)
     float pathTime = -1;
     std::string dumpIterations;
     int cancelAfterFrames = -1;  // testing: cancel a video export after N frames, like the Cancel button  // --dump-iterations: 2D renders also write the raw iteration buffer (tests)  // --path-time: render the camera path at this time (with --render x.png)
@@ -111,6 +112,7 @@ struct UiState {
     char pathName[96] = "my-path";
     int gradientSel = 0;  // selected stop in the gradient editor
     std::string formulaEdit;  // text in the editor (compiled on request)
+    const Param* draggingParam = nullptr;  // an animated parameter's slider being dragged (shows its base value)
     std::string centerEdit[2], centerShown[2];  // the Exact center fields, and the center they were filled from
     // importing a Fractint .PAR file with several entries
     bool showFractintImport = false;
@@ -281,12 +283,18 @@ public:
     double pickX = 0, pickY = 0;
     std::vector<int> probeTags;  // FIFO: 0 = center, 1 = pick
     std::vector<Vec3> probeDirs;
+    std::vector<Vec3> probePos;  // camera position when each probe was taken (results arrive frames later)
+    bool probeValid = false;     // deAtCam/centerHitT describe the current scene (false after a jump)
 
     // input
     int dragButton = -1;
     double pressX = 0, pressY = 0;
     bool flying = false;
     bool mouseCaptured = false;
+    // Mouse-wheel zoom, eased: notches accumulate here and are applied over a few frames
+    float wheelPending = 0;
+    float takeWheel(float dt);  // this frame's share of the pending notches
+    void zoom3D(float notches);  // toward the target, never through the surface ahead
     double captureLast[2] = {0, 0};
     void setMouseCapture(bool on);
     void toggleJulia(double px, double py);  // 2D: Julia set of the point, or back to the parameter plane

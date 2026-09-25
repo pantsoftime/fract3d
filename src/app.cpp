@@ -164,6 +164,8 @@ bool App::init(const CliOptions& opts) {
     }
     if (session.cli.pathTrace >= 0) view.rs.renderMode = session.cli.pathTrace;
     ui.showJuliaInset = session.cli.insetOn;
+    wheelPending = session.cli.wheel;
+    if (session.cli.hideUi) ui.showUI = false;
     for (auto& w : session.cli.openWindows) {
         if (w == "gradient") {
             view.gradient = sampleStops(palettes[view.rs.palette], 8);
@@ -427,7 +429,7 @@ std::string App::historyLabel() const {
 // change, so a slider drag or a zoom becomes one undo step, not hundreds.
 void App::recordHistory() {
     // (a playing camera path or a video export moves the view on its own: not the user's steps)
-    if (dragButton >= 0 || flying || camAnim.active || camPath.playing || video.active || ImGui::IsAnyItemActive()) {
+    if (dragButton >= 0 || flying || camAnim.active || camPath.playing || video.active || wheelPending != 0 || ImGui::IsAnyItemActive()) {
         history.changedAt = now;
         return;
     }
@@ -601,6 +603,29 @@ int App::selfTest() {
     check(isImageSequence("out/f-%05d.png") && isImageSequence("f%d.png") && !isImageSequence("f-%05d.mp4") &&
               !isImageSequence("f%s%05d.png") && !isImageSequence("f%d%d.png") && !isImageSequence("plain.png"),
           "PNG sequence patterns are recognized safely");
+    // mouse-wheel zoom: eased notches add up exactly; a zoom covers a share of the gap to
+    // the surface ahead (not to the orbit target) and never all of it
+    wheelPending = 3;
+    float total = 0;
+    for (int i = 0; i < 400; i++) total += takeWheel(0.016f);
+    check(std::abs(total - 3.0f) < 1e-4f && wheelPending == 0, "wheel notches are eased in and add up exactly");
+    wheelPending = 500;
+    takeWheel(0.016f);
+    check(wheelPending <= 30, "a huge fling is capped");
+    wheelPending = 0;
+    view.cam.lookAt(Vec3(0, 0, -3), Vec3(0, 0, 0));
+    deAtCam = 0.8f, centerHitT = 1.0f;
+    zoom3D(1);
+    check(std::abs(view.cam.pos.z - (-3 + 0.12f)) < 1e-4f && std::abs(view.cam.distance - 0.88f) < 1e-4f,
+          "one notch: 12% of the way to the surface, which becomes the orbit target");
+    deAtCam = 0.8f, centerHitT = 1.0f;
+    float z0 = view.cam.pos.z;
+    zoom3D(100);
+    check(view.cam.pos.z - z0 <= 0.5f + 1e-5f, "a stalled frame never covers more than half the gap");
+    deAtCam = -0.01f;
+    z0 = view.cam.pos.z;
+    zoom3D(1);
+    check(view.cam.pos.z == z0, "no zooming further into a surface the camera touches");
     // hostile values are repaired
     loadParText("mode = 2d\nclassic.formula = 99\nclassic.maxIter = -3\npost.tonemap = 7\n", "bad", true);
     check(view.cs.formula < kClassicFormulaCount && view.cs.maxIter >= 1 && view.rs.tonemap <= 2, "hostile PAR values are sanitized");
@@ -678,6 +703,7 @@ void App::applyPalette() {
 
 void App::selectFractal(int idx, bool reset) {
     view.fractal = std::clamp(idx, 0, (int)lib_.all().size() - 1);
+    probeValid = false;
     Fractal& f = fractal();
     view.rs.stepFactor = f.hints.stepFactor;
     view.rs.detail = f.hints.detail;
@@ -731,6 +757,7 @@ void App::applyLook(const Fractal& f) {
 
 void App::resetView() {
     Fractal& f = fractal();
+    probeValid = false;
     view.cam.lookAt(Vec3(f.camPos[0], f.camPos[1], f.camPos[2]), Vec3(f.camTarget[0], f.camTarget[1], f.camTarget[2]));
 }
 
@@ -782,6 +809,7 @@ void App::setMode(ViewMode m) {
     if (m != view.mode) {
         setMouseCapture(false);
         dragButton = -1;
+        wheelPending = 0;
     }
     view.mode = m;
     shownSig2D.clear();
@@ -891,7 +919,7 @@ void App::frame() {
 // or animated. The long wait still wakes now and then so edited files reload.
 double App::computeIdle() {
     if (session.cli.hidden) return 0;  // headless renders and tests run flat out
-    if (poster.active || job2D.active || camAnim.active || dragButton >= 0 || flying || gamepadActive || camPath.playing ||
+    if (poster.active || job2D.active || camAnim.active || dragButton >= 0 || flying || gamepadActive || camPath.playing || wheelPending != 0 ||
         video.active || refPending || (inset.job.active && view.mode == ViewMode::Classic2D))
         return 0;
     if (view.rs.cycleSpeed != 0.0f || glfwGetTime() < ui.toastUntil) return 0;
@@ -1027,7 +1055,10 @@ void App::input3D(float dt) {
         float s = 2.0f * tanHalf / std::max(winH, 1);
         view.cam.pan(-dx * s, dy * s);
     }
-    if (!overUI && io.MouseWheel != 0.0f) view.cam.dolly(std::pow(0.88f, io.MouseWheel));
+    if (!overUI) wheelPending += io.MouseWheel;
+    if (probeValid) {  // (zooming needs to know where the surfaces are: after a jump, wait for the probe)
+        if (float w = takeWheel(dt)) zoom3D(w);
+    }
 
     // WASD fly: speed follows the distance estimate, so you slow down near surfaces
     flying = false;
@@ -1126,7 +1157,8 @@ void App::input2D(float dt) {
     if (dragButton >= 0 && !ImGui::IsMouseDown(dragButton)) dragButton = -1;
     if (!io.WantCaptureKeyboard && ImGui::IsKeyPressed(ImGuiKey_Space, false) && !overUI) toggleJulia(px, py);
 
-    float wheel = overUI ? 0.0f : io.MouseWheel;
+    if (!overUI) wheelPending += io.MouseWheel;
+    float wheel = takeWheel(dt);
     if (!io.WantCaptureKeyboard) {
         if (ImGui::IsKeyDown(ImGuiKey_PageUp)) wheel += dt * 4;
         if (ImGui::IsKeyDown(ImGuiKey_PageDown)) wheel -= dt * 4;
@@ -1218,6 +1250,48 @@ void App::toggleJulia(double px, double py) {
         }
         view.cs.height = savedMandel[2];
         toast("Back to the parameter plane");
+    }
+}
+
+// ------------------------------------------------------------------ mouse-wheel zoom
+// Each notch is eased in over about a quarter of a second instead of jumping.
+float App::takeWheel(float dt) {
+    if (wheelPending == 0.0f) return 0.0f;
+    wheelPending = std::clamp(wheelPending, -30.0f, 30.0f);  // a fast fling, not a queue of hundreds
+    float take = wheelPending * (1.0f - std::exp(-dt * 14.0f));
+    if (std::abs(wheelPending - take) < 0.002f) take = wheelPending;
+    wheelPending -= take;
+    return take;
+}
+
+// Zooming in covers a fraction of the way to the surface at the center of the screen
+// (measured by the probe), so the camera slows down near surfaces and never passes
+// through one, and the orbit target moves onto that surface - the same as flying
+// forward with W. With nothing ahead it flies forward within the empty space around
+// the camera, target and all, so the scene's scale (which sets how far rays reach)
+// never collapses. Zooming out is limited by that empty space too, so it can't back
+// into a wall.
+void App::zoom3D(float notches) {
+    Camera& c = view.cam;
+    float f = std::pow(0.88f, std::abs(notches));  // 12% per notch
+    if (notches > 0) {
+        if (deAtCam <= 0 || centerHitT == 0) return;  // touching (or inside) a surface: no further in
+        bool surface = centerHitT > 0;
+        // (at most half the remaining gap per frame: a stalled frame catching up on many
+        // notches at once must not land on - or, with a stale probe, past - the surface)
+        float s = (surface ? centerHitT : deAtCam) * std::min(1.0f - f, 0.5f);
+        c.pos += c.forward() * s;
+        if (surface) {
+            centerHitT -= s;  // (until the probe measures again)
+            c.setTargetDistance(std::max(centerHitT, 1e-7f));
+        }
+        deAtCam -= s;
+    } else {
+        float s = c.distance * (1.0f / f - 1.0f);
+        if (deAtCam > 0) s = std::min(s, deAtCam * 0.8f);  // don't back into anything behind us
+        c.pos += c.forward() * -s;
+        c.setTargetDistance(c.distance + s);
+        deAtCam += s;
     }
 }
 
@@ -1350,12 +1424,17 @@ void App::updateProbe() {
     float de, hit;
     while (!probeTags.empty() && rend.fetchProbe(de, hit)) {
         int tag = probeTags.front();
-        Vec3 dir = probeDirs.front();
+        Vec3 dir = probeDirs.front(), from = probePos.front();
         probeTags.erase(probeTags.begin());
         probeDirs.erase(probeDirs.begin());
+        probePos.erase(probePos.begin());
+        // the camera may have moved since the probe was taken: correct for that, so a
+        // late result never claims more free space ahead than there is
+        Vec3 moved = view.cam.pos - from;
         if (tag == 0) {
-            deAtCam = de;
-            centerHitT = hit;
+            probeValid = true;
+            deAtCam = de - moved.length();
+            centerHitT = hit > 0 ? std::max(hit - moved.dot(dir), 0.0f) : hit;
         } else if (hit > 0) {
             // turn smoothly toward the clicked point; it becomes the new orbit center
             Camera goal = view.cam;
@@ -1379,6 +1458,7 @@ void App::updateProbe() {
     if (rend.probe(fractal(), view.rs, v, dir, pixelAngle)) {
         probeTags.push_back(tag);
         probeDirs.push_back(dir);
+        probePos.push_back(v.pos);
         if (tag == 1) pickRequested = false;
     }
 }

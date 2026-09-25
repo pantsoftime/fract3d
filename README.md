@@ -66,7 +66,7 @@ Every slider has a tooltip explaining what it does.
 | Left drag | orbit around the target |
 | Right drag | look around |
 | Middle drag / Shift+left drag | pan |
-| Wheel | zoom toward the target |
+| Wheel | zoom in smoothly (slows down near surfaces, never goes through them) |
 | W A S D, Q/E | fly (speed adapts to the distance to the surface); Shift = 4x |
 | Double-click | turn toward the clicked point (it becomes the orbit center) |
 | F | focus depth of field at screen center |

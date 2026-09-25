@@ -71,6 +71,8 @@ int main(int argc, char** argv) {
         else if (a == "--cancel-after-frames") o.cancelAfterFrames = atoi(next().c_str());  // testing
         else if (a == "--self-test") o.selfTest = o.hidden = true;
         else if (a == "--orbit") o.orbitOn = true;
+        else if (a == "--hide-ui") o.hideUi = true;  // testing: start with the overlay hidden (Tab)
+        else if (a == "--wheel") o.wheel = (float)atof(next().c_str());  // testing: scroll the mouse wheel N notches
         else if (a == "--gl-debug-verbose") o.glDebug = o.glDebugVerbose = true;
         else if (a.size() > 4 && (a.substr(a.size() - 4) == ".par" || a.substr(a.size() - 4) == ".png")) o.parFile = a;
         else { fprintf(stderr, "unknown option %s\n", a.c_str()); usage(); return 2; }
