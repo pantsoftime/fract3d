@@ -44,6 +44,7 @@ public:
     void takeScreenshot();
     void startPoster(int w, int h, int samples);
     bool savePar(const std::filesystem::path& p);
+    std::string parText() const;  // the current view as PAR text
     bool loadPar(const std::filesystem::path& p);
     void liftTo3D();
     void flattenTo2D();
@@ -187,8 +188,16 @@ public:
         RenderTarget target;
         std::string path;
         double started = 0;
-        View3D view;           // snapshot: moving the camera mid-render must not affect the image
+        // Snapshot of everything the image depends on, taken when the render starts,
+        // so changing the view, lighting, parameters or palette mid-render can't mix
+        // two scenes into one image.
+        View3D view;
+        RenderSettings rs;
         Classic2DSettings cs;
+        Fractal fractal;
+        Palette palette;
+        float cycleOffset = 0.0f;
+        std::string par;       // PAR text describing the snapshot
         ViewMode mode = ViewMode::Fractal3D;
         IndexTarget index;     // 2D posters
         Job2D job;

@@ -93,14 +93,22 @@ static void readVals(std::istream& is, double* p, int n) { for (int i = 0; i < n
 bool App::savePar(const fs::path& path) {
     std::error_code ec;
     fs::create_directories(path.parent_path(), ec);
-    std::ofstream o(path);
-    if (!o) {
+    std::ofstream out(path);
+    if (!out || !(out << parText())) {
         toast("Could not write " + path.string());
         return false;
     }
+    toast("Saved " + path.string());
+    return true;
+}
+
+std::string App::parText() const {
+    std::ostringstream o;
     o.precision(9);
-    Fractal& f = fractal();
-    o << "; Fract3D parameter file - load with File > Load, or: fract3d --par " << path.filename().string() << "\n";
+    const Fractal& f = lib_.all()[current_];
+    RenderSettings r = rs;
+    Classic2DSettings c = cs;
+    o << "; Fract3D parameter file - load with File > Load, or: fract3d --par FILE\n";
     o << "mode = " << (mode == ViewMode::Classic2D ? "2d" : "3d") << "\n";
     o << "fractal = " << f.key << "\n";
     o << "camera.pos = " << cam.pos.x << " " << cam.pos.y << " " << cam.pos.z << "\n";
@@ -118,13 +126,12 @@ bool App::savePar(const fs::path& path) {
         o << "\n";
         if (p.animate) o << "param." << p.id << ".anim = " << p.animSpeed << " " << p.animDepth << "\n";
     }
-    visitSettings(rs, cs, [&](const char* name, auto* ptr, int n) {
+    visitSettings(r, c, [&](const char* name, auto* ptr, int n) {
         o << name << " = ";
         writeVals(o, ptr, n);
         o << "\n";
     });
-    toast("Saved " + path.string());
-    return true;
+    return o.str();
 }
 
 bool App::loadPar(const fs::path& path) {

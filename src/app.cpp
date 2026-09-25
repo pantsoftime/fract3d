@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <fstream>
 #include <sstream>
 
 namespace fs = std::filesystem;
@@ -797,8 +798,17 @@ void App::startPoster(int w, int h, int nSamples) {
     poster.tile = 0;
     poster.started = glfwGetTime();
     poster.view = makeView(w, h);
+    poster.rs = rs;
     poster.cs = cs;
     poster.cs.supersample = std::clamp(cs.supersample, 1, 4);
+    poster.fractal = fractal();
+    for (auto& p : poster.fractal.params) {  // freeze animated parameters at their current value
+        paramEffective(p, animTime, p.value);
+        p.animate = false;
+    }
+    poster.palette = palettes[rs.palette];
+    poster.cycleOffset = cycleOffset;
+    poster.par = parText();
     poster.mode = mode;
     std::error_code ec;
     fs::create_directories(picturesDir, ec);
@@ -836,7 +846,7 @@ void App::updatePoster() {
     double budget = cli.shotPath.empty() ? 30.0 : 500.0;
     bool finished = false;
     if (is3D) {
-        if (rend.status(fractal()) == Renderer::ProgStatus::Compiling) return;  // wait for the shaders
+        if (rend.status(poster.fractal) == Renderer::ProgStatus::Compiling) return;  // wait for the shaders
         int tw = poster.target.w, th = poster.target.h;
         int tilesX = (tw + T - 1) / T, tilesY = (th + T - 1) / T, tiles = tilesX * tilesY;
         const View3D& v = poster.view;
@@ -845,7 +855,7 @@ void App::updatePoster() {
         while (poster.done < poster.samples) {
             int tx = poster.tile % tilesX, ty = poster.tile / tilesX;
             int sc[4] = {tx * T, ty * T, std::min(T, tw - tx * T), std::min(T, th - ty * T)};
-            if (!rend.renderSample3D(poster.target, poster.done, fractal(), rs, v, sc)) {
+            if (!rend.renderSample3D(poster.target, poster.done, poster.fractal, poster.rs, v, sc)) {
                 toast("Render failed (shader error)");
                 poster.active = false;
                 poster.target.release();
@@ -876,10 +886,12 @@ void App::updatePoster() {
     }
     if (finished) {
         std::vector<uint8_t> px;
-        bool ok = rend.readImage(poster.mode, &poster.target, &poster.index, rs, cs, cycleOffset, poster.w, poster.h, px) &&
+        rend.setPalette(poster.palette);
+        bool ok = rend.readImage(poster.mode, &poster.target, &poster.index, poster.rs, poster.cs, poster.cycleOffset,
+                                 poster.w, poster.h, px) &&
                   writePngRaw(poster.path, poster.w, poster.h, px.data());
-        fs::path parPath = fs::path(poster.path).replace_extension(".par");
-        savePar(parPath);
+        applyPalette();  // back to whatever the live view uses
+        std::ofstream(fs::path(poster.path).replace_extension(".par")) << poster.par;
         double secs = glfwGetTime() - poster.started;
         char buf[512];
         snprintf(buf, sizeof buf, "%s %s (%.1fs)", ok ? "Saved" : "FAILED to save", poster.path.c_str(), secs);
