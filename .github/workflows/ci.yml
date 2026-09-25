@@ -1,0 +1,30 @@
+# Builds with GCC and Clang and runs the tests that don't need a GPU (label "nogpu":
+# the formula parser/transpiler). The render tests need a GPU and a display; run
+# them locally with  ctest --preset default.
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Arch has current GLFW (3.4+ is needed for the Wayland/X11 platform queries)
+    container: archlinux:latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+    steps:
+      - name: Install dependencies
+        run: pacman -Syu --noconfirm --needed base-devel cmake ninja git glfw libepoxy mpfr clang
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: |
+          if [ "${{ matrix.compiler }}" = clang ]; then export CC=clang CXX=clang++; fi
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
+      - name: Build
+        run: cmake --build build
+      - name: Test (no GPU)
+        run: ctest --test-dir build -L nogpu --output-on-failure

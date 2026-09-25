@@ -1,0 +1,6 @@
+; round trip: a formula chosen by name, with its fn1 changed from the default
+mode = 2d
+classic.formula = 8
+formula.name = FnMandel
+formula.fn = 5 0 0 0
+classic.banded = 0

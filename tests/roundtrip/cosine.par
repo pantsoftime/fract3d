@@ -1,0 +1,4 @@
+; round trip: the cosine palette editor
+fractal = mandelbox
+color.palette = Custom (cosine editor)
+color.cosine = 0.5 0.4 0.3 0.5 0.5 0.4 1 1 2 0.1 0.3 0.6

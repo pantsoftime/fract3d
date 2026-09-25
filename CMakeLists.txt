@@ -105,11 +105,14 @@ if(FRACT3D_TESTS)
   add_custom_target(update-golden ${update_cmds} DEPENDS fract3d imgdiff
                     COMMENT "Re-rendering golden images into tests/golden/")
 
-  # saved PARs must reproduce their image exactly (one 3D and one 2D view)
-  foreach(p 02-seahorse-valley 10-menger-crystal)
-    add_test(NAME roundtrip.${p}
+  # saved PARs must reproduce their image exactly: two presets, plus one view per
+  # feature that PAR files carry (gradients, cosine palettes, formulas, animation, deep centers)
+  file(GLOB ROUNDTRIP_FILES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/tests/roundtrip/*.par)
+  foreach(p ${CMAKE_SOURCE_DIR}/presets/02-seahorse-valley.par ${CMAKE_SOURCE_DIR}/presets/10-menger-crystal.par ${ROUNDTRIP_FILES})
+    get_filename_component(name ${p} NAME_WE)
+    add_test(NAME roundtrip.${name}
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:fract3d> -DDIFF=$<TARGET_FILE:imgdiff>
-                     -DPAR=${CMAKE_SOURCE_DIR}/presets/${p}.par -DOUT=${TEST_OUT} -DNAME=roundtrip-${p}
+                     -DPAR=${p} -DOUT=${TEST_OUT} -DNAME=roundtrip-${name}
                      -DSIZE=160x90 -DSAMPLES=4 -P ${CMAKE_SOURCE_DIR}/tests/par_roundtrip.cmake)
   endforeach()
 
@@ -128,6 +131,7 @@ if(FRACT3D_TESTS)
   add_executable(formula_test tests/formula_test.cpp src/formula.cpp)
   target_include_directories(formula_test PRIVATE src)
   add_test(NAME formula.unit COMMAND formula_test ${CMAKE_SOURCE_DIR}/formulas/classics.frm)
+  set_tests_properties(formula.unit PROPERTIES LABELS nogpu)  # runs in CI (no GPU there)
   file(STRINGS ${CMAKE_SOURCE_DIR}/formulas/classics.frm FRM_HEADERS REGEX "^[A-Za-z0-9_]+ *[({]")
   foreach(h ${FRM_HEADERS})
     string(REGEX MATCH "^[A-Za-z0-9_]+" fname "${h}")
@@ -191,8 +195,9 @@ if(FRACT3D_TESTS)
                    -DGOLDEN_PAR=${CMAKE_SOURCE_DIR}/tests/deep/dendrite-fp64.par -DOUT=${TEST_OUT} -DSIZE=240x135
                    -P ${CMAKE_SOURCE_DIR}/tests/render_pair.cmake)
 
-  # an impossible render must fail cleanly with a non-zero exit code
+  # an impossible render must fail cleanly: a non-zero exit code AND the size-limit message
+  # (so a crash doesn't count as passing)
   add_test(NAME oversize_render_fails
-           COMMAND fract3d --2d --render ${TEST_OUT}/oversize.png --size 40000x100)
-  set_tests_properties(oversize_render_fails PROPERTIES WILL_FAIL TRUE)
+           COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:fract3d> "-DARGS=--2d;--render;${TEST_OUT}/oversize.png;--size;40000x100"
+                   "-DEXPECT=exceeds the GPU's texture size limit" -P ${CMAKE_SOURCE_DIR}/tests/expect_failure.cmake)
 endif()

@@ -1,0 +1,5 @@
+; round trip: an animated fractal parameter
+fractal = mandelbulb
+param.power = 7
+param.power.anim = 0.2 0.3
+param.phaseTheta = 20

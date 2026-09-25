@@ -67,7 +67,10 @@ bool App::init(const CliOptions& opts) {
 #endif
     if (session.cli.glDebug) glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
     if (session.cli.hidden) glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-    int ww = session.cli.hidden && session.cli.shotW ? session.cli.shotW : 1600, wh = session.cli.hidden && session.cli.shotH ? session.cli.shotH : 900;
+    // --ui-shot captures the window, so it gets the requested size; --render draws
+    // offscreen at any size, and its (hidden) window only needs to exist
+    bool uiShot = !session.cli.uiShotPath.empty() && session.cli.shotW;
+    int ww = uiShot ? session.cli.shotW : 1600, wh = uiShot ? session.cli.shotH : 900;
     win = glfwCreateWindow(ww, wh, "Fract3D", nullptr, nullptr);
     if (!win) {
         fprintf(stderr, "fract3d: could not create an OpenGL 4.6 window\n");

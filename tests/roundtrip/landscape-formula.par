@@ -1,0 +1,4 @@
+; round trip: the 3D landscape made from a custom formula (its source must be saved)
+fractal = landscape
+param.formula = 5
+formula.name = Spider
