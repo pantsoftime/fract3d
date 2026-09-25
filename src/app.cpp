@@ -1,4 +1,5 @@
 #include "app.h"
+#include "sanitize.h"
 
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
@@ -56,6 +57,10 @@ bool App::init(const CliOptions& opts) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);
+#ifndef NDEBUG
+    cli.glDebug = true;  // debug builds always report GL errors
+#endif
+    if (cli.glDebug) glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
     if (cli.hidden) glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
     int ww = cli.hidden && cli.shotW ? cli.shotW : 1600, wh = cli.hidden && cli.shotH ? cli.shotH : 900;
     win = glfwCreateWindow(ww, wh, "Fract3D", nullptr, nullptr);
@@ -71,6 +76,7 @@ bool App::init(const CliOptions& opts) {
 
     printf("fract3d: %s | %s\n", (const char*)glGetString(GL_RENDERER), (const char*)glGetString(GL_VERSION));
     printf("fract3d: data from %s\n", dataDir.c_str());
+    if (cli.glDebug) installGlDebugOutput(cli.glDebugVerbose);
 
     std::string err;
     if (!rend.init(dataDir, err)) {
@@ -82,6 +88,7 @@ bool App::init(const CliOptions& opts) {
         fprintf(stderr, "fract3d: no fractals found in %s/fractals\n", dataDir.c_str());
         return false;
     }
+    rend.warmUp(lib_.all());  // start compiling every fractal in the background
 
     palettes = builtinPalettes();
     for (auto dir : {dataDir / "palettes", userDir / "palettes"}) {
@@ -112,6 +119,8 @@ bool App::init(const CliOptions& opts) {
         fprintf(stderr, "fract3d: could not load %s\n", cli.parFile.c_str());
     if (cli.mode2d) mode = ViewMode::Classic2D;
     if (cli.pathTrace >= 0) rs.renderMode = cli.pathTrace;
+    sanitize(rs);
+    sanitize(cs);
     applyPalette();
 
     if (!cli.shotPath.empty()) {
@@ -153,8 +162,10 @@ void App::loadPrefs() {
         if (k == "theme") uiTheme = (int)v;
         else if (k == "uiScale") uiScale = std::clamp(v, 0.5f, 3.0f);
         else if (k == "showLearn") showLearn = v != 0;
-        else if (k == "flySpeed") flySpeed = v;
+        else if (k == "flySpeed") flySpeed = std::isfinite(v) ? std::clamp(v, 0.01f, 100.0f) : 1.5f;
     }
+    if (uiTheme != 0 && uiTheme != 1) uiTheme = 0;
+    if (!std::isfinite(uiScale)) uiScale = 1.0f;
 }
 
 void App::savePrefs() {
@@ -707,6 +718,10 @@ bool App::stepJob2D(Job2D& job, IndexTarget& target, double budgetMs) {
 }
 
 void App::render2D() {
+    if (cs.formula == kCustomFormula && !rend.hasCustomFormula()) {
+        cs.formula = 0;
+        toast("No custom formula is compiled - showing the Mandelbrot set instead", 4);
+    }
     Classic2DSettings c = cs;
     // display-only fields don't need a recompute
     c.colorDensity = 0; c.insideMode = 0; c.insideColor[0] = c.insideColor[1] = c.insideColor[2] = 0;
@@ -793,6 +808,7 @@ void App::startPoster(int w, int h, int nSamples) {
         ok = poster.target.ensure(w, h, GL_RGBA32F, GL_LINEAR);
         if (ok) rend.clear3D(poster.target);
     } else {
+        if (poster.cs.formula == kCustomFormula && !rend.hasCustomFormula()) poster.cs.formula = cs.formula = 0;
         int ss = poster.cs.supersample;
         ok = poster.index.ensure(w * ss, h * ss);
         if (ok) {

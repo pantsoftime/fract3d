@@ -64,6 +64,7 @@ public:
     // Transpiled user formula (see formula.h); empty to clear. Rebuilds the custom programs.
     void setCustomFormula(const std::string& glsl);
     const std::string& customFormulaError() const { return customError_; }
+    bool hasCustomFormula() const { return !customGlsl_.empty() && customError_.empty(); }
 
     // ---- final image: 3D accumulation or 2D iteration buffer -> fbo
     void display(ViewMode mode, const RenderTarget* accum, const IndexTarget* index, const RenderSettings& rs,

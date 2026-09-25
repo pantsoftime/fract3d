@@ -1,6 +1,7 @@
 // PAR files: human-readable "key = value" snapshots of a whole view, named after
 // Fractint's .PAR parameter files. Every screenshot writes one next to the PNG.
 #include "app.h"
+#include "sanitize.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -205,6 +206,11 @@ bool App::loadPar(const fs::path& path) {
         for (int i = 0; i < (int)palettes.size(); i++)
             if (palettes[i].name == kv["color.palette"]) rs.palette = i;
     }
+    // Everything above came from a file: repair anything out of range before use.
+    sanitize(rs);
+    sanitize(cs);
+    sanitize(cam);
+    sanitize(f);
     applyPalette();
     parNote = note;
     toast(note.empty() ? "Loaded " + path.filename().string() : note, note.empty() ? 2.5f : 6.0f);

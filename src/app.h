@@ -24,6 +24,8 @@ struct CliOptions {
     std::string uiShotPath;  // render N frames with the UI into a PNG and exit (docs/testing)
     int uiShotFrames = 90;
     int theme = -1;          // override the saved UI theme
+    bool glDebug = false;    // report OpenGL errors (always on in debug builds)
+    bool glDebugVerbose = false;
 };
 
 class App {

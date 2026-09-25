@@ -34,7 +34,8 @@ add_executable(fract3d
   src/camera.cpp
   src/renderer.cpp
   src/palettes.cpp
-  src/params_io.cpp)
+  src/params_io.cpp
+  src/sanitize.cpp)
 target_include_directories(fract3d PRIVATE src)
 target_include_directories(fract3d SYSTEM PRIVATE third_party/stb)
 target_link_libraries(fract3d PRIVATE imgui PkgConfig::GLFW PkgConfig::EPOXY)

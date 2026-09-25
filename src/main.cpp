@@ -16,7 +16,8 @@ static void usage() {
         "  --render OUT.png     render an image and exit (no window shown)\n"
         "  --size WxH           image size for --render (default 1920x1080)\n"
         "  --samples N          samples per pixel for --render\n"
-        "  --theme modern|fractint   UI theme\n");
+        "  --theme modern|fractint   UI theme\n"
+        "  --gl-debug           print OpenGL errors and performance warnings\n");
 }
 
 int main(int argc, char** argv) {
@@ -45,6 +46,8 @@ int main(int argc, char** argv) {
         else if (a == "--ui-shot") { o.uiShotPath = next(); o.hidden = true; }
         else if (a == "--frames") o.uiShotFrames = atoi(next().c_str());
         else if (a == "--theme") o.theme = next() == "fractint" ? 1 : 0;
+        else if (a == "--gl-debug") o.glDebug = true;
+        else if (a == "--gl-debug-verbose") o.glDebug = o.glDebugVerbose = true;
         else if (a.size() > 4 && a.substr(a.size() - 4) == ".par") o.parFile = a;
         else { fprintf(stderr, "unknown option %s\n", a.c_str()); usage(); return 2; }
     }
