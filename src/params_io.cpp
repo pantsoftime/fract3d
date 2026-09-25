@@ -7,8 +7,6 @@
 
 #include <algorithm>
 #include <cmath>
-
-#include <algorithm>
 #include <cstdio>
 #include <fstream>
 #include <map>

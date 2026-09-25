@@ -298,6 +298,10 @@ vec3 tracePath(vec3 ro, vec3 rd, out float firstT) {
                 float shin = exp2(10.0 * (1.0 - g_rough) + 1.0);
                 radiance += throughput * specColor * uSunColor * pow(max(dot(r, L), 0.0), shin) * (shin + 2.0) * 0.5 * ndl;
             }
+            // NB: the bounce below samples mix(reflection, cosine lobe) while the sun term
+            // above uses a normalized Phong lobe - the two lobes don't match exactly, so
+            // glossy indirect light is slightly biased relative to direct. That's a
+            // deliberate artistic shortcut; change both sides together if you touch it.
             rd = normalize(mix(r, cosineHemisphere(n), g_rough * g_rough));
             if (dot(rd, n) < 0.0) break;
             throughput *= specColor;

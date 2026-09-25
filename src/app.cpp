@@ -20,7 +20,8 @@
 #include <fstream>
 #include <sstream>
 #include <thread>
-#include <algorithm>
+
+#include <unistd.h>
 
 namespace fs = std::filesystem;
 
@@ -190,7 +191,9 @@ bool App::init(const CliOptions& opts) {
         return false;
     };
     if (!session.cli.shotPath.empty() && isVideo(session.cli.shotPath)) {
-        if (session.cli.shotW) camPath.videoW = session.cli.shotW, camPath.videoH = session.cli.shotH;
+        if (session.cli.shotW) camPath.videoW = session.cli.shotW & ~1, camPath.videoH = session.cli.shotH & ~1;  // yuv420p
+        if (session.cli.shotW && (camPath.videoW != session.cli.shotW || camPath.videoH != session.cli.shotH))
+            printf("fract3d: video sizes must be even: using %dx%d\n", camPath.videoW, camPath.videoH);
         if (session.cli.shotSamples) camPath.videoSamples = session.cli.shotSamples;
         camPath.fps = std::clamp(session.cli.videoFps, 1.0f, 240.0f);
         if (!startVideo(session.cli.shotPath)) {
@@ -447,12 +450,9 @@ void App::jumpToHistory(int i) {
 }
 
 void App::undo() {
-    // an unrecorded change counts as the newest entry: undo returns to the last recorded view
-    if (parText() != history.lastText && history.pos >= 0) {
-        jumpToHistory(history.pos);
-        toast("Undo", 0.8f);
-        return;
-    }
+    // A change that hasn't settled into the history yet is recorded first, so Redo
+    // can bring it back; then Undo steps to the view before it.
+    if (parText() != history.lastText && history.pos >= 0) recordHistoryNow();
     if (history.pos > 0) {
         jumpToHistory(history.pos - 1);
         toast("Undo", 0.8f);
@@ -473,6 +473,7 @@ void App::redo() {
 // --self-test: exercises logic that normally needs keyboard/mouse input.
 int App::selfTest() {
     int fails = 0;
+    std::error_code ec;
     auto check = [&](bool ok, const char* what) {
         printf("self-test: %-58s %s\n", what, ok ? "ok" : "FAILED");
         if (!ok) fails++;
@@ -485,6 +486,7 @@ int App::selfTest() {
     recordHistoryNow();
     std::string menger = parText();
     check(preset("02-seahorse-valley.par"), "load a second preset");
+    std::string seahorse = parText();
     // an unrecorded change: undo goes back to the last recorded view (Menger)
     undo();
     check(parText() == menger, "undo an unrecorded load returns to the previous view");
@@ -492,6 +494,9 @@ int App::selfTest() {
     check(parText() == start, "undo again returns to the start");
     redo();
     check(parText() == menger, "redo");
+    redo();
+    check(parText() == seahorse, "redo brings back the change that wasn't recorded yet");
+    undo();
     view.rs.exposure = 2.5f;  // a new edit after undo...
     recordHistoryNow();
     check(history.pos == (int)history.entries.size() - 1, "a new edit becomes the newest entry");
@@ -537,6 +542,24 @@ int App::selfTest() {
           "a deep-to-shallow path heads for the shallow center");
     applyPathTime(1.0f);
     check(view.cs.cx == -0.6 && view.cs.height == 3.0, "...and ends exactly on it");
+    // sun turns the short way, iteration limits interpolate in log space, easing, .f3dpath round trip
+    camPath = CameraPath();
+    camPath.keys.resize(2);
+    camPath.keys[0].par = "mode = 2d\nlight.sunAzimuth = 350\nclassic.maxIter = 1000\n";
+    camPath.keys[1].par = "mode = 2d\nlight.sunAzimuth = 10\nclassic.maxIter = 16000\n";
+    camPath.keys[0].duration = 1;
+    applyPathTime(0.5f);
+    check((view.rs.sunAzimuth > 355 || view.rs.sunAzimuth < 5) && view.cs.maxIter > 3500 && view.cs.maxIter < 4500,
+          "paths: the sun turns the short way; maxIter in log space");
+    camPath.keys[0].ease = true;
+    applyPathTime(0.25f);
+    int eased = view.cs.maxIter;
+    check(eased < 1600, "paths: an eased segment starts slowly");
+    fs::path tmp = fs::temp_directory_path() / ("fract3d-selftest-" + std::to_string(getpid()) + ".f3dpath");
+    savePath(tmp);
+    camPath = CameraPath();
+    check(loadPath(tmp) && camPath.keys.size() == 2 && camPath.keys[0].ease && !camPath.keys[1].ease, "paths: easing is saved");
+    fs::remove(tmp, ec);
     endPathPreview();
     camPath = CameraPath();
     // custom formulas: right-click goes to the @julia partner with c = p1, and back

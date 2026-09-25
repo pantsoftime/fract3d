@@ -1,6 +1,7 @@
 #include "renderer.h"
 
 #include "bluenoise.h"
+#include "pngmeta.h"
 
 #include <algorithm>
 #include <cmath>
@@ -12,6 +13,7 @@
 namespace fs = std::filesystem;
 
 bool writePngRaw(const std::string& path, int w, int h, const uint8_t* rgba) {
+    pngFastSettings();
     stbi_flip_vertically_on_write(1);
     return stbi_write_png(path.c_str(), w, h, 4, rgba, w * 4) != 0;
 }

@@ -335,6 +335,7 @@ public:
     struct Keyframe {
         std::string par;        // the complete view
         float duration = 3.0f;  // seconds to the next keyframe
+        bool ease = false;      // slow in and out of the segment to the next keyframe (else constant pace)
         std::string label;
         ViewState v;            // parsed from par (see parseKeyframes)
         std::string fractalKey;

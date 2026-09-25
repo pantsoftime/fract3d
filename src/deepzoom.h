@@ -27,6 +27,8 @@ double toDouble(const std::string& s);
 std::string add(const std::string& a, double delta, int bits);  // a + delta
 double diffOver(const std::string& a, const std::string& b, double unit, int bits);  // (a - b) / unit
 std::string lerp(const std::string& a, const std::string& b, double w, int bits);    // a + (b - a) w
+std::string round(const std::string& a, int digits);  // for display: `digits` significant digits
+int digitsForPixel(double pixelSize);                  // digits that locate a point to a fraction of a pixel
 }  // namespace hp
 
 struct RefOrbitRequest {

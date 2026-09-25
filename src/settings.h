@@ -17,6 +17,8 @@ enum FieldFlags : unsigned {
     kLighting = 1u << 4,   // the lighting part of the look (kept with "keep my lighting")
     kPar = 1u << 5,        // saved in PAR files
     kPerf = 1u << 6,       // performance preference (prefs.ini, not PAR)
+    kCount = 1u << 7,      // an int that's a quantity (not a choice): camera paths interpolate it
+    kLogScale = 1u << 8,   // ...in log space (iteration limits span orders of magnitude)
 };
 
 // f(const char* parName, const char* lookAlias /*or nullptr*/, T* ptr, int count, unsigned flags)
@@ -25,13 +27,13 @@ template <class F>
 void visitRender(RenderSettings& r, F&& f) {
     constexpr unsigned T = kTrace3D | kPar, TL = T | kLook, TLL = TL | kLighting, D = kDisplay | kPar;
     f("render.mode", nullptr, &r.renderMode, 1, T);
-    f("render.bounces", nullptr, &r.bounces, 1, T);
-    f("render.maxSteps", nullptr, &r.maxSteps, 1, T);
+    f("render.bounces", nullptr, &r.bounces, 1, T | kCount);
+    f("render.maxSteps", nullptr, &r.maxSteps, 1, T | kCount);
     f("render.detail", nullptr, &r.detail, 1, T);
     f("render.stepFactor", nullptr, &r.stepFactor, 1, T);
     f("render.maxDist", nullptr, &r.maxDist, 1, T);
-    f("render.maxSamplesRT", nullptr, &r.maxSamplesRT, 1, kPar);
-    f("render.maxSamplesPT", nullptr, &r.maxSamplesPT, 1, kPar);
+    f("render.maxSamplesRT", nullptr, &r.maxSamplesRT, 1, kPar | kCount | kLogScale);
+    f("render.maxSamplesPT", nullptr, &r.maxSamplesPT, 1, kPar | kCount | kLogScale);
     f("light.sunAzimuth", "sunAzimuth", &r.sunAzimuth, 1, TLL);
     f("light.sunElevation", "sunElevation", &r.sunElevation, 1, TLL);
     f("light.sunColor", "sunColor", r.sunColor, 3, TLL);
@@ -68,7 +70,7 @@ void visitRender(RenderSettings& r, F&& f) {
     f("post.vignette", nullptr, &r.vignette, 1, D);
     f("post.saturation", nullptr, &r.saturation, 1, D);
     f("post.retro", nullptr, &r.retro, 1, D);
-    f("post.pixelSize", nullptr, &r.pixelSize, 1, D);
+    f("post.pixelSize", nullptr, &r.pixelSize, 1, D | kCount);
     f("post.scanlines", nullptr, &r.scanlines, 1, D);
     f("perf.adaptiveRes", nullptr, &r.adaptiveRes, 1, kPerf);
     f("perf.targetFps", nullptr, &r.targetFps, 1, kPerf);
@@ -83,7 +85,7 @@ void visitClassic(Classic2DSettings& c, F&& f) {
     f("classic.center", nullptr, &c.cx, 2, C);  // cx, cy are adjacent doubles
     f("classic.height", nullptr, &c.height, 1, C);
     f("classic.juliaC", nullptr, &c.jx, 2, C);
-    f("classic.maxIter", nullptr, &c.maxIter, 1, C);
+    f("classic.maxIter", nullptr, &c.maxIter, 1, C | kCount | kLogScale);
     f("classic.bailout", nullptr, &c.bailout, 1, C);
     f("classic.power", nullptr, &c.power, 1, C);
     f("classic.phoenixP", nullptr, c.phoenixP, 2, C);

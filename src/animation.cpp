@@ -74,16 +74,27 @@ static double catmull(double p0, double p1, double p2, double p3, double u) {
 }
 
 // Every float/double field of a settings struct, spline-interpolated through
-// four keyframes (fields a..d at the same offset); other types keep b's value.
+// four keyframes (fields a..d at the same offset), and ints that are quantities
+// (kCount: iteration limits, step counts; kLogScale ones in log space), rounded.
+// Choices and toggles keep b's value.
 template <class S, class Visit>
 static void splineFields(S& out, const S& a, const S& b, const S& c, const S& d, float u, Visit visit) {
     out = b;
-    visit(out, [&](const char*, const char*, auto* ptr, int n, unsigned) {
+    visit(out, [&](const char*, const char*, auto* ptr, int n, unsigned flags) {
         using T = std::remove_reference_t<decltype(*ptr)>;
+        size_t off = reinterpret_cast<const char*>(ptr) - reinterpret_cast<const char*>(&out);
+        auto at = [&](const S& s, int i) { return reinterpret_cast<const T*>(reinterpret_cast<const char*>(&s) + off)[i]; };
         if constexpr (std::is_floating_point_v<T>) {
-            size_t off = reinterpret_cast<const char*>(ptr) - reinterpret_cast<const char*>(&out);
-            auto at = [&](const S& s, int i) { return reinterpret_cast<const T*>(reinterpret_cast<const char*>(&s) + off)[i]; };
             for (int i = 0; i < n; i++) ptr[i] = catmull(at(a, i), at(b, i), at(c, i), at(d, i), (T)u);
+        } else if constexpr (std::is_same_v<T, int>) {
+            if (!(flags & kCount)) return;
+            bool lg = flags & kLogScale;
+            auto f = [&](const S& s, int i) { return lg ? std::log(std::max((double)at(s, i), 1.0)) : (double)at(s, i); };
+            for (int i = 0; i < n; i++) {
+                double v = catmull(f(a, i), f(b, i), f(c, i), f(d, i), (double)u);
+                double lo = std::min(at(b, i), at(c, i)), hi = std::max(at(b, i), at(c, i));  // no overshoot
+                ptr[i] = (int)std::lround(std::clamp(lg ? std::exp(v) : v, lo, hi));
+            }
         }
     });
 }
@@ -99,6 +110,7 @@ void App::applyPathTime(float t) {
         while (seg < n - 2 && t > keys[seg].duration) t -= keys[seg].duration, seg++;
         u = std::clamp(t / std::max(keys[seg].duration, 0.01f), 0.0f, 1.0f);
         if (u >= 1.0f) seg = n - 1, u = 0.0f;  // the very end: exactly the last keyframe, switches included
+        else if (keys[seg].ease) u = u * u * (3.0f - 2.0f * u);  // slow in and out of this segment
     }
     const Keyframe& B = keys[seg];
     const Keyframe& C = keys[std::min(seg + 1, n - 1)];
@@ -132,9 +144,13 @@ void App::applyPathTime(float t) {
         const Camera *ca = &A2.v.cam, *cb = &B.v.cam, *cc = &C.v.cam, *cd = &D2.v.cam;
         v.cam.pos = Vec3(catmull(ca->pos.x, cb->pos.x, cc->pos.x, cd->pos.x, u), catmull(ca->pos.y, cb->pos.y, cc->pos.y, cd->pos.y, u),
                          catmull(ca->pos.z, cb->pos.z, cc->pos.z, cd->pos.z, u));
-        auto unwrap = [](float ref, float a) { return ref + std::remainder(a - ref, 6.2831853f); };
+        auto unwrap = [](float ref, float a, float turn = 6.2831853f) { return ref + std::remainder(a - ref, turn); };
         float yc = unwrap(cb->yaw, cc->yaw);
         v.cam.yaw = catmull(unwrap(cb->yaw, ca->yaw), cb->yaw, yc, unwrap(yc, cd->yaw), u);
+        // the sun turns the short way round too (350 -> 10 degrees is 20 degrees, not 340)
+        float sb = B.v.rs.sunAzimuth, sc = unwrap(sb, C.v.rs.sunAzimuth, 360.0f);
+        float sun = catmull(unwrap(sb, A2.v.rs.sunAzimuth, 360.0f), sb, sc, unwrap(sc, D2.v.rs.sunAzimuth, 360.0f), u);
+        v.rs.sunAzimuth = std::fmod(std::fmod(sun, 360.0f) + 360.0f, 360.0f);
         v.cam.pitch = std::clamp(catmull(ca->pitch, cb->pitch, cc->pitch, cd->pitch, u), -1.55f, 1.55f);
         v.cam.distance = std::exp(catmull(std::log(ca->distance), std::log(cb->distance), std::log(cc->distance), std::log(cd->distance), u));
         for (int k = 0; k < 3; k++) {
@@ -212,7 +228,8 @@ bool App::savePath(const fs::path& p) {
     std::ofstream o(p);
     if (!o) return false;
     o << "; Fract3D camera path: keyframes (views) and the seconds to the next one\n";
-    for (auto& k : camPath.keys) o << "---- keyframe " << k.duration << " " << k.label << "\n" << k.par;
+    for (auto& k : camPath.keys)
+        o << "---- keyframe " << k.duration << (k.ease ? " ease" : "") << " " << k.label << "\n" << k.par;
     toast("Saved " + p.string());
     return true;
 }
@@ -229,6 +246,14 @@ bool App::loadPath(const fs::path& p) {
             std::istringstream ls(line.substr(13));
             ls >> k.duration;
             if (!std::isfinite(k.duration) || k.duration <= 0) k.duration = 3.0f;
+            ls >> std::ws;
+            if (ls.peek() == 'e') {  // optional "ease" flag before the label
+                std::streampos at = ls.tellg();
+                std::string word;
+                ls >> word;
+                if (word == "ease") k.ease = true;
+                else ls.seekg(at);
+            }
             std::getline(ls >> std::ws, k.label);
             keys.push_back(k);
         } else if (!keys.empty()) {

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <string>
 
+void pngFastSettings();  // encoder settings for large images (used by every PNG writer)
 bool writePngWithText(const std::string& path, int w, int h, const uint8_t* rgbaBottomUp, const std::string& parText);
 // Returns the embedded PAR text, or "" if the file has none (or isn't a PNG).
 std::string readPngText(const std::string& path);

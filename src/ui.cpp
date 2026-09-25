@@ -725,8 +725,14 @@ void App::drawClassicPanel() {
     if (view.cs.formula == 5) ImGui::SliderFloat2("Phoenix p", view.cs.phoenixP, -1.0f, 1.0f);
 
     ImGui::SeparatorText("View");
-    ImGui::InputDouble("Center real", &view.cs.cx, 0, 0, "%.15f");
-    ImGui::InputDouble("Center imag", &view.cs.cy, 0, 0, "%.15f");
+    bool deepCenter = hp::bitsForPixel(view.cs.height / std::max(fbH, 1)) > 64;
+    if (!deepCenter) {
+        ImGui::InputDouble("Center real", &view.cs.cx, 0, 0, "%.15f");
+        ImGui::InputDouble("Center imag", &view.cs.cy, 0, 0, "%.15f");
+    } else {
+        // doubles can't locate the center any more: show (and edit) the exact one below
+        ImGui::TextDisabled("Center: past double precision - see Exact center");
+    }
     double mag = 3.0 / view.cs.height;
     if (ImGui::InputDouble("Magnification", &mag, 0, 0, "%.6g") && mag > 0) view.cs.height = 3.0 / mag;
     bool fp64 = rend.classicUsesFp64(view.cs, fbH), deep = rend.classicUsesDeep(view.cs, fbH);
@@ -747,6 +753,7 @@ void App::drawClassicPanel() {
     if (view.cs.formula != 0 && view.cs.height / fbH < 1e-13)
         ImGui::TextWrapped("Past the limit of double precision - deep zoom (perturbation) works for the Mandelbrot formula "
                            "and its Julia sets.");
+    if (deepCenter) ImGui::SetNextItemOpen(true, ImGuiCond_Appearing);
     if (ImGui::TreeNode("Exact center (deep zoom)")) {
         syncCenter();
         std::string &editRe = ui.centerEdit[0], &editIm = ui.centerEdit[1];
@@ -890,11 +897,12 @@ void App::drawPathWindow() {
                        "camera, lighting, colors and every slider are interpolated.");
     auto& keys = camPath.keys;
     int remove = -1, up = -1;
-    if (ImGui::BeginTable("keys", 5, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingFixedFit,
+    if (ImGui::BeginTable("keys", 6, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingFixedFit,
                           ImVec2(0, fs_ * 10))) {
         ImGui::TableSetupColumn("#");
         ImGui::TableSetupColumn("View", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn("Seconds");
+        ImGui::TableSetupColumn("Ease");
         ImGui::TableSetupColumn("");
         ImGui::TableSetupColumn("");
         ImGui::TableHeadersRow();
@@ -913,6 +921,11 @@ void App::drawPathWindow() {
             ImGui::SetNextItemWidth(fs_ * 4);
             if (i + 1 < (int)keys.size()) ImGui::DragFloat("##d", &keys[i].duration, 0.05f, 0.1f, 600.0f, "%.1f");
             else ImGui::TextDisabled("end");
+            ImGui::TableNextColumn();
+            if (i + 1 < (int)keys.size()) {
+                ImGui::Checkbox("##ease", &keys[i].ease);
+                ImGui::SetItemTooltip("Slow down into and out of this segment. Off: a constant pace that flows through the keyframes.");
+            }
             ImGui::TableNextColumn();
             if (ImGui::SmallButton("set")) {
                 keys[i].par = parText();
@@ -1362,14 +1375,25 @@ void App::drawHud() {
         } else {
             float sx = (float)fbW / std::max(winW, 1), sy = (float)fbH / std::max(winH, 1);
             double ps = view.cs.height / fbH;
-            char where[96] = "cursor -";
+            std::string where = "cursor -";
             if (ImGui::IsMousePosValid()) {
-                double px = view.cs.cx + (io.MousePos.x * sx - fbW * 0.5) * ps, py = view.cs.cy + (fbH * 0.5 - io.MousePos.y * sy) * ps;
-                snprintf(where, sizeof where, "cursor %.12f %+.12fi", px, py);
+                double ox = (io.MousePos.x * sx - fbW * 0.5) * ps, oy = (fbH * 0.5 - io.MousePos.y * sy) * ps;
+                int bits = hp::bitsForPixel(ps);
+                if (bits > 64) {  // past double precision: from the exact center, to as many digits as the pixels need
+                    syncCenter();
+                    int digits = hp::digitsForPixel(ps);
+                    std::string re = hp::round(hp::add(view.hpRe, ox, bits), digits), im = hp::round(hp::add(view.hpIm, oy, bits), digits);
+                    where = "cursor " + re + (im[0] == '-' ? " " : " +") + im + "i";
+                } else {
+                    char b[96];
+                    snprintf(b, sizeof b, "cursor %.12f %+.12fi", view.cs.cx + ox, view.cs.cy + oy);
+                    where = b;
+                }
             }
+            if (where.size() > 120) where = where.substr(0, 117) + "...";  // (the full center is in the Classic 2D panel)
             const char* prec = rend.classicUsesDeep(view.cs, fbH) ? (refPending ? "deep zoom (computing reference...)" : "deep zoom")
                                : rend.classicUsesFp64(view.cs, fbH) ? "fp64" : "fp32";
-            ImGui::Text("%s  |  zoom %.4gx  |  %d iter  |  %s", where, 3.0 / view.cs.height, view.cs.maxIter, prec);
+            ImGui::Text("%s  |  zoom %.4gx  |  %d iter  |  %s", where.c_str(), 3.0 / view.cs.height, view.cs.maxIter, prec);
             ImGui::TextDisabled("F1 help  |  Tab hide UI  |  O orbits  |  C color cycling  |  M 3D mode");
         }
     }
@@ -1555,6 +1579,14 @@ void App::drawOrbitOverlay() {
     if (io.WantCaptureMouse || !ImGui::IsMousePosValid()) return;
     if (view.cs.formula == kCustomFormula) return;  // user formulas only exist as GPU code
     float sx = (float)fbW / std::max(winW, 1), sy = (float)fbH / std::max(winH, 1);
+    if (hp::bitsForPixel(view.cs.height / std::max(fbH, 1)) > 64) {  // the orbit viewer computes in doubles
+        const char* msg = "orbits: too deep for double precision here";
+        ImVec2 m(io.MousePos.x + 16, io.MousePos.y + 12), ts = ImGui::CalcTextSize(msg);
+        ImDrawList* dl = ImGui::GetForegroundDrawList();
+        dl->AddRectFilled(ImVec2(m.x - 4, m.y - 2), ImVec2(m.x + ts.x + 4, m.y + ts.y + 2), IM_COL32(0, 0, 0, 170), 4.0f);
+        dl->AddText(m, IM_COL32(255, 255, 255, 255), msg);
+        return;
+    }
     double ps = view.cs.height / fbH;
     double px = view.cs.cx + (io.MousePos.x * sx - fbW * 0.5) * ps, py = view.cs.cy + (fbH * 0.5 - io.MousePos.y * sy) * ps;
     std::vector<std::complex<double>> pts;

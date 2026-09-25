@@ -78,6 +78,18 @@ std::string lerp(const std::string& a, const std::string& b, double w, int bits)
     return str(x, bits);
 }
 
+std::string round(const std::string& a, int digits) {
+    F x(std::clamp((int)(digits * 3.33) + 16, 64, 8192));
+    if (!set(x, a)) return a;
+    char* out = nullptr;
+    mpfr_asprintf(&out, "%.*Rg", std::clamp(digits, 1, 2000), x.v);
+    std::string s = out ? out : a;
+    mpfr_free_str(out);
+    return s;
+}
+
+int digitsForPixel(double pixelSize) { return std::clamp((int)std::ceil(-std::log10(std::max(pixelSize, 1e-300))) + 2, 6, 400); }
+
 }  // namespace hp
 
 // ------------------------------------------------------------------ worker
