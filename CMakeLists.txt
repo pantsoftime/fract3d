@@ -39,6 +39,7 @@ add_executable(fract3d
   src/sanitize.cpp
   src/bluenoise.cpp
   src/formula.cpp
+  src/fractint_par.cpp
   src/pngmeta.cpp
   src/animation.cpp
   src/deepzoom.cpp)
@@ -117,13 +118,34 @@ if(FRACT3D_TESTS)
                      -DSIZE=160x90 -DSAMPLES=4 -P ${CMAKE_SOURCE_DIR}/tests/par_roundtrip.cmake)
   endforeach()
 
-  # malformed or hostile PAR files must load safely (the render may fall back)
+  # malformed or hostile PAR files must be handled safely: repaired and rendered, or
+  # refused with exit code 1 - never a crash
   file(GLOB HOSTILE_FILES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/tests/hostile/*.par)
   foreach(p ${HOSTILE_FILES})
     get_filename_component(name ${p} NAME_WE)
     add_test(NAME hostile.${name}
-             COMMAND fract3d --par ${p} --render ${TEST_OUT}/hostile-${name}.png --size 64x36 --samples 1)
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:fract3d>
+                     "-DARGS=--par;${p};--render;${TEST_OUT}/hostile-${name}.png;--size;64x36;--samples;1"
+                     -P ${CMAKE_SOURCE_DIR}/tests/no_crash.cmake)
   endforeach()
+
+  # Fractint .PAR import: every supported sample entry renders; an unsupported one fails
+  # with a clear message; the chooser window draws; an import survives a round trip
+  foreach(entry Blue_Classic Seahorse_Rainbow Dragon_Julia Spider_Formula)
+    add_test(NAME fractint.render-${entry}
+             COMMAND fract3d --par ${CMAKE_SOURCE_DIR}/tests/fractint/sample.par --par-entry ${entry}
+                     --render ${TEST_OUT}/fractint-${entry}.png --size 160x90)
+  endforeach()
+  add_test(NAME fractint.unsupported-type
+           COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:fract3d>
+                   "-DARGS=--par;${CMAKE_SOURCE_DIR}/tests/fractint/sample.par;--par-entry;Not_Supported;--render;${TEST_OUT}/fractint-bad.png;--size;64x36"
+                   "-DEXPECT=type 'lsystem' isn't supported" -P ${CMAKE_SOURCE_DIR}/tests/expect_failure.cmake)
+  add_test(NAME ui.fractint-import COMMAND fract3d --par ${CMAKE_SOURCE_DIR}/tests/fractint/sample.par
+                                           --ui-shot ${TEST_OUT}/ui-fractint.png --size 1600x900 --frames 20)
+  add_test(NAME roundtrip.fractint-import
+           COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:fract3d> -DDIFF=$<TARGET_FILE:imgdiff>
+                   -DPAR=${CMAKE_SOURCE_DIR}/tests/fractint/sample.par -DOUT=${TEST_OUT} -DNAME=roundtrip-fractint
+                   -DSIZE=160x90 -DSAMPLES=1 -P ${CMAKE_SOURCE_DIR}/tests/par_roundtrip.cmake)
 
   # app logic that normally needs input: undo/redo, PAR round trips, sanitizing
   add_test(NAME app.self-test COMMAND fract3d --self-test)
@@ -132,6 +154,11 @@ if(FRACT3D_TESTS)
   # checked against the interpreter
   add_executable(formula_test tests/formula_test.cpp src/formula.cpp)
   target_include_directories(formula_test PRIVATE src)
+  add_executable(fractint_test tests/fractint_test.cpp src/fractint_par.cpp src/palettes.cpp src/gl_util.cpp)
+  target_include_directories(fractint_test PRIVATE src)
+  target_link_libraries(fractint_test PRIVATE PkgConfig::EPOXY)
+  add_test(NAME fractint.unit COMMAND fractint_test ${CMAKE_SOURCE_DIR}/tests/fractint/sample.par)
+  set_tests_properties(fractint.unit PROPERTIES LABELS nogpu)
   add_test(NAME formula.unit COMMAND formula_test ${CMAKE_SOURCE_DIR}/formulas/classics.frm)
   set_tests_properties(formula.unit PROPERTIES LABELS nogpu)  # runs in CI (no GPU there)
   file(STRINGS ${CMAKE_SOURCE_DIR}/formulas/classics.frm FRM_HEADERS REGEX "^[A-Za-z0-9_]+ *[({]")

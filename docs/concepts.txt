@@ -81,6 +81,7 @@ Path-traced mode simulates light physically. Each sample bounces rays around the
 * 1989: Hart, Sandin and Kauffman ray trace quaternion Julia sets using distance estimation.
 * 2009 to 2011: fractalforums.com users find the Mandelbulb, Mandelbox, KIFS and pseudo-Kleinian fractals. GPU shaders make 3D fractals interactive.
 * Today: a single GPU does more fractal math in a second than every 1990 PC running Fractint could do in a day.
+* Fractint's PAR files were how people shared discoveries on bulletin boards and CompuServe: a few lines of text instead of a picture that took a megabyte. Many old collections are still around; drop one onto this window and choose a view to see it again.
 
 @@ Make your own fractal
 Every 3D fractal in this app is a plain text file in the fractals/ folder (Help > Open the fractals folder). A file needs:

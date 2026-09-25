@@ -149,8 +149,14 @@ bool App::init(const CliOptions& opts) {
         if (ok && loadParText(last, "last session", true)) toast("Welcome back - restored your last view", 3);
     }
     recordHistoryNow();  // the starting view is the first history entry
-    if (!session.cli.parFile.empty() && !loadPar(session.cli.parFile))
+    if (!session.cli.parFile.empty() && !loadPar(session.cli.parFile)) {
         fprintf(stderr, "fract3d: could not load %s\n", session.cli.parFile.c_str());
+        if (!session.cli.shotPath.empty()) {  // an offline render of the wrong view would be worse than none
+            exitCode = 1;
+            quit = true;
+            return true;
+        }
+    }
     if (session.cli.mode2d) view.mode = ViewMode::Classic2D;
     if (!session.cli.formula.empty()) {
         view.mode = ViewMode::Classic2D;
@@ -400,7 +406,7 @@ void App::openDroppedFile(const fs::path& p) {
         applyPalette();
         toast("Palette " + pal.name + " loaded", 3);
     } else {
-        toast("Drop a PNG screenshot, .par, .frm or .map file", 3);
+        toast("Drop a PNG screenshot, a .par (Fract3D's or Fractint's), .frm or .map file", 3);
     }
 }
 

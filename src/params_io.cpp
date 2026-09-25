@@ -1,6 +1,7 @@
 // PAR files: human-readable "key = value" snapshots of a whole view, named after
 // Fractint's .PAR parameter files. Every screenshot writes one next to the PNG.
 #include "app.h"
+#include "fractint_par.h"
 #include "pngmeta.h"
 #include "sanitize.h"
 #include "settings.h"
@@ -117,7 +118,38 @@ bool App::loadPar(const fs::path& path) {
     }
     bool ok = false;
     std::string text = readTextFile(path.string(), &ok);
-    return ok && loadParText(text, path.filename().string(), false);
+    if (!ok) return false;
+    // Fractint's own PAR files hold named entries: import one, or let the user pick
+    auto entries = parseFractintPar(text);
+    if (!entries.empty()) {
+        if (entries.size() == 1 || !session.cli.parEntry.empty() || !session.cli.shotPath.empty()) {
+            const FractintEntry* e = &entries.front();
+            for (auto& x : entries)
+                if (x.name == session.cli.parEntry) e = &x;
+            return importFractint(*e);
+        }
+        ui.fractintEntries = entries;
+        ui.fractintFile = path.filename().string();
+        ui.fractintWarnings.clear();
+        ui.showFractintImport = true;
+        return true;
+    }
+    return loadParText(text, path.filename().string(), false);
+}
+
+bool App::importFractint(const FractintEntry& e) {
+    FractintImport imp = convertFractintEntry(e);
+    ui.fractintWarnings = imp.warnings;
+    ui.fractintLast = e.name;
+    if (!imp.ok) {
+        ui.fractintWarnings = {imp.error};
+        toast(e.name + ": " + imp.error, 6);
+        return false;
+    }
+    if (!loadParText(imp.par, e.name, false)) return false;
+    for (auto& w : imp.warnings) printf("fract3d: %s: %s\n", e.name.c_str(), w.c_str());
+    if (!imp.warnings.empty()) toast(e.name + ": imported, but " + imp.warnings.front() + (imp.warnings.size() > 1 ? " (and more)" : ""), 6);
+    return true;
 }
 
 // Applies PAR text. `quiet` (undo/redo, session restore) skips the toast.
@@ -245,7 +277,7 @@ bool App::loadParText(const std::string& text, const std::string& label, bool qu
                 for (float& c : s.rgb) c = std::isfinite(c) ? std::clamp(c, 0.0f, 1.0f) : 0.5f;
                 g.push_back(s);
             }
-            if (g.size() >= 64) break;
+            if (g.size() >= 256) break;  // (256 stops reproduce any palette exactly: Fractint imports use that)
         }
         if (!g.empty()) view.gradient = g;
     }

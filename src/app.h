@@ -2,6 +2,7 @@
 #include "camera.h"
 #include "deepzoom.h"
 #include "formula.h"
+#include "fractint_par.h"
 #include "fractal_lib.h"
 #include "palettes.h"
 #include "renderer.h"
@@ -23,6 +24,7 @@ struct ImFont;
 
 struct CliOptions {
     std::string parFile;
+    std::string parEntry;  // --par-entry: which entry of a Fractint .PAR file (default: the first)
     std::string fractal;
     std::string shotPath;  // render to this PNG and exit
     int shotW = 0, shotH = 0;
@@ -110,6 +112,11 @@ struct UiState {
     int gradientSel = 0;  // selected stop in the gradient editor
     std::string formulaEdit;  // text in the editor (compiled on request)
     std::string centerEdit[2], centerShown[2];  // the Exact center fields, and the center they were filled from
+    // importing a Fractint .PAR file with several entries
+    bool showFractintImport = false;
+    std::vector<FractintEntry> fractintEntries;
+    std::string fractintFile, fractintLast;
+    std::vector<std::string> fractintWarnings;
 };
 
 class App {
@@ -132,6 +139,7 @@ public:
     std::string parText() const;  // the current view as PAR text
     bool loadPar(const std::filesystem::path& p);
     bool loadParText(const std::string& text, const std::string& label, bool quiet);
+    bool importFractint(const FractintEntry& e);  // one entry of a Fractint .PAR file
     // ---- undo / history (each entry is PAR text: a complete, tested snapshot of the view)
     struct History {
         std::vector<std::pair<std::string, std::string>> entries;  // (label, PAR text)
@@ -199,6 +207,7 @@ private:
     void drawGradientEditor();
     void drawPathWindow();
     void drawFormulaEditor();
+    void drawFractintImport();
     bool paramWidget(Param& p);
 
 public:

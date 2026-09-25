@@ -1,0 +1,25 @@
+; A small collection in Fractint's PAR format, written for Fract3D's import tests.
+
+Blue_Classic       { ; the default Mandelbrot, blue inside
+  reset=2004 type=mandel
+  }
+
+Seahorse_Rainbow   { ; seahorse valley with a hand-made palette
+  reset=2004 type=mandel center-mag=-0.7435669/0.1314023/1500 maxiter=512
+  inside=0 colors=000<30>z00<30>zz0<30>0z0<30>0zz<30>00z<30>z0z<30>zzz<36>000\
+  zzz
+  }
+
+Dragon_Julia       { ; corners instead of center-mag
+  reset=2004 type=julia corners=-1.6/1.6/-1.2/1.2 params=-0.8/0.156
+  maxiter=256 inside=zmag
+  }
+
+Spider_Formula     { ; a formula-file formula, decomposition coloring
+  reset=2004 type=formula formulafile=fractint.frm formulaname=Spider
+  center-mag=-0.3/0/1/1/15 params=0.1/0.2 maxiter=200 outside=atan decomp=2
+  }
+
+Not_Supported      {
+  reset=2004 type=lsystem
+  }

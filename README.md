@@ -53,6 +53,8 @@ Mandelbulb, Mandelbox, Menger sponge, Sierpinski tetrahedron, Kaleidoscopic IFS,
 
 Every slider has a tooltip explaining what it does.
 
+**Fractint's own files.** Drop a Fractint `.PAR` collection on the window (or `--par file.par --par-entry Name`) and pick a view: the formula, view, iterations, bailout, inside/outside coloring and the encoded palette are carried over, and whatever can't be (rotated views, exotic coloring modes) is listed rather than silently dropped. Fractint `.frm` formula files and `.MAP` palettes load too.
+
 **Nostalgia.** A "Fractint (DOS blue)" UI theme, a retro filter (VGA 256 or EGA 16 colors with ordered dithering, chunky pixels, scanlines), Fractint `.MAP` palette files, a gradient palette editor, and `.par` parameter files.
 
 **Rendering.** Samples come from Owen-scrambled Sobol sequences with a blue-noise shift, so path-traced images converge about twice as fast and look clean early. Shaders compile in parallel in the background, and the app sleeps once an image is finished.
@@ -94,7 +96,7 @@ Every slider has a tooltip explaining what it does.
 | F12 | screenshot to ~/Pictures/fract3d (the view is stored inside the PNG) |
 | Ctrl+S | save view as .par |
 | Ctrl+Z / Ctrl+Y | undo / redo (Edit menu: history) |
-| Drag & drop | a screenshot PNG, .par, .frm or .map file onto the window |
+| Drag & drop | a screenshot PNG, .par (Fract3D or Fractint), .frm or .map file onto the window |
 
 A gamepad works too: sticks fly and look, triggers go down/up (F1 lists it all).
 

@@ -232,6 +232,7 @@ void App::drawUI() {
     if (ui.showDemo) ImGui::ShowDemoWindow(&ui.showDemo);
     if (ui.showFormulaEditor) drawFormulaEditor();
     if (ui.showGradientEditor) drawGradientEditor();
+    if (ui.showFractintImport) drawFractintImport();
     if (ui.showPathWindow || video.active || video.finishing) drawPathWindow();
     drawToast();
 }
@@ -1037,7 +1038,7 @@ void App::drawGradientEditor() {
         dl->AddRectFilled(ImVec2(o.x + w * i / 256, o.y), ImVec2(o.x + w * (i + 1) / 256 + 1, o.y + h),
                           IM_COL32(pal.rgba[i * 4], pal.rgba[i * 4 + 1], pal.rgba[i * 4 + 2], 255));
     ImGui::InvisibleButton("bar", ImVec2(w, h));
-    if (ImGui::IsItemClicked(0) && stops.size() < 64) {
+    if (ImGui::IsItemClicked(0) && stops.size() < 256) {
         float t = (ImGui::GetIO().MousePos.x - o.x) / w;
         int k = std::clamp((int)(t * 256), 0, 255);
         stops.push_back({t, {pal.rgba[k * 4] / 255.0f, pal.rgba[k * 4 + 1] / 255.0f, pal.rgba[k * 4 + 2] / 255.0f}});
@@ -1106,6 +1107,44 @@ void App::drawGradientEditor() {
         view.rs.palette = gradientPaletteIdx;
         applyPalette();
     }
+    ImGui::End();
+}
+
+// ------------------------------------------------------------------ Fractint PAR import
+void App::drawFractintImport() {
+    float fs_ = ImGui::GetFontSize();
+    ImGui::SetNextWindowSize(ImVec2(fs_ * 30, fs_ * 26), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f, fs_ * 3.0f), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.0f));
+    std::string title = "Fractint PAR: " + ui.fractintFile + "###fractintimport";
+    if (!ImGui::Begin(title.c_str(), &ui.showFractintImport)) {
+        ImGui::End();
+        return;
+    }
+    ImGui::TextWrapped("%d views from a Fractint parameter file. Click one to open it; Ctrl+S saves it as a Fract3D view.",
+                       (int)ui.fractintEntries.size());
+    if (!ui.fractintWarnings.empty()) {
+        ImGui::SeparatorText(("Imported " + ui.fractintLast + ", but:").c_str());
+        for (auto& w : ui.fractintWarnings) ImGui::BulletText("%s", w.c_str());
+    }
+    ImGui::Separator();
+    ImGui::BeginChild("entries");
+    for (size_t i = 0; i < ui.fractintEntries.size(); i++) {
+        const auto& e = ui.fractintEntries[i];
+        ImGui::PushID((int)i);
+        auto type = e.keys.find("type");
+        std::string label = e.name + "  (" + (type != e.keys.end() ? type->second : std::string("mandel")) + ")";
+        if (ImGui::Selectable(label.c_str(), e.name == ui.fractintLast)) {
+            importFractint(e);
+            std::snprintf(ui.parName, sizeof ui.parName, "%s", e.name.c_str());
+        }
+        if (!e.comment.empty()) {
+            ImGui::Indent();
+            ImGui::TextDisabled("%s", e.comment.c_str());
+            ImGui::Unindent();
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
     ImGui::End();
 }
 

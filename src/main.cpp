@@ -10,7 +10,8 @@ static void usage() {
         "fract3d - a 3D fractal explorer in the spirit of Fractint\n\n"
         "usage: fract3d [options] [file.par]\n"
         "  --fractal KEY        start on a fractal (mandelbulb, mandelbox, menger, ...)\n"
-        "  --par FILE           load a saved view (.par, or a PNG saved by Fract3D)\n"
+        "  --par FILE           load a saved view (.par, or a PNG saved by Fract3D), or import a Fractint .PAR\n"
+        "  --par-entry NAME     which entry of a Fractint .PAR file (default: the first)\n"
         "  --2d                 start in Classic 2D mode\n"
         "  --pt / --rt          path traced / real-time rendering\n"
         "  --render OUT.png     render an image and exit (no window shown)\n"
@@ -40,6 +41,7 @@ int main(int argc, char** argv) {
         if (a == "-h" || a == "--help") { usage(); return 0; }
         else if (a == "--fractal") o.fractal = next();
         else if (a == "--par") o.parFile = next();
+        else if (a == "--par-entry") o.parEntry = next();
         else if (a == "--2d") o.mode2d = 1;
         else if (a == "--pt") o.pathTrace = 1;
         else if (a == "--rt") o.pathTrace = 0;
