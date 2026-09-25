@@ -44,14 +44,14 @@ static fs::path homeDir() {
 
 // ------------------------------------------------------------------ init
 bool App::init(const CliOptions& opts) {
-    cli = opts;
-    dataDir = findDataDir();
+    session.cli = opts;
+    session.dataDir = findDataDir();
     const char* xdg = std::getenv("XDG_CONFIG_HOME");
-    userDir = (xdg && *xdg ? fs::path(xdg) : homeDir() / ".config") / "fract3d";
-    picturesDir = homeDir() / "Pictures" / "fract3d";
+    session.userDir = (xdg && *xdg ? fs::path(xdg) : homeDir() / ".config") / "fract3d";
+    session.picturesDir = homeDir() / "Pictures" / "fract3d";
     std::error_code ec;
-    fs::create_directories(userDir / "params", ec);
-    fs::create_directories(userDir / "palettes", ec);
+    fs::create_directories(session.userDir / "params", ec);
+    fs::create_directories(session.userDir / "palettes", ec);
 
     glfwSetErrorCallback([](int code, const char* msg) { fprintf(stderr, "glfw error %d: %s\n", code, msg); });
     if (!glfwInit()) return false;
@@ -60,40 +60,39 @@ bool App::init(const CliOptions& opts) {
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);
 #ifndef NDEBUG
-    cli.glDebug = true;  // debug builds always report GL errors
+    session.cli.glDebug = true;  // debug builds always report GL errors
 #endif
-    if (cli.glDebug) glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
-    if (cli.hidden) glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-    int ww = cli.hidden && cli.shotW ? cli.shotW : 1600, wh = cli.hidden && cli.shotH ? cli.shotH : 900;
+    if (session.cli.glDebug) glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
+    if (session.cli.hidden) glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    int ww = session.cli.hidden && session.cli.shotW ? session.cli.shotW : 1600, wh = session.cli.hidden && session.cli.shotH ? session.cli.shotH : 900;
     win = glfwCreateWindow(ww, wh, "Fract3D", nullptr, nullptr);
     if (!win) {
         fprintf(stderr, "fract3d: could not create an OpenGL 4.6 window\n");
         return false;
     }
-    glfwSetWindowUserPointer(win, this);
     glfwMakeContextCurrent(win);
     glfwSwapInterval(1);
     glfwGetFramebufferSize(win, &fbW, &fbH);
     glfwGetWindowSize(win, &winW, &winH);
 
     printf("fract3d: %s | %s\n", (const char*)glGetString(GL_RENDERER), (const char*)glGetString(GL_VERSION));
-    printf("fract3d: data from %s\n", dataDir.c_str());
-    if (cli.glDebug) installGlDebugOutput(cli.glDebugVerbose);
+    printf("fract3d: data from %s\n", session.dataDir.c_str());
+    if (session.cli.glDebug) installGlDebugOutput(session.cli.glDebugVerbose);
 
     std::string err;
-    if (!rend.init(dataDir, err)) {
+    if (!rend.init(session.dataDir, err)) {
         fprintf(stderr, "fract3d: shader setup failed:\n%s\n", err.c_str());
         return false;
     }
-    lib_.load(dataDir / "fractals");
+    lib_.load(session.dataDir / "fractals");
     if (lib_.all().empty()) {
-        fprintf(stderr, "fract3d: no fractals found in %s/fractals\n", dataDir.c_str());
+        fprintf(stderr, "fract3d: no fractals found in %s/fractals\n", session.dataDir.c_str());
         return false;
     }
     rend.warmUp(lib_.all());  // start compiling every fractal in the background
 
     palettes = builtinPalettes();
-    for (auto dir : {dataDir / "palettes", userDir / "palettes"}) {
+    for (auto dir : {session.dataDir / "palettes", session.userDir / "palettes"}) {
         std::vector<fs::path> maps;
         for (auto& e : fs::directory_iterator(dir, ec))
             if (e.path().extension() == ".map") maps.push_back(e.path());
@@ -107,36 +106,36 @@ bool App::init(const CliOptions& opts) {
         }
     }
     customPaletteIdx = (int)palettes.size();
-    palettes.push_back(makeCosinePalette("Custom (cosine editor)", customCosine));
+    palettes.push_back(makeCosinePalette("Custom (cosine editor)", view.cosine));
 
-    conceptsText = readTextFile((dataDir / "docs/concepts.txt").string());
+    refreshDocs();
 
     loadPrefs();
-    if (cli.theme >= 0) uiTheme = cli.theme;
+    if (session.cli.theme >= 0) session.uiTheme = session.cli.theme;
     setupImGui();
 
-    int idx = cli.fractal.empty() ? 0 : std::max(lib_.indexOf(cli.fractal), 0);
+    int idx = session.cli.fractal.empty() ? 0 : std::max(lib_.indexOf(session.cli.fractal), 0);
     selectFractal(idx, true);
-    if (!cli.parFile.empty() && !loadPar(cli.parFile))
-        fprintf(stderr, "fract3d: could not load %s\n", cli.parFile.c_str());
-    if (cli.mode2d) mode = ViewMode::Classic2D;
-    if (cli.pathTrace >= 0) rs.renderMode = cli.pathTrace;
-    sanitize(rs);
-    sanitize(cs);
+    if (!session.cli.parFile.empty() && !loadPar(session.cli.parFile))
+        fprintf(stderr, "fract3d: could not load %s\n", session.cli.parFile.c_str());
+    if (session.cli.mode2d) view.mode = ViewMode::Classic2D;
+    if (session.cli.pathTrace >= 0) view.rs.renderMode = session.cli.pathTrace;
+    sanitize(view.rs);
+    sanitize(view.cs);
     applyPalette();
 
-    if (!cli.shotPath.empty()) {
-        int w = cli.shotW ? cli.shotW : fbW, h = cli.shotH ? cli.shotH : fbH;
-        int s = cli.shotSamples ? cli.shotSamples : (rs.renderMode ? 256 : 32);
+    if (!session.cli.shotPath.empty()) {
+        int w = session.cli.shotW ? session.cli.shotW : fbW, h = session.cli.shotH ? session.cli.shotH : fbH;
+        int s = session.cli.shotSamples ? session.cli.shotSamples : (view.rs.renderMode ? 256 : 32);
         startPoster(w, h, s);
-        poster.path = cli.shotPath;
+        poster.path = session.cli.shotPath;
     }
     lastFrameTime = glfwGetTime();
     return true;
 }
 
 void App::shutdown() {
-    if (!cli.hidden) savePrefs();
+    if (!session.cli.hidden) savePrefs();
     poster.target.release();
     rend.shutdown();
     ImGui_ImplOpenGL3_Shutdown();
@@ -151,37 +150,70 @@ int App::run() {
     return 0;
 }
 
+// ------------------------------------------------------------------ Learn-panel docs
+// Docs and presets are data files like the shaders: edits show up without a restart.
+void App::refreshDocs() {
+    std::error_code ec;
+    fs::path docs = session.dataDir / "docs", presets = session.dataDir / "presets";
+    auto newest = [&](const fs::path& dir) {
+        fs::file_time_type t = fs::last_write_time(dir, ec);  // changes when files are added/removed
+        for (auto& e : fs::directory_iterator(dir, ec)) t = std::max(t, fs::last_write_time(e.path(), ec));
+        return t;
+    };
+    fs::file_time_type dt = newest(docs), pt = newest(presets);
+    if (dt != ui.docsTime) {
+        ui.docsTime = dt;
+        ui.conceptsText = readTextFile((docs / "concepts.txt").string());
+        ui.classicText = readTextFile((docs / "classic.txt").string());
+    }
+    if (pt != ui.presetsTime) {
+        ui.presetsTime = pt;
+        std::vector<fs::path> files;
+        for (auto& e : fs::directory_iterator(presets, ec))
+            if (e.path().extension() == ".par") files.push_back(e.path());
+        std::sort(files.begin(), files.end());
+        ui.tourStops.clear();
+        for (auto& f : files) {
+            std::string first;
+            std::istringstream is(readTextFile(f.string()));
+            std::getline(is, first);
+            size_t s = first.find_first_not_of("; ");
+            ui.tourStops.push_back({f, first.rfind(";", 0) == 0 && s != std::string::npos ? first.substr(s) : ""});
+        }
+    }
+}
+
 // ------------------------------------------------------------------ preferences
 // UI preferences (not part of a view, so not in PAR files).
 void App::loadPrefs() {
-    std::istringstream is(readTextFile((userDir / "prefs.ini").string()));
+    std::istringstream is(readTextFile((session.userDir / "prefs.ini").string()));
     std::string line;
     while (std::getline(is, line)) {
         size_t e = line.find('=');
         if (e == std::string::npos) continue;
         std::string k = line.substr(0, e);
         float v = std::strtof(line.c_str() + e + 1, nullptr);
-        if (k == "theme") uiTheme = (int)v;
-        else if (k == "uiScale") uiScale = std::clamp(v, 0.5f, 3.0f);
-        else if (k == "showLearn") showLearn = v != 0;
-        else if (k == "flySpeed") flySpeed = std::isfinite(v) ? std::clamp(v, 0.01f, 100.0f) : 1.5f;
-        else if (k == "keepLighting") keepLighting = v != 0;
-        else if (k == "fullscreenMonitor") fullscreenMonitor = line.substr(e + 1);
+        if (k == "theme") session.uiTheme = (int)v;
+        else if (k == "uiScale") session.uiScale = std::clamp(v, 0.5f, 3.0f);
+        else if (k == "showLearn") session.showLearn = v != 0;
+        else if (k == "flySpeed") session.flySpeed = std::isfinite(v) ? std::clamp(v, 0.01f, 100.0f) : 1.5f;
+        else if (k == "keepLighting") session.keepLighting = v != 0;
+        else if (k == "fullscreenMonitor") session.fullscreenMonitor = line.substr(e + 1);
         else
-            visitRender(rs, [&](const char* name, const char*, auto* ptr, int, unsigned flags) {
+            visitRender(view.rs, [&](const char* name, const char*, auto* ptr, int, unsigned flags) {
                 if ((flags & kPerf) && k == name) *ptr = static_cast<std::remove_reference_t<decltype(*ptr)>>(v);
             });
     }
-    if (uiTheme != 0 && uiTheme != 1) uiTheme = 0;
-    if (!std::isfinite(uiScale)) uiScale = 1.0f;
+    if (session.uiTheme != 0 && session.uiTheme != 1) session.uiTheme = 0;
+    if (!std::isfinite(session.uiScale)) session.uiScale = 1.0f;
 }
 
 void App::savePrefs() {
-    FILE* f = fopen((userDir / "prefs.ini").c_str(), "w");
+    FILE* f = fopen((session.userDir / "prefs.ini").c_str(), "w");
     if (!f) return;
-    fprintf(f, "theme=%d\nuiScale=%g\nshowLearn=%d\nflySpeed=%g\nkeepLighting=%d\nfullscreenMonitor=%s\n", uiTheme,
-            uiScale, (int)showLearn, flySpeed, (int)keepLighting, fullscreenMonitor.c_str());
-    visitRender(rs, [&](const char* name, const char*, auto* ptr, int, unsigned flags) {
+    fprintf(f, "theme=%d\nuiScale=%g\nshowLearn=%d\nflySpeed=%g\nkeepLighting=%d\nfullscreenMonitor=%s\n", session.uiTheme,
+            session.uiScale, (int)session.showLearn, session.flySpeed, (int)session.keepLighting, session.fullscreenMonitor.c_str());
+    visitRender(view.rs, [&](const char* name, const char*, auto* ptr, int, unsigned flags) {
         if (flags & kPerf) fprintf(f, "%s=%g\n", name, (double)*ptr);
     });
     fclose(f);
@@ -189,26 +221,26 @@ void App::savePrefs() {
 
 // ------------------------------------------------------------------ helpers
 void App::toast(const std::string& msg, float seconds) {
-    toastMsg = msg;
-    toastUntil = glfwGetTime() + seconds;
+    ui.toastMsg = msg;
+    ui.toastUntil = glfwGetTime() + seconds;
     printf("fract3d: %s\n", msg.c_str());
 }
 
 void App::applyPalette() {
-    rs.palette = std::clamp(rs.palette, 0, (int)palettes.size() - 1);
-    if (rs.palette == customPaletteIdx)
-        palettes[customPaletteIdx] = makeCosinePalette("Custom (cosine editor)", customCosine);
-    rend.setPalette(palettes[rs.palette]);
+    view.rs.palette = std::clamp(view.rs.palette, 0, (int)palettes.size() - 1);
+    if (view.rs.palette == customPaletteIdx)
+        palettes[customPaletteIdx] = makeCosinePalette("Custom (cosine editor)", view.cosine);
+    rend.setPalette(palettes[view.rs.palette]);
     paletteVersion++;
 }
 
 void App::selectFractal(int idx, bool reset) {
-    current_ = std::clamp(idx, 0, (int)lib_.all().size() - 1);
+    view.fractal = std::clamp(idx, 0, (int)lib_.all().size() - 1);
     Fractal& f = fractal();
-    rs.stepFactor = f.hints.stepFactor;
-    rs.detail = f.hints.detail;
-    rs.maxSteps = f.hints.maxSteps;
-    rs.maxDist = f.hints.maxDist;
+    view.rs.stepFactor = f.hints.stepFactor;
+    view.rs.detail = f.hints.detail;
+    view.rs.maxSteps = f.hints.maxSteps;
+    view.rs.maxDist = f.hints.maxDist;
     if (reset) {
         resetView();
         applyLook(f);
@@ -222,9 +254,9 @@ void App::applyLook(const Fractal& f) {
     const unsigned mask = kLook;
     RenderSettings defaults;
     // copy defaults for every look field, except lighting fields when they're kept
-    visitRender(rs, [&](const char*, const char*, auto* ptr, int n, unsigned flags) {
-        if (!(flags & mask) || (keepLighting && (flags & kLighting))) return;
-        size_t off = reinterpret_cast<const char*>(ptr) - reinterpret_cast<const char*>(&rs);
+    visitRender(view.rs, [&](const char*, const char*, auto* ptr, int n, unsigned flags) {
+        if (!(flags & mask) || (session.keepLighting && (flags & kLighting))) return;
+        size_t off = reinterpret_cast<const char*>(ptr) - reinterpret_cast<const char*>(&view.rs);
         std::memcpy(ptr, reinterpret_cast<const char*>(&defaults) + off, sizeof(*ptr) * n);
     });
     int pal = 0;
@@ -235,10 +267,10 @@ void App::applyLook(const Fractal& f) {
             continue;
         }
         bool known = false;
-        visitRender(rs, [&](const char* name, const char* alias, auto* ptr, int n, unsigned flags) {
+        visitRender(view.rs, [&](const char* name, const char* alias, auto* ptr, int n, unsigned flags) {
             if (!(flags & kLook) || (k != name && !(alias && k == alias))) return;
             known = true;
-            if (keepLighting && (flags & kLighting)) return;
+            if (session.keepLighting && (flags & kLighting)) return;
             std::string vals = v;
             std::replace(vals.begin(), vals.end(), ',', ' ');
             std::istringstream is(vals);
@@ -250,14 +282,14 @@ void App::applyLook(const Fractal& f) {
         });
         if (!known) fprintf(stderr, "fract3d: %s: unknown @look key '%s'\n", f.path.filename().c_str(), k.c_str());
     }
-    rs.palette = pal;
-    sanitize(rs);
+    view.rs.palette = pal;
+    sanitize(view.rs);
     applyPalette();
 }
 
 void App::resetView() {
     Fractal& f = fractal();
-    cam.lookAt(Vec3(f.camPos[0], f.camPos[1], f.camPos[2]), Vec3(f.camTarget[0], f.camTarget[1], f.camTarget[2]));
+    view.cam.lookAt(Vec3(f.camPos[0], f.camPos[1], f.camPos[2]), Vec3(f.camTarget[0], f.camTarget[1], f.camTarget[2]));
 }
 
 // ------------------------------------------------------------------ fullscreen
@@ -270,7 +302,7 @@ GLFWmonitor* App::pickMonitor() {
     if (n == 0) return nullptr;
     for (int i = 0; i < n; i++) {
         const char* name = glfwGetMonitorName(mons[i]);
-        if (name && fullscreenMonitor == name) return mons[i];
+        if (name && session.fullscreenMonitor == name) return mons[i];
     }
     if (glfwGetPlatform() == GLFW_PLATFORM_WAYLAND) return glfwGetPrimaryMonitor();
     int wx, wy, ww, wh;
@@ -305,7 +337,7 @@ void App::toggleFullscreen() {
 }
 
 void App::setMode(ViewMode m) {
-    mode = m;
+    view.mode = m;
     shownSig2D.clear();
     job2D.active = false;
     lastSig3D.clear();
@@ -334,22 +366,22 @@ void App::frame() {
     ImGui::NewFrame();
 
     handleKeys();
-    if (mode == ViewMode::Fractal3D) input3D(dt);
+    if (view.mode == ViewMode::Fractal3D) input3D(dt);
     else input2D(dt);
     if (camAnim.active) {
         float t = std::min((float)(now - camAnim.start) / 0.45f, 1.0f);
         float s = t * t * (3.0f - 2.0f * t);
         float dyaw = std::remainder(camAnim.yaw1 - camAnim.yaw0, 6.2831853f);  // shortest way round
-        cam.yaw = camAnim.yaw0 + dyaw * s;
-        cam.pitch = camAnim.pitch0 + (camAnim.pitch1 - camAnim.pitch0) * s;
-        cam.distance = camAnim.dist0 * std::pow(camAnim.dist1 / camAnim.dist0, s);
+        view.cam.yaw = camAnim.yaw0 + dyaw * s;
+        view.cam.pitch = camAnim.pitch0 + (camAnim.pitch1 - camAnim.pitch0) * s;
+        view.cam.distance = camAnim.dist0 * std::pow(camAnim.dist1 / camAnim.dist0, s);
         if (t >= 1.0f || dragButton >= 0) camAnim.active = false;
     }
 
-    // live reload of shaders/ and fractals/ (edit a .glsl file and save)
-    static double lastCheck = 0;
-    if (now - lastCheck > 0.5) {
-        lastCheck = now;
+    // live reload of shaders/, fractals/ and the Learn docs (edit a file and save)
+    if (now - lastReloadCheck > 0.5) {
+        lastReloadCheck = now;
+        refreshDocs();
         if (rend.reloadCoreIfChanged()) {
             generation++;
             toast(rend.coreError.empty() ? "Shaders reloaded" : "Shader error - see Fractal tab", 3);
@@ -362,35 +394,35 @@ void App::frame() {
     }
 
     if (!animPaused) animTime += dt;
-    if (rs.cycleSpeed != 0.0f) cycleOffset = std::fmod(cycleOffset + rs.cycleSpeed * dt + 256.0f, 256.0f);
+    if (view.rs.cycleSpeed != 0.0f) cycleOffset = std::fmod(cycleOffset + view.rs.cycleSpeed * dt + 256.0f, 256.0f);
 
     rend.timer.poll();
     if (poster.active) updatePoster();
-    else if (mode == ViewMode::Fractal3D) render3D();
+    else if (view.mode == ViewMode::Fractal3D) render3D();
     else render2D();
-    if (mode == ViewMode::Fractal3D) updateProbe();
+    if (view.mode == ViewMode::Fractal3D) updateProbe();
 
     // present
     GLuint target = 0;
-    if (!cli.uiShotPath.empty()) {
+    if (!session.cli.uiShotPath.empty()) {
         uiShotRT.ensure(fbW, fbH, GL_RGBA8, GL_NEAREST);
         target = uiShotRT.fbo;
     }
-    rend.display(mode, &rend.accum, &rend.index2D, rs, cs, cycleOffset, fbW, fbH, target);
+    rend.display(view.mode, &rend.accum, &rend.index2D, view.rs, view.cs, cycleOffset, fbW, fbH, target);
 
     drawUI();
     ImGui::Render();
     glBindFramebuffer(GL_FRAMEBUFFER, target);
     glViewport(0, 0, fbW, fbH);
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-    if (!cli.uiShotPath.empty() && ++frameCount >= cli.uiShotFrames) {
+    if (!session.cli.uiShotPath.empty() && ++frameCount >= session.cli.uiShotFrames) {
         std::vector<uint8_t> px((size_t)fbW * fbH * 4);
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
         glReadPixels(0, 0, fbW, fbH, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
         for (size_t i = 3; i < px.size(); i += 4) px[i] = 255;
-        writePngRaw(cli.uiShotPath, fbW, fbH, px.data());
+        writePngRaw(session.cli.uiShotPath, fbW, fbH, px.data());
         printf("fract3d: ui-shot: samples=%d scale=%.2f perSampleFull=%.2fms deAtCam=%g centerHitT=%g camDist=%g\n", samples,
-               (float)rend.accum.w / std::max(fbW, 1), perSampleMsFull, deAtCam, centerHitT, cam.distance);
+               (float)rend.accum.w / std::max(fbW, 1), perSampleMsFull, deAtCam, centerHitT, view.cam.distance);
         uiShotRT.release();
         quit = true;
     }
@@ -399,15 +431,15 @@ void App::frame() {
 }
 
 bool App::computeIdle() {
-    if (cli.hidden) return false;  // headless renders and tests run flat out
+    if (session.cli.hidden) return false;  // headless renders and tests run flat out
     if (poster.active || job2D.active || camAnim.active || dragButton >= 0 || flying) return false;
-    if (rs.cycleSpeed != 0.0f || glfwGetTime() < toastUntil) return false;
+    if (view.rs.cycleSpeed != 0.0f || glfwGetTime() < ui.toastUntil) return false;
     if (!animPaused)
         for (auto& p : fractal().params)
             if (p.animate) return false;
-    if (mode == ViewMode::Fractal3D) {
+    if (view.mode == ViewMode::Fractal3D) {
         if (rend.status(fractal()) == Renderer::ProgStatus::Compiling) return false;
-        if (interactive || samples < (rs.renderMode ? rs.maxSamplesPT : rs.maxSamplesRT)) return false;
+        if (interactive || samples < (view.rs.renderMode ? view.rs.maxSamplesPT : view.rs.maxSamplesRT)) return false;
     } else if (interactive) {
         return false;
     }
@@ -421,48 +453,47 @@ void App::handleKeys() {
     auto pressed = [](ImGuiKey k) { return ImGui::IsKeyPressed(k, false); };
     bool ctrl = io.KeyCtrl;
 
-    if (pressed(ImGuiKey_Tab)) showUI = !showUI;
-    if (pressed(ImGuiKey_F1)) showHelp = !showHelp;
+    if (pressed(ImGuiKey_Tab)) ui.showUI = !ui.showUI;
+    if (pressed(ImGuiKey_F1)) ui.showHelp = !ui.showHelp;
     if (pressed(ImGuiKey_F12)) takeScreenshot();
-    if (pressed(ImGuiKey_L)) showLearn = !showLearn;
-    if (pressed(ImGuiKey_M)) setMode(mode == ViewMode::Fractal3D ? ViewMode::Classic2D : ViewMode::Fractal3D);
-    if (pressed(ImGuiKey_Escape) && showHelp) showHelp = false;
+    if (pressed(ImGuiKey_L)) session.showLearn = !session.showLearn;
+    if (pressed(ImGuiKey_M)) setMode(view.mode == ViewMode::Fractal3D ? ViewMode::Classic2D : ViewMode::Fractal3D);
+    if (pressed(ImGuiKey_Escape) && ui.showHelp) ui.showHelp = false;
     if (ctrl && pressed(ImGuiKey_S)) saveNamedPar();
     if (ctrl && pressed(ImGuiKey_Q)) quit = true;
     if (pressed(ImGuiKey_N)) tourStep(io.KeyShift ? -1 : 1);
     if (pressed(ImGuiKey_C) && !ctrl) {  // Fractint's 'c': color cycling
-        static float lastSpeed = 24.0f;
-        if (rs.cycleSpeed != 0.0f) lastSpeed = rs.cycleSpeed, rs.cycleSpeed = 0.0f;
-        else rs.cycleSpeed = lastSpeed;
-        toast(rs.cycleSpeed != 0.0f ? "Color cycling on" : "Color cycling off", 1.2f);
+        if (view.rs.cycleSpeed != 0.0f) lastCycleSpeed = view.rs.cycleSpeed, view.rs.cycleSpeed = 0.0f;
+        else view.rs.cycleSpeed = lastCycleSpeed;
+        toast(view.rs.cycleSpeed != 0.0f ? "Color cycling on" : "Color cycling off", 1.2f);
     }
     if (pressed(ImGuiKey_F11)) toggleFullscreen();
 
-    if (mode == ViewMode::Fractal3D) {
+    if (view.mode == ViewMode::Fractal3D) {
         if (pressed(ImGuiKey_P)) {
-            rs.renderMode = 1 - rs.renderMode;
-            toast(rs.renderMode ? "Path tracing: hold still to refine" : "Real-time rendering", 1.5f);
+            view.rs.renderMode = 1 - view.rs.renderMode;
+            toast(view.rs.renderMode ? "Path tracing: hold still to refine" : "Real-time rendering", 1.5f);
         }
         if (pressed(ImGuiKey_R) && !ctrl) resetView();
         if (pressed(ImGuiKey_Space)) animPaused = !animPaused;
         if (pressed(ImGuiKey_F) && centerHitT > 0) {
-            rs.autoFocus = 0;
-            rs.focusDist = centerHitT;
+            view.rs.autoFocus = 0;
+            view.rs.focusDist = centerHitT;
             toast("Focus set to the surface at screen center", 1.5f);
         }
         for (int k = 0; k < 9; k++)
             if (pressed((ImGuiKey)(ImGuiKey_1 + k)) && k < (int)lib_.all().size()) selectFractal(k, true);
     } else {
-        if (pressed(ImGuiKey_O)) cs.showOrbit = !cs.showOrbit;
-        if (pressed(ImGuiKey_B)) cs.banded = !cs.banded;
+        if (pressed(ImGuiKey_O)) view.cs.showOrbit = !view.cs.showOrbit;
+        if (pressed(ImGuiKey_B)) view.cs.banded = !view.cs.banded;
         if (pressed(ImGuiKey_Home)) {
-            cs.julia = 0;
-            cs.cx = cs.formula == 4 ? 0.0 : -0.6;
-            cs.cy = 0;
-            cs.height = 3.0;
+            view.cs.julia = 0;
+            view.cs.cx = view.cs.formula == 4 ? 0.0 : -0.6;
+            view.cs.cy = 0;
+            view.cs.height = 3.0;
         }
-        if (pressed(ImGuiKey_Equal) || pressed(ImGuiKey_KeypadAdd)) cs.maxIter = std::min(cs.maxIter * 2, kMaxIterations);
-        if (pressed(ImGuiKey_Minus) || pressed(ImGuiKey_KeypadSubtract)) cs.maxIter = std::max(cs.maxIter / 2, 16);
+        if (pressed(ImGuiKey_Equal) || pressed(ImGuiKey_KeypadAdd)) view.cs.maxIter = std::min(view.cs.maxIter * 2, kMaxIterations);
+        if (pressed(ImGuiKey_Minus) || pressed(ImGuiKey_KeypadSubtract)) view.cs.maxIter = std::max(view.cs.maxIter / 2, 16);
     }
 }
 
@@ -485,14 +516,14 @@ void App::input3D(float dt) {
 
     float dx = io.MouseDelta.x, dy = io.MouseDelta.y;
     if (std::abs(dx) > 500 || std::abs(dy) > 500) dx = dy = 0;  // first frame after focus
-    float tanHalf = std::tan(rs.fov * 0.5f * 0.0174533f);
-    if (dragButton == 0 && !io.KeyShift) cam.orbit(dx * 0.006f, -dy * 0.006f);
-    else if (dragButton == 1) cam.look(dx * 0.003f, -dy * 0.003f);
+    float tanHalf = std::tan(view.rs.fov * 0.5f * 0.0174533f);
+    if (dragButton == 0 && !io.KeyShift) view.cam.orbit(dx * 0.006f, -dy * 0.006f);
+    else if (dragButton == 1) view.cam.look(dx * 0.003f, -dy * 0.003f);
     else if (dragButton == 2 || (dragButton == 0 && io.KeyShift)) {
         float s = 2.0f * tanHalf / std::max(winH, 1);
-        cam.pan(-dx * s, dy * s);
+        view.cam.pan(-dx * s, dy * s);
     }
-    if (!overUI && io.MouseWheel != 0.0f) cam.dolly(std::pow(0.88f, io.MouseWheel));
+    if (!overUI && io.MouseWheel != 0.0f) view.cam.dolly(std::pow(0.88f, io.MouseWheel));
 
     // WASD fly: speed follows the distance estimate, so you slow down near surfaces
     flying = false;
@@ -506,12 +537,12 @@ void App::input3D(float dt) {
         if (ImGui::IsKeyDown(ImGuiKey_Q)) d.y -= 1;
         if (d.length() > 0) {
             flying = true;
-            float base = deAtCam > 0 ? deAtCam : cam.distance * 0.01f;
-            base = std::max(base, cam.distance * 1e-4f);
-            float speed = base * flySpeed * (io.KeyShift ? 4.0f : 1.0f);
-            cam.move(d.normalized(), speed * dt);
+            float base = deAtCam > 0 ? deAtCam : view.cam.distance * 0.01f;
+            base = std::max(base, view.cam.distance * 1e-4f);
+            float speed = base * session.flySpeed * (io.KeyShift ? 4.0f : 1.0f);
+            view.cam.move(d.normalized(), speed * dt);
             // keep the orbit target on whatever surface is ahead, so orbiting feels right after flying
-            if (centerHitT > 0) cam.setTargetDistance(cam.distance + (centerHitT - cam.distance) * std::min(dt * 4.0f, 1.0f));
+            if (centerHitT > 0) view.cam.setTargetDistance(view.cam.distance + (centerHitT - view.cam.distance) * std::min(dt * 4.0f, 1.0f));
         }
     }
 }
@@ -521,10 +552,10 @@ void App::input2D(float dt) {
     ImGuiIO& io = ImGui::GetIO();
     bool overUI = io.WantCaptureMouse || !ImGui::IsMousePosValid();
     float sx = (float)fbW / std::max(winW, 1), sy = (float)fbH / std::max(winH, 1);
-    double ps = cs.height / fbH;
+    double ps = view.cs.height / fbH;
     double mx = io.MousePos.x * sx, my = io.MousePos.y * sy;
-    double px = cs.cx + (mx - fbW * 0.5) * ps, py = cs.cy + (fbH * 0.5 - my) * ps;
-    if (!ImGui::IsMousePosValid()) px = cs.cx, py = cs.cy;  // keyboard zoom without a mouse: zoom at center
+    double px = view.cs.cx + (mx - fbW * 0.5) * ps, py = view.cs.cy + (fbH * 0.5 - my) * ps;
+    if (!ImGui::IsMousePosValid()) px = view.cs.cx, py = view.cs.cy;  // keyboard zoom without a mouse: zoom at center
 
     for (int b = 0; b < 3; b++)
         if (ImGui::IsMouseClicked(b) && !overUI && dragButton < 0) {
@@ -533,32 +564,32 @@ void App::input2D(float dt) {
             pressY = io.MousePos.y;
         }
     if (dragButton == 0 || dragButton == 2) {
-        cs.cx -= io.MouseDelta.x * sx * ps;
-        cs.cy += io.MouseDelta.y * sy * ps;
+        view.cs.cx -= io.MouseDelta.x * sx * ps;
+        view.cs.cy += io.MouseDelta.y * sy * ps;
     }
     auto toggleJulia = [&]() {
-        if (cs.formula == 4) {
+        if (view.cs.formula == 4) {
             toast("Newton's method has no Julia/Mandelbrot pair", 2);
             return;
         }
-        if (!cs.julia) {
-            savedMandel[0] = cs.cx;
-            savedMandel[1] = cs.cy;
-            savedMandel[2] = cs.height;
-            cs.jx = px;
-            cs.jy = cs.formula == 1 ? -py : py;
-            cs.julia = 1;
-            cs.cx = 0;
-            cs.cy = 0;
-            cs.height = 3.2;
+        if (!view.cs.julia) {
+            savedMandel[0] = view.cs.cx;
+            savedMandel[1] = view.cs.cy;
+            savedMandel[2] = view.cs.height;
+            view.cs.jx = px;
+            view.cs.jy = view.cs.formula == 1 ? -py : py;
+            view.cs.julia = 1;
+            view.cs.cx = 0;
+            view.cs.cy = 0;
+            view.cs.height = 3.2;
             char buf[128];
-            snprintf(buf, sizeof buf, "Julia set for c = %.6f %+.6fi", cs.jx, cs.jy);
+            snprintf(buf, sizeof buf, "Julia set for c = %.6f %+.6fi", view.cs.jx, view.cs.jy);
             toast(buf);
         } else {
-            cs.julia = 0;
-            cs.cx = savedMandel[0];
-            cs.cy = savedMandel[1];
-            cs.height = savedMandel[2];
+            view.cs.julia = 0;
+            view.cs.cx = savedMandel[0];
+            view.cs.cy = savedMandel[1];
+            view.cs.height = savedMandel[2];
             toast("Back to the parameter plane");
         }
     };
@@ -575,24 +606,24 @@ void App::input2D(float dt) {
     }
     if (wheel != 0.0f) {
         // clamp the zoom factor first, so hitting a limit doesn't slide the view
-        double newH = std::clamp(cs.height * std::pow(0.8, wheel), 1e-15, 50.0);
-        double f = newH / cs.height;
-        cs.cx = px + (cs.cx - px) * f;
-        cs.cy = py + (cs.cy - py) * f;
-        cs.height = newH;
+        double newH = std::clamp(view.cs.height * std::pow(0.8, wheel), 1e-15, 50.0);
+        double f = newH / view.cs.height;
+        view.cs.cx = px + (view.cs.cx - px) * f;
+        view.cs.cy = py + (view.cs.cy - py) * f;
+        view.cs.height = newH;
     }
 }
 
 // ------------------------------------------------------------------ 3D rendering
 View3D App::makeView(int w, int h) const {
     View3D v;
-    v.pos = cam.pos;
-    v.fwd = cam.forward();
-    v.right = cam.right();
-    v.up = cam.up();
-    v.tanHalfFov = std::tan(rs.fov * 0.5f * 0.0174533f);
-    v.sceneScale = cam.distance;
-    v.focusDist = rs.autoFocus ? (centerHitT > 0 ? centerHitT : cam.distance) : rs.focusDist;
+    v.pos = view.cam.pos;
+    v.fwd = view.cam.forward();
+    v.right = view.cam.right();
+    v.up = view.cam.up();
+    v.tanHalfFov = std::tan(view.rs.fov * 0.5f * 0.0174533f);
+    v.sceneScale = view.cam.distance;
+    v.focusDist = view.rs.autoFocus ? (centerHitT > 0 ? centerHitT : view.cam.distance) : view.rs.focusDist;
     v.time = (float)now;
     v.animTime = animTime;
     v.fullW = w;
@@ -607,32 +638,32 @@ static void appendBytes(std::vector<uint8_t>& v, const T& x) {
 }
 
 std::vector<uint8_t> App::signature3D(int w, int h) const {
-    RenderSettings r = rs;
+    RenderSettings r = view.rs;
     // palette cycling only matters when the palette is used for coloring
-    if (r.colorMode <= 2) r.colorOffset = rs.colorOffset + cycleOffset / 256.0f;
+    if (r.colorMode <= 2) r.colorOffset = view.rs.colorOffset + cycleOffset / 256.0f;
     // the focus only matters with a lens
     if (r.aperture <= 0.0f) r.focusDist = 0, r.autoFocus = false;
     else if (r.autoFocus) r.focusDist = 0;  // autofocus distance is added (quantized) below
     std::vector<uint8_t> s;
     s.reserve(512);
     appendFields(s, r, kTrace3D, [](RenderSettings& x, auto&& f) { visitRender(x, f); });
-    appendBytes(s, rs.palette);
-    appendBytes(s, cam.pos);
-    appendBytes(s, cam.yaw);
-    appendBytes(s, cam.pitch);
-    appendBytes(s, cam.distance);
-    appendBytes(s, current_);
+    appendBytes(s, view.rs.palette);
+    appendBytes(s, view.cam.pos);
+    appendBytes(s, view.cam.yaw);
+    appendBytes(s, view.cam.pitch);
+    appendBytes(s, view.cam.distance);
+    appendBytes(s, view.fractal);
     appendBytes(s, generation);
     appendBytes(s, paletteVersion);
     appendBytes(s, w);
     appendBytes(s, h);
-    if (rs.aperture > 0.0f && rs.autoFocus) {
+    if (view.rs.aperture > 0.0f && view.rs.autoFocus) {
         // quantize so probe noise doesn't restart accumulation every frame
         float fd = makeView(w, h).focusDist;
         int q = (int)std::lround(std::log(std::max(fd, 1e-9f)) * 200.0f);
         appendBytes(s, q);
     }
-    for (auto& p : lib_.all()[current_].params) {
+    for (auto& p : lib_.all()[view.fractal].params) {
         float v[4];
         paramEffective(p, animTime, v);
         appendBytes(s, v);
@@ -657,11 +688,11 @@ void App::render3D() {
         float est = (float)rend.timer.lastMs / std::max(n, 1.0f) / (scale * scale);
         perSampleMsFull = perSampleMsFull * 0.7f + est * 0.3f;
     }
-    float targetMs = 1000.0f / std::max(rs.targetFps, 10.0f) * 0.8f;
-    if (rs.adaptiveRes) motionScale = std::clamp(std::sqrt(targetMs / std::max(perSampleMsFull, 0.01f)), std::min(0.2f, rs.stillScale), rs.stillScale);
-    else motionScale = rs.stillScale;
+    float targetMs = 1000.0f / std::max(view.rs.targetFps, 10.0f) * 0.8f;
+    if (view.rs.adaptiveRes) motionScale = std::clamp(std::sqrt(targetMs / std::max(perSampleMsFull, 0.01f)), std::min(0.2f, view.rs.stillScale), view.rs.stillScale);
+    else motionScale = view.rs.stillScale;
 
-    float scale = interactive ? motionScale : rs.stillScale;
+    float scale = interactive ? motionScale : view.rs.stillScale;
     // snap to steps so small estimate changes don't reallocate the buffer
     scale = std::clamp(std::round(scale * 20.0f) / 20.0f, 0.1f, 2.0f);
     int rw = std::max(1, (int)(fbW * scale)), rh = std::max(1, (int)(fbH * scale));
@@ -670,7 +701,7 @@ void App::render3D() {
         samples = 0;
         band3DRow = 0;
     }
-    int maxS = rs.renderMode ? rs.maxSamplesPT : rs.maxSamplesRT;
+    int maxS = view.rs.renderMode ? view.rs.maxSamplesPT : view.rs.maxSamplesRT;
     if (samples >= maxS) return;  // converged: GPU idles
     if (samples == 0 && band3DRow == 0) rend.clear3D(rend.accum);
 
@@ -682,7 +713,7 @@ void App::render3D() {
         int rows = std::clamp((int)(targetMs / (perSample / rh)), 1, rh - band3DRow);
         int sc[4] = {0, rh - band3DRow - rows, rw, rows};
         rend.timer.begin(scale, (float)rows / rh);
-        bool ok = rend.renderSample3D(rend.accum, samples, f, rs, v, sc);
+        bool ok = rend.renderSample3D(rend.accum, samples, f, view.rs, v, sc);
         rend.timer.end();
         if (!ok) return;
         band3DRow += rows;
@@ -700,7 +731,7 @@ void App::render3D() {
     }
     rend.timer.begin(scale, (float)n);
     for (int i = 0; i < n; i++)
-        if (rend.renderSample3D(rend.accum, samples, f, rs, v)) samples++;
+        if (rend.renderSample3D(rend.accum, samples, f, view.rs, v)) samples++;
     rend.timer.end();
 }
 
@@ -716,9 +747,9 @@ void App::updateProbe() {
             centerHitT = hit;
         } else if (hit > 0) {
             // turn smoothly toward the clicked point; it becomes the new orbit center
-            Camera goal = cam;
-            goal.lookAt(cam.pos, cam.pos + dir * hit);
-            camAnim = {true, (float)now, cam.yaw, cam.pitch, cam.distance, goal.yaw, goal.pitch, goal.distance};
+            Camera goal = view.cam;
+            goal.lookAt(view.cam.pos, view.cam.pos + dir * hit);
+            camAnim = {true, (float)now, view.cam.yaw, view.cam.pitch, view.cam.distance, goal.yaw, goal.pitch, goal.distance};
             toast("Turning to face the point you double-clicked - it's the new orbit center", 1.5f);
         } else {
             toast("Nothing there - double-click on the fractal surface", 1.5f);
@@ -734,7 +765,7 @@ void App::updateProbe() {
         dir = (v.fwd + (v.right * ux + v.up * uy) * (2.0f * v.tanHalfFov)).normalized();
         tag = 1;
     }
-    if (rend.probe(fractal(), rs, v, dir, pixelAngle)) {
+    if (rend.probe(fractal(), view.rs, v, dir, pixelAngle)) {
         probeTags.push_back(tag);
         probeDirs.push_back(dir);
         if (tag == 1) pickRequested = false;
@@ -781,12 +812,12 @@ bool App::stepJob2D(Job2D& job, IndexTarget& target, double budgetMs) {
 }
 
 void App::render2D() {
-    if (cs.formula == kCustomFormula && !rend.hasCustomFormula()) {
-        cs.formula = 0;
+    if (view.cs.formula == kCustomFormula && !rend.hasCustomFormula()) {
+        view.cs.formula = 0;
         toast("No custom formula is compiled - showing the Mandelbrot set instead", 4);
     }
     // only fields that change the iteration buffer need a recompute
-    Classic2DSettings c = cs;
+    Classic2DSettings c = view.cs;
     std::vector<uint8_t> sig;
     appendFields(sig, c, kCompute2D, [](Classic2DSettings& x, auto&& f) { visitClassic(x, f); });
     appendBytes(sig, formulaGeneration);
@@ -798,7 +829,7 @@ void App::render2D() {
         lastChange = now;
     }
     interactive = now - lastChange < 0.2;
-    int ss = interactive ? 1 : std::clamp(cs.supersample, 1, 4);
+    int ss = interactive ? 1 : std::clamp(view.cs.supersample, 1, 4);
     appendBytes(sig, ss);
     int tw = fbW * ss, th = fbH * ss;
 
@@ -809,9 +840,9 @@ void App::render2D() {
         job2D.row = 0;
         job2D.bandRows = 0;
         job2D.sig = sig;
-        job2D.cs = cs;
+        job2D.cs = view.cs;
         job2D.cs.supersample = ss;
-        job2D.chunk = std::min(std::max(cs.maxIter, 1), 512);
+        job2D.chunk = std::min(std::max(view.cs.maxIter, 1), 512);
         // If index2D holds a complete image for this window (at any supersampling), keep
         // showing it: draw over it when the size matches (the reveal), otherwise render
         // offscreen and swap when done. After a resize there's nothing valid to keep.
@@ -841,10 +872,10 @@ void App::render2D() {
 // ------------------------------------------------------------------ screenshots & posters
 void App::takeScreenshot() {
     std::error_code ec;
-    fs::create_directories(picturesDir, ec);
-    std::string base = (picturesDir / ("fract3d-" + timestampName())).string();
+    fs::create_directories(session.picturesDir, ec);
+    std::string base = (session.picturesDir / ("fract3d-" + timestampName())).string();
     std::vector<uint8_t> px;
-    bool ok = rend.readImage(mode, &rend.accum, &rend.index2D, rs, cs, cycleOffset, fbW, fbH, px) &&
+    bool ok = rend.readImage(view.mode, &rend.accum, &rend.index2D, view.rs, view.cs, cycleOffset, fbW, fbH, px) &&
               writePngRaw(base + ".png", fbW, fbH, px.data());
     savePar(base + ".par");
     toast(ok ? "Saved " + base + ".png (+ .par to recreate it)" : "Screenshot failed", 4);
@@ -854,32 +885,32 @@ void App::startPoster(int w, int h, int nSamples) {
     poster.active = true;
     poster.w = w;
     poster.h = h;
-    poster.samples = mode == ViewMode::Fractal3D ? std::max(nSamples, 1) : 1;
+    poster.samples = view.mode == ViewMode::Fractal3D ? std::max(nSamples, 1) : 1;
     poster.done = 0;
     poster.tile = 0;
     poster.started = glfwGetTime();
     poster.view = makeView(w, h);
-    poster.rs = rs;
-    poster.cs = cs;
-    poster.cs.supersample = std::clamp(cs.supersample, 1, 4);
+    poster.rs = view.rs;
+    poster.cs = view.cs;
+    poster.cs.supersample = std::clamp(view.cs.supersample, 1, 4);
     poster.fractal = fractal();
     for (auto& p : poster.fractal.params) {  // freeze animated parameters at their current value
         paramEffective(p, animTime, p.value);
         p.animate = false;
     }
-    poster.palette = palettes[rs.palette];
+    poster.palette = palettes[view.rs.palette];
     poster.cycleOffset = cycleOffset;
     poster.par = parText();
-    poster.mode = mode;
+    poster.mode = view.mode;
     std::error_code ec;
-    fs::create_directories(picturesDir, ec);
-    poster.path = (picturesDir / ("fract3d-" + timestampName() + "-" + std::to_string(w) + "x" + std::to_string(h) + ".png")).string();
+    fs::create_directories(session.picturesDir, ec);
+    poster.path = (session.picturesDir / ("fract3d-" + timestampName() + "-" + std::to_string(w) + "x" + std::to_string(h) + ".png")).string();
     bool ok;
-    if (mode == ViewMode::Fractal3D) {
+    if (view.mode == ViewMode::Fractal3D) {
         ok = poster.target.ensure(w, h, GL_RGBA32F, GL_LINEAR);
         if (ok) rend.clear3D(poster.target);
     } else {
-        if (poster.cs.formula == kCustomFormula && !rend.hasCustomFormula()) poster.cs.formula = cs.formula = 0;
+        if (poster.cs.formula == kCustomFormula && !rend.hasCustomFormula()) poster.cs.formula = view.cs.formula = 0;
         int ss = poster.cs.supersample;
         ok = poster.index.ensure(w * ss, h * ss);
         if (ok) {
@@ -887,7 +918,7 @@ void App::startPoster(int w, int h, int nSamples) {
             poster.job = Job2D();
             poster.job.active = true;
             poster.job.cs = poster.cs;
-            poster.job.chunk = std::min(std::max(cs.maxIter, 1), 512);
+            poster.job.chunk = std::min(std::max(view.cs.maxIter, 1), 512);
         }
     }
     if (!ok) {
@@ -897,14 +928,14 @@ void App::startPoster(int w, int h, int nSamples) {
         toast(buf, 6);
         poster.active = false;
         exitCode = 1;
-        if (!cli.shotPath.empty()) quit = true;
+        if (!session.cli.shotPath.empty()) quit = true;
     }
 }
 
 void App::updatePoster() {
     const int T = 1024;
     bool is3D = poster.mode == ViewMode::Fractal3D;
-    double budget = cli.shotPath.empty() ? 30.0 : 500.0;
+    double budget = session.cli.shotPath.empty() ? 30.0 : 500.0;
     bool finished = false;
     if (is3D) {
         if (rend.status(poster.fractal) == Renderer::ProgStatus::Compiling) return;  // wait for the shaders
@@ -921,7 +952,7 @@ void App::updatePoster() {
                 poster.active = false;
                 poster.target.release();
                 exitCode = 1;
-                if (!cli.shotPath.empty()) quit = true;
+                if (!session.cli.shotPath.empty()) quit = true;
                 return;
             }
             if (++poster.tile >= tiles) {
@@ -941,7 +972,7 @@ void App::updatePoster() {
             poster.active = false;
             poster.index.release();
             exitCode = 1;
-            if (!cli.shotPath.empty()) quit = true;
+            if (!session.cli.shotPath.empty()) quit = true;
             return;
         }
     }
@@ -963,13 +994,13 @@ void App::updatePoster() {
         poster.index.release();
         lastSig3D.clear();
         shownSig2D.clear();
-        if (!cli.shotPath.empty()) quit = true;
+        if (!session.cli.shotPath.empty()) quit = true;
     }
 }
 
 // ------------------------------------------------------------------ 2D <-> 3D bridge
 void App::liftTo3D() {
-    if (cs.formula > 3 || (cs.julia && cs.formula != 0)) {
+    if (view.cs.formula > 3 || (view.cs.julia && view.cs.formula != 0)) {
         toast("The 3D landscape supports Mandelbrot (and its Julia sets), Burning Ship, Tricorn and Multibrot z^3", 4);
         return;
     }
@@ -980,28 +1011,28 @@ void App::liftTo3D() {
     }
     Fractal& f = lib_.all()[li];
     int formula = 0;
-    switch (cs.formula) {
+    switch (view.cs.formula) {
     case 1: formula = 1; break;
     case 2: formula = 2; break;
     case 3: formula = 3; break;
     default: formula = 0;
     }
-    if (cs.julia && cs.formula == 0) formula = 4;
+    if (view.cs.julia && view.cs.formula == 0) formula = 4;
     if (auto* p = f.find("formula")) p->value[0] = (float)formula;
-    if (auto* p = f.find("center")) { p->value[0] = (float)cs.cx; p->value[1] = (float)cs.cy; }
-    if (auto* p = f.find("zoom")) p->value[0] = (float)(3.0 / cs.height);
-    if (auto* p = f.find("iterations")) p->value[0] = (float)std::clamp(cs.maxIter, 10, 1500);
-    if (auto* p = f.find("juliaC")) { p->value[0] = (float)cs.jx; p->value[1] = (float)cs.jy; }
-    int palette = rs.palette;  // the point of lifting is continuity: keep the 2D palette
+    if (auto* p = f.find("center")) { p->value[0] = (float)view.cs.cx; p->value[1] = (float)view.cs.cy; }
+    if (auto* p = f.find("zoom")) p->value[0] = (float)(3.0 / view.cs.height);
+    if (auto* p = f.find("iterations")) p->value[0] = (float)std::clamp(view.cs.maxIter, 10, 1500);
+    if (auto* p = f.find("juliaC")) { p->value[0] = (float)view.cs.jx; p->value[1] = (float)view.cs.jy; }
+    int palette = view.rs.palette;  // the point of lifting is continuity: keep the 2D palette
     selectFractal(li, true);
     setMode(ViewMode::Fractal3D);
-    rs.palette = palette;
+    view.rs.palette = palette;
     applyPalette();
-    rs.colorMode = 0;
-    rs.colorScale = cs.colorDensity;  // landscape trap.x = iterations / 256, so density maps 1:1
-    rs.colorOffset = 0;
-    rs.paletteMix = 1.0f;
-    if (cs.height < 1e-4) toast("Note: 3D uses single precision; very deep zooms get blocky", 4);
+    view.rs.colorMode = 0;
+    view.rs.colorScale = view.cs.colorDensity;  // landscape trap.x = iterations / 256, so density maps 1:1
+    view.rs.colorOffset = 0;
+    view.rs.paletteMix = 1.0f;
+    if (view.cs.height < 1e-4) toast("Note: 3D uses single precision; very deep zooms get blocky", 4);
     else toast("Lifted into 3D: height = escape time");
 }
 
@@ -1009,16 +1040,16 @@ void App::flattenTo2D() {
     Fractal& f = fractal();
     if (f.key == "landscape") {
         int formula = (int)f.find("formula")->value[0];
-        cs.formula = formula == 4 ? 0 : formula;
-        cs.julia = formula == 4;
-        if (formula == 3) cs.power = 3;
-        cs.cx = f.find("center")->value[0];
-        cs.cy = f.find("center")->value[1];
-        cs.height = 3.0 / f.find("zoom")->value[0];
-        cs.jx = f.find("juliaC")->value[0];
-        cs.jy = f.find("juliaC")->value[1];
-        cs.maxIter = (int)f.find("iterations")->value[0];
-        cs.colorDensity = std::clamp(rs.colorScale, 0.05f, 16.0f);  // same palette spacing as in 3D
+        view.cs.formula = formula == 4 ? 0 : formula;
+        view.cs.julia = formula == 4;
+        if (formula == 3) view.cs.power = 3;
+        view.cs.cx = f.find("center")->value[0];
+        view.cs.cy = f.find("center")->value[1];
+        view.cs.height = 3.0 / f.find("zoom")->value[0];
+        view.cs.jx = f.find("juliaC")->value[0];
+        view.cs.jy = f.find("juliaC")->value[1];
+        view.cs.maxIter = (int)f.find("iterations")->value[0];
+        view.cs.colorDensity = std::clamp(view.rs.colorScale, 0.05f, 16.0f);  // same palette spacing as in 3D
     }
     setMode(ViewMode::Classic2D);
 }

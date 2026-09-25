@@ -6,6 +6,7 @@
 #include "state.h"
 
 #include <filesystem>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -29,6 +30,50 @@ struct CliOptions {
     bool glDebugVerbose = false;
 };
 
+// Everything that defines what's on screen. (Fractal parameter values live with
+// each fractal in the library, so switching back and forth keeps them.)
+struct ViewState {
+    ViewMode mode = ViewMode::Fractal3D;
+    int fractal = 0;  // index into the fractal library
+    Camera cam;
+    RenderSettings rs;
+    Classic2DSettings cs;
+    CosinePalette cosine;  // the editable "Custom (cosine editor)" palette
+};
+
+// Where things live, how the app was started, and UI preferences that persist
+// across runs (prefs.ini) but aren't part of any particular view.
+struct Session {
+    std::filesystem::path dataDir, userDir, picturesDir;
+    std::string imguiIni;
+    CliOptions cli;
+    int uiTheme = 0;  // 0 modern, 1 Fractint
+    float uiScale = 1.0f;
+    bool showLearn = true;
+    float flySpeed = 1.5f;
+    bool keepLighting = false;      // keep the current lighting when switching fractals
+    std::string fullscreenMonitor;  // monitor chosen in View > Fullscreen on
+};
+
+// Transient overlay state.
+struct UiState {
+    bool showUI = true, showHelp = false, showDemo = false, showPoster = false;
+    ImFont* fontUI = nullptr;
+    ImFont* fontMono = nullptr;
+    ImFont* fontRetro = nullptr;
+    std::string toastMsg;
+    double toastUntil = 0;
+    int posterW = 3840, posterH = 2160, posterSamples = 256;
+    char parName[128] = "my-view";
+    std::string parNote;  // the "; comment" line of the last loaded PAR (shown on the Tour tab)
+    int tourIdx = -1;
+    std::mt19937 rng{std::random_device{}()};  // "Surprise me"
+    // Learn-panel content, reloaded when the files change (see refreshDocs)
+    std::string conceptsText, classicText;
+    std::vector<std::pair<std::filesystem::path, std::string>> tourStops;  // preset + its description
+    std::filesystem::file_time_type docsTime{}, presetsTime{};
+};
+
 class App {
 public:
     bool init(const CliOptions& cli);
@@ -36,7 +81,7 @@ public:
     void shutdown();
 
     // ---- used by UI (ui.cpp) and PAR I/O (params_io.cpp)
-    Fractal& fractal() { return lib_.all()[current_]; }
+    Fractal& fractal() { return lib_.all()[view.fractal]; }
     void selectFractal(int idx, bool resetView);
     void resetView();
     void applyLook(const Fractal& f);
@@ -45,6 +90,7 @@ public:
     void takeScreenshot();
     void startPoster(int w, int h, int samples);
     bool savePar(const std::filesystem::path& p);
+    void saveNamedPar();          // File > Save PAR / Ctrl+S
     std::string parText() const;  // the current view as PAR text
     bool loadPar(const std::filesystem::path& p);
     void liftTo3D();
@@ -54,10 +100,12 @@ public:
     void savePrefs();
     std::vector<std::filesystem::path> listParFiles() const;
     void tourStep(int delta);
+    void toggleFullscreen();
 
 private:
     // ---- loop
     void frame();
+    bool computeIdle();
     void handleKeys();
     void input3D(float dt);
     void input2D(float dt);
@@ -65,8 +113,10 @@ private:
     void render2D();
     void updatePoster();
     void updateProbe();
+    void refreshDocs();  // (re)loads Learn-panel docs and the tour list when their files change
     View3D makeView(int w, int h) const;
     std::vector<uint8_t> signature3D(int w, int h) const;
+    GLFWmonitor* pickMonitor();
 
     // ---- UI (ui.cpp)
     void setupImGui();
@@ -92,40 +142,36 @@ private:
 
 public:
     // ---- state (public so the UI and PAR code can bind directly)
+    ViewState view;
+    Session session;
+    UiState ui;
+
     GLFWwindow* win = nullptr;
     int fbW = 1280, fbH = 800, winW = 1280, winH = 800;
-    std::filesystem::path dataDir, userDir, picturesDir;
-
-    ViewMode mode = ViewMode::Fractal3D;
     FractalLibrary lib_;
-    int current_ = 0;
-    Camera cam;
-    RenderSettings rs;
-    Classic2DSettings cs;
     std::vector<Palette> palettes;
-    CosinePalette customCosine;
     int customPaletteIdx = -1;  // index of the editable cosine palette
-    std::vector<Palette> mapPalettes;  // loaded from palettes/*.map
     float cycleOffset = 0.0f;
+    float lastCycleSpeed = 24.0f;  // what C turns cycling back on to
     int paletteVersion = 0;
     Renderer rend;
 
-    // accumulation bookkeeping
+    // progressive 3D accumulation
     std::vector<uint8_t> lastSig3D;
     int samples = 0;
     double lastChange = -10.0;
     float motionScale = 0.6f;
     float perSampleMsFull = 8.0f;  // estimated ms per sample at full resolution
-    int lastBatch = 1;
-    float lastRenderScale = 1.0f;
     bool interactive = false;
-    int generation = 0;  // bumped on shader reload to force re-render
+    int generation = 0;         // bumped on shader reload to force re-render
+    int formulaGeneration = 0;  // bumped when the custom formula is recompiled
+    int band3DRow = 0;          // rows of the current 3D sample already rendered (banded mode)
+    float frameBudgetMs = 12.0f;  // GPU time per frame for progressive work
 
-    // Progressive 2D rendering: the iteration buffer is filled in top-down bands
-    // under a per-frame time budget, so no single draw can stall the GPU (and it
-    // reproduces Fractint's scanline reveal).
-    // Each band's orbits are advanced a chunk of iterations per compute pass
+    // Progressive 2D rendering: the iteration buffer is filled in top-down bands,
+    // and each band's orbits are advanced a chunk of iterations per compute pass
     // (see classic2d.comp), so even millions of iterations never block the GPU.
+    // It also reproduces Fractint's scanline reveal.
     struct Job2D {
         bool active = false;
         int row = 0;             // rows finished, counted from the top of the target
@@ -141,8 +187,6 @@ public:
     bool stepJob2D(Job2D& job, IndexTarget& target, double budgetMs);
     std::vector<uint8_t> coreSig2D;   // last compute signature (without supersampling)
     std::vector<uint8_t> shownSig2D;  // signature of the complete image in index2D
-    int band3DRow = 0;                // rows of the current 3D sample already rendered (banded mode)
-    float frameBudgetMs = 12.0f;      // GPU time per frame for progressive work
 
     // probe results
     float deAtCam = 1.0f, centerHitT = -1.0f;
@@ -153,38 +197,22 @@ public:
 
     // input
     int dragButton = -1;
-    double lastMouseX = 0, lastMouseY = 0, pressX = 0, pressY = 0;
-    double lastClickTime = 0;
-    float scrollAccum = 0.0f;
-    float flySpeed = 1.5f;
-    bool keepLighting = false;  // keep the current lighting when switching fractals
-    int formulaGeneration = 0;  // bumped when the custom formula is recompiled
+    double pressX = 0, pressY = 0;
     bool flying = false;
-    double savedMandel[3] = {-0.6, 0.0, 3.0};
+    double savedMandel[3] = {-0.6, 0.0, 3.0};  // view to return to from a Julia set
+    struct CamAnim {
+        bool active = false;
+        float start = 0, yaw0 = 0, pitch0 = 0, dist0 = 1, yaw1 = 0, pitch1 = 0, dist1 = 1;
+    } camAnim;
 
     // time
-    double now = 0, lastFrameTime = 0;
+    double now = 0, lastFrameTime = 0, lastReloadCheck = 0;
     float dt = 0.016f;
     float animTime = 0.0f;
     bool animPaused = false;
     float fps = 0.0f;
 
-    // UI
-    bool showUI = true, showLearn = true, showHelp = false, showDemo = false, showPoster = false;
-    int uiTheme = 0;  // 0 modern, 1 Fractint
-    float uiScale = 1.0f;
-    ImFont* fontUI = nullptr;
-    ImFont* fontMono = nullptr;
-    ImFont* fontRetro = nullptr;
-    std::string toastMsg;
-    double toastUntil = 0;
-    std::string conceptsText;
-    int posterW = 3840, posterH = 2160, posterSamples = 256;
-    char parName[128] = "my-view";
-    std::string parNote;  // the "; comment" line of the last loaded PAR
-    int tourIdx = -1;
-
-    // poster job
+    // high-res render ("poster") job
     struct Poster {
         bool active = false;
         int w = 0, h = 0, samples = 0, done = 0, tile = 0;
@@ -206,23 +234,13 @@ public:
         Job2D job;
     } poster;
 
-    CliOptions cli;
     RenderTarget uiShotRT;
     int exitCode = 0;
     int frameCount = 0;
     bool fullscreen = false;
     int savedWin[4] = {0, 0, 1600, 900};
-    std::string fullscreenMonitor;  // monitor name chosen in View > Fullscreen on (saved in prefs)
-    void toggleFullscreen();
-    GLFWmonitor* pickMonitor();
-    void saveNamedPar();  // File > Save / Ctrl+S
-    struct CamAnim {
-        bool active = false;
-        float start = 0, yaw0 = 0, pitch0 = 0, dist0 = 1, yaw1 = 0, pitch1 = 0, dist1 = 1;
-    } camAnim;
     bool quit = false;
     bool idle = false;  // converged and nothing animating: wait for input instead of redrawing
-    bool computeIdle();
 };
 
 std::string timestampName();

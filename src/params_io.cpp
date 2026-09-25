@@ -58,18 +58,18 @@ bool App::savePar(const fs::path& path) {
 std::string App::parText() const {
     std::ostringstream o;
     o.precision(9);
-    const Fractal& f = lib_.all()[current_];
-    RenderSettings r = rs;
-    Classic2DSettings c = cs;
+    const Fractal& f = lib_.all()[view.fractal];
+    RenderSettings r = view.rs;
+    Classic2DSettings c = view.cs;
     o << "; Fract3D parameter file - load with File > Load, or: fract3d --par FILE\n";
-    o << "mode = " << (mode == ViewMode::Classic2D ? "2d" : "3d") << "\n";
+    o << "mode = " << (view.mode == ViewMode::Classic2D ? "2d" : "3d") << "\n";
     o << "fractal = " << f.key << "\n";
-    o << "camera.pos = " << cam.pos.x << " " << cam.pos.y << " " << cam.pos.z << "\n";
-    o << "camera.yaw = " << cam.yaw << "\ncamera.pitch = " << cam.pitch << "\ncamera.distance = " << cam.distance << "\n";
-    o << "color.palette = " << palettes[rs.palette].name << "\n";
-    if (rs.palette == customPaletteIdx) {
+    o << "camera.pos = " << view.cam.pos.x << " " << view.cam.pos.y << " " << view.cam.pos.z << "\n";
+    o << "camera.yaw = " << view.cam.yaw << "\ncamera.pitch = " << view.cam.pitch << "\ncamera.distance = " << view.cam.distance << "\n";
+    o << "color.palette = " << palettes[view.rs.palette].name << "\n";
+    if (view.rs.palette == customPaletteIdx) {
         o << "color.cosine =";
-        for (auto* arr : {customCosine.a, customCosine.b, customCosine.c, customCosine.d})
+        for (auto* arr : {view.cosine.a, view.cosine.b, view.cosine.c, view.cosine.d})
             for (int k = 0; k < 3; k++) o << " " << arr[k];
         o << "\n";
     }
@@ -115,11 +115,11 @@ bool App::loadPar(const fs::path& path) {
     // Start from the fractal's defaults and curated look, so a hand-written PAR
     // only needs the keys it wants to change. Saved PARs contain every key anyway.
     Fractal& f = fractal();
-    rs = RenderSettings();
-    rs.stepFactor = f.hints.stepFactor;
-    rs.detail = f.hints.detail;
-    rs.maxSteps = f.hints.maxSteps;
-    rs.maxDist = f.hints.maxDist;
+    view.rs = RenderSettings();
+    view.rs.stepFactor = f.hints.stepFactor;
+    view.rs.detail = f.hints.detail;
+    view.rs.maxSteps = f.hints.maxSteps;
+    view.rs.maxDist = f.hints.maxDist;
     for (auto& p : f.params) p.reset();
     resetView();
     applyLook(f);
@@ -127,16 +127,16 @@ bool App::loadPar(const fs::path& path) {
     setMode(kv["mode"] == "2d" ? ViewMode::Classic2D : ViewMode::Fractal3D);
     if (kv.count("camera.pos")) {
         std::istringstream is(kv["camera.pos"]);
-        is >> cam.pos.x >> cam.pos.y >> cam.pos.z;
+        is >> view.cam.pos.x >> view.cam.pos.y >> view.cam.pos.z;
     }
-    if (kv.count("camera.yaw")) cam.yaw = std::stof(kv["camera.yaw"]);
-    if (kv.count("camera.pitch")) cam.pitch = std::stof(kv["camera.pitch"]);
-    if (kv.count("camera.distance")) cam.distance = std::stof(kv["camera.distance"]);
+    if (kv.count("camera.yaw")) view.cam.yaw = std::stof(kv["camera.yaw"]);
+    if (kv.count("camera.pitch")) view.cam.pitch = std::stof(kv["camera.pitch"]);
+    if (kv.count("camera.distance")) view.cam.distance = std::stof(kv["camera.distance"]);
     if (kv.count("camera.target")) {  // convenient for hand-written presets: aim at a point
         Vec3 t;
         std::istringstream is(kv["camera.target"]);
         is >> t.x >> t.y >> t.z;
-        cam.lookAt(cam.pos, t);
+        view.cam.lookAt(view.cam.pos, t);
     }
     for (auto& p : f.params) {
         auto it = kv.find("param." + p.id);
@@ -151,7 +151,7 @@ bool App::loadPar(const fs::path& path) {
             p.animate = true;
         }
     }
-    visitSettings(rs, cs, [&](const char* name, auto* ptr, int n) {
+    visitSettings(view.rs, view.cs, [&](const char* name, auto* ptr, int n) {
         auto it = kv.find(name);
         if (it == kv.end()) return;
         std::istringstream is(it->second);
@@ -159,49 +159,45 @@ bool App::loadPar(const fs::path& path) {
     });
     if (kv.count("color.cosine")) {
         std::istringstream is(kv["color.cosine"]);
-        for (auto* arr : {customCosine.a, customCosine.b, customCosine.c, customCosine.d})
+        for (auto* arr : {view.cosine.a, view.cosine.b, view.cosine.c, view.cosine.d})
             for (int k = 0; k < 3; k++) is >> arr[k];
     }
     if (kv.count("color.palette")) {
         for (int i = 0; i < (int)palettes.size(); i++)
-            if (palettes[i].name == kv["color.palette"]) rs.palette = i;
+            if (palettes[i].name == kv["color.palette"]) view.rs.palette = i;
     }
     // Everything above came from a file: repair anything out of range before use.
-    sanitize(rs);
-    sanitize(cs);
-    sanitize(cam);
+    sanitize(view.rs);
+    sanitize(view.cs);
+    sanitize(view.cam);
     sanitize(f);
     applyPalette();
-    parNote = note;
+    ui.parNote = note;
     toast(note.empty() ? "Loaded " + path.filename().string() : note, note.empty() ? 2.5f : 6.0f);
     return true;
 }
 
 void App::saveNamedPar() {
-    std::string name = parName;
+    std::string name = ui.parName;
     // keep the name a plain file name; fall back to a timestamp when it's empty
     for (auto& c : name)
         if (c == '/' || c == '\\' || (unsigned char)c < 32) c = '_';
     if (name.find_first_not_of(" ._") == std::string::npos) name = "view-" + timestampName();
-    savePar(userDir / "params" / (name + ".par"));
+    savePar(session.userDir / "params" / (name + ".par"));
 }
 
 // Steps through the built-in presets (the Learn panel's Tour tab, or N / Shift+N).
 void App::tourStep(int delta) {
-    std::vector<fs::path> tour;
-    std::error_code ec;
-    for (auto& e : fs::directory_iterator(dataDir / "presets", ec))
-        if (e.path().extension() == ".par") tour.push_back(e.path());
-    if (tour.empty()) return;
-    std::sort(tour.begin(), tour.end());
-    tourIdx = ((tourIdx + delta) % (int)tour.size() + (int)tour.size()) % (int)tour.size();
-    loadPar(tour[tourIdx]);
+    int n = (int)ui.tourStops.size();
+    if (n == 0) return;
+    ui.tourIdx = ((ui.tourIdx + delta) % n + n) % n;
+    loadPar(ui.tourStops[ui.tourIdx].first);
 }
 
 std::vector<fs::path> App::listParFiles() const {
     std::vector<fs::path> out;
     std::error_code ec;
-    for (auto dir : {dataDir / "presets", userDir / "params"})
+    for (auto dir : {session.dataDir / "presets", session.userDir / "params"})
         for (auto& e : fs::directory_iterator(dir, ec))
             if (e.path().extension() == ".par") out.push_back(e.path());
     std::sort(out.begin(), out.end());

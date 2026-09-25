@@ -179,7 +179,6 @@ bool parseFractalFile(const fs::path& path, Fractal& f) {
     std::string line, code;
     bool inAbout = false;
     int lineNo = 0;
-    int firstCodeLine = 0;
     while (std::getline(is, line)) {
         lineNo++;
         std::string t = trim(line);
@@ -234,7 +233,6 @@ bool parseFractalFile(const fs::path& path, Fractal& f) {
                 continue;
             }
         }
-        if (!firstCodeLine && !t.empty()) firstCodeLine = lineNo;
         code += line + "\n";
     }
     f.code = code;
