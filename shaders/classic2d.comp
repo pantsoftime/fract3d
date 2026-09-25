@@ -15,7 +15,7 @@
 // Compiled with and without FP64 (double precision for deep zooms), and with
 // CUSTOM_FORMULA when a user formula (formula parser output) is spliced in.
 
-layout(local_size_x = 16, local_size_y = 16) in;
+layout(local_size_x = 32, local_size_y = 8) in;  // (one warp = one row: see the reuse packing in main)
 
 layout(rgba32ui, binding = 0) uniform uimage2D uState0;  // z
 layout(rgba32ui, binding = 1) uniform uimage2D uState1;  // previous z (Phoenix) / formula variables
@@ -26,6 +26,10 @@ layout(r8, binding = 5) uniform writeonly image2D uOutAux;
 
 uniform ivec2  uBandOrigin;    // band position in the output image (pixels)
 uniform ivec2  uBandSize;
+uniform int    uSS;            // supersampling: each output pixel is uSS x uSS samples
+uniform int    uReuse;         // 1: the center samples come from the finished 1x preview
+uniform sampler2D uPrevValue;  // ...which is this image (and its aux values)
+uniform sampler2D uPrevAux;
 uniform int    uFirstPass;
 uniform int    uChunk;         // iterations to run in this pass
 uniform vec2   uResolution;    // whole output image
@@ -107,6 +111,22 @@ void accumulate(CPLX z) {
 // frm_z(), frm_save(...) and frm_load(pixel, ...) for the orbit state, and the
 // v_whitesq global this file sets.
 
+// Where a sample lies, in sample-grid units from the image center. Anti-aliasing
+// samples are normally a regular grid inside each pixel; for 2x2 it's the pixel
+// center plus three samples on a triangle around it (0.35 px out), so the average
+// position is still the center - and the center sample is exactly what the 1x
+// preview computed, so it can be reused instead of computed again (uReuse). 3x3
+// grids contain the center anyway.
+dvec2 samplePos(ivec2 pix) {
+    ivec2 P = pix / uSS, sub = pix % uSS;
+    dvec2 o = (dvec2(sub) + 0.5LF) / double(uSS);  // offset inside the output pixel, 0..1
+    if (uSS == 2) {
+        const vec2 tri[4] = vec2[](vec2(0.5, 0.5), vec2(0.5, 0.85), vec2(0.19689, 0.325), vec2(0.80311, 0.325));
+        o = dvec2(tri[sub.y * 2 + sub.x]);
+    }
+    return (dvec2(P) + o) * double(uSS) - 0.5LF * dvec2(uResolution);
+}
+
 ivec2 g_local;
 void finish(float value, float aux, int iter, uint flags) {
     ivec2 pix = uBandOrigin + g_local;
@@ -179,7 +199,7 @@ dvec2 dcmul(dvec2 a, dvec2 b) { return dvec2(a.x * b.x - a.y * b.y, a.x * b.y + 
 void mainPerturb() {
     ivec2 pix = uBandOrigin + g_local;
     // this pixel's offset from the reference point, in plane units
-    dvec2 dc = (dvec2(pix) + 0.5LF - 0.5LF * dvec2(uResolution) + uRefOffsetPx) * uPixelSize;
+    dvec2 dc = (samplePos(pix) + uRefOffsetPx) * uPixelSize;
     dvec2 cD = uJulia != 0 ? dvec2(0) : dc;  // delta_c (Julia sets: c is the same everywhere)
     dvec2 eps;
     int m, i;
@@ -256,6 +276,24 @@ void mainPerturb() {
 void main() {
     g_local = ivec2(gl_GlobalInvocationID.xy);
     if (any(greaterThanEqual(g_local, uBandSize))) return;
+    if (uReuse != 0) {
+        // Rows that hold center samples (reused from the 1x preview) are packed: threads
+        // cover only the other samples, so whole thread groups go idle instead of every
+        // group idling one thread in four (which saves no time on a GPU). The thread for
+        // each block's first sample also copies the block's center on the first pass.
+        int centerIdx = uSS == 2 ? 0 : 1;
+        if ((uBandOrigin.y + g_local.y) % uSS == centerIdx) {
+            int per = uSS - 1, blk = g_local.x / per, k = g_local.x % per;
+            if (blk * uSS >= uBandSize.x) return;
+            if (uFirstPass != 0 && k == 0) {
+                ivec2 cpix = uBandOrigin + ivec2(blk * uSS + centerIdx, g_local.y);
+                float v = texelFetch(uPrevValue, cpix / uSS, 0).r;
+                imageStore(uOutValue, cpix, vec4(v));
+                imageStore(uOutAux, cpix, vec4(texelFetch(uPrevAux, cpix / uSS, 0).r));
+            }
+            g_local.x = blk * uSS + (k < centerIdx ? k : k + 1);
+        }
+    }
 #ifdef PERTURB
     mainPerturb();
     return;
@@ -267,7 +305,7 @@ void main() {
     int derE = 0;
     int i;
     uint flags;
-    dvec2 pd = uCenter + (dvec2(pix) + 0.5 - 0.5 * dvec2(uResolution)) * uPixelSize;
+    dvec2 pd = uCenter + samplePos(pix) * uPixelSize;
     CPLX pixel = CPLX(pd);
     CPLX c = uJulia != 0 ? CPLX(uJuliaC) : pixel;
     if (uFormula == 1 && uJulia == 0) c.y = -c.y;          // Burning Ship is traditionally shown upright

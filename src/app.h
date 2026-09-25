@@ -257,6 +257,7 @@ public:
         int chunk = 4096;        // iterations per pass, adapted to the time budget
         bool offscreen = false;  // rendering into work2D, swapped in when complete
         Classic2DSettings cs;    // settings snapshot (supersample = the job's factor)
+        bool reusePreview = false;  // the shown 1x image of this view supplies the center samples
         std::vector<uint8_t> sig;
     } job2D;
     IndexTarget work2D;

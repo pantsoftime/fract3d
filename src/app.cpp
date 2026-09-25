@@ -1525,7 +1525,8 @@ bool App::stepJob2D(Job2D& job, IndexTarget& target, double budgetMs, int stateS
         job.itersDone = itersDone;
         int y0 = th - job.row - job.bandRows;  // bands run top-down (GL rows count up)
         pt.begin((float)k, first);
-        bool ok = rend.dispatch2D(target, job.cs, y0, job.bandRows, k, first, stateSlot);
+        bool ok = rend.dispatch2D(target, job.cs, y0, job.bandRows, k, first, stateSlot,
+                                  job.reusePreview && &target != &rend.index2D ? &rend.index2D : nullptr);
         pt.end();
         if (!ok) {
             job.active = false;
@@ -1569,6 +1570,7 @@ void App::render2D() {
     }
     interactive = now - lastChange < 0.2;
     int ss = interactive ? 1 : std::clamp(view.cs.supersample, 1, 4);
+    const std::vector<uint8_t> sigView = sig;  // the view, before the sampling details
     appendBytes(sig, ss);
     int tw = fbW * ss, th = fbH * ss;
     refPending = false;
@@ -1580,8 +1582,13 @@ void App::render2D() {
         appendBytes(sig, refUploaded);
     }
 
-    // (re)start a job when the wanted image differs from what's shown or being rendered
-    bool wantNew = job2D.active ? job2D.sig != sig : shownSig2D != sig;
+    // (re)start a job when the wanted image differs from what's shown or being rendered -
+    // except that a 1x preview of this same view is allowed to finish first: it's a
+    // quarter of the work, shows a complete picture sooner, and then supplies the
+    // anti-aliased render's center samples
+    bool previewOfThisView = job2D.active && job2D.cs.supersample == 1 && ss > 1 && job2D.sig.size() >= sigView.size() &&
+                             std::equal(sigView.begin(), sigView.end(), job2D.sig.begin());
+    bool wantNew = previewOfThisView ? false : job2D.active ? job2D.sig != sig : shownSig2D != sig;
     if (wantNew) {
         job2D.active = true;
         job2D.row = 0;
@@ -1590,6 +1597,13 @@ void App::render2D() {
         job2D.cs = view.cs;
         job2D.cs.supersample = ss;
         job2D.chunk = std::min(std::max(view.cs.maxIter, 1), 512);
+        // the finished 1x preview of this very view already holds the center samples
+        // (whatever reference orbit it used: every reference gives the same values)
+        int shownSS = 0;
+        bool sameView = shownSig2D.size() >= sigView.size() + sizeof(int) &&
+                        std::equal(sigView.begin(), sigView.end(), shownSig2D.begin());
+        if (sameView) std::memcpy(&shownSS, shownSig2D.data() + sigView.size(), sizeof(int));
+        job2D.reusePreview = ss > 1 && sameView && shownSS == 1;
         // If index2D holds a complete image for this window (at any supersampling), keep
         // showing it: draw over it when the size matches (the reveal), otherwise render
         // offscreen and swap when done. After a resize there's nothing valid to keep.

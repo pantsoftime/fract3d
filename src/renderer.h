@@ -63,7 +63,9 @@ public:
     // `first` starts the band's orbits. Pixels write `out` when they finish.
     // `stateSlot` picks the orbit-state images: 0 for the main view and posters, 1 for the Julia inset,
     // so the two can progress independently.
-    bool dispatch2D(IndexTarget& out, const Classic2DSettings& cs, int y0, int rows, int chunk, bool first, int stateSlot = 0);
+    // `reuse`: a finished 1x image of the same view, whose pixels become the center samples.
+    bool dispatch2D(IndexTarget& out, const Classic2DSettings& cs, int y0, int rows, int chunk, bool first, int stateSlot = 0,
+                    const IndexTarget* reuse = nullptr);
     int bandRowsFor(int width) const;  // rows per band so the orbit state stays small
     bool classicUsesFp64(const Classic2DSettings& cs, int targetH) const;
     // Deep zoom (perturbation, see deepzoom.h): used for the Mandelbrot set and its

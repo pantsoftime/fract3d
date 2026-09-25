@@ -453,7 +453,7 @@ int Renderer::bandRowsFor(int width) const {
 }
 
 bool Renderer::dispatch2D(IndexTarget& out, const Classic2DSettings& cs, int y0, int rows, int chunk, bool first,
-                          int stateSlot) {
+                          int stateSlot, const IndexTarget* reuse) {
     StateImages& state = state2D_[stateSlot & 1];
     bool custom = cs.formula == kCustomFormula;
     bool deep = classicUsesDeep(cs, out.h);
@@ -473,6 +473,14 @@ bool Renderer::dispatch2D(IndexTarget& out, const Classic2DSettings& cs, int y0,
     Program& p = *pp;
     if (!state.ensure(out.w, bandRowsFor(out.w))) return false;
     p.set("uBandOrigin", 0, y0);
+    p.set("uSS", std::max(cs.supersample, 1));
+    bool canReuse = reuse && reuse->value && (cs.supersample == 2 || cs.supersample == 3) && reuse->w * cs.supersample == out.w &&
+                    reuse->h * cs.supersample == out.h;
+    p.set("uReuse", canReuse ? 1 : 0);
+    p.set("uPrevValue", 6);
+    p.set("uPrevAux", 7);
+    glBindTextureUnit(6, canReuse ? reuse->value : 0);
+    glBindTextureUnit(7, canReuse ? reuse->aux : 0);
     p.set("uBandSize", out.w, rows);
     p.set("uFirstPass", first ? 1 : 0);
     p.set("uChunk", std::max(chunk, 1));
@@ -520,7 +528,7 @@ bool Renderer::dispatch2D(IndexTarget& out, const Classic2DSettings& cs, int y0,
     glBindImageTexture(4, out.value, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_R32F);
     glBindImageTexture(5, out.aux, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_R8);
     p.use();
-    glDispatchCompute((out.w + 15) / 16, (rows + 15) / 16, 1);
+    glDispatchCompute((out.w + 31) / 32, (rows + 7) / 8, 1);  // (classic2d.comp: 32 x 8 threads per group)
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
     return true;
 }
