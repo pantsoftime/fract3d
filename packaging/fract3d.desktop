@@ -6,5 +6,5 @@ Comment=Explore and learn about fractals in 3D, in the spirit of Fractint
 Exec=fract3d
 Icon=fract3d
 Terminal=false
-Categories=Education;Math;Graphics;Science;
+Categories=Education;Math;
 Keywords=fractal;mandelbrot;mandelbulb;julia;fractint;math;
