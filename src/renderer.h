@@ -96,7 +96,7 @@ private:
     bool classicBuilt_[2][2] = {};
     std::string customGlsl_, customError_;
     std::unordered_map<std::string, std::unique_ptr<FractalPrograms>> progs_;
-    GLuint vao_ = 0, paletteTex_ = 0, retroLut_[2] = {0, 0};
+    GLuint vao_ = 0, paletteTex_ = 0, retroLut_[2] = {0, 0}, blueNoise_ = 0;
     StateImages state2D_;
     RenderTarget probeRT_, shotRT_;
     GLuint probePbo_[2] = {0, 0};

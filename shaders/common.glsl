@@ -87,7 +87,49 @@ uint pcgHash(uint v) {
     uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
     return (word >> 22u) ^ word;
 }
-uint g_rng;
-void rngSeed(uvec2 pixel, uint frame) { g_rng = pcgHash(pixel.x + pcgHash(pixel.y + pcgHash(frame))); }
-float rand() { g_rng = pcgHash(g_rng); return float(g_rng) * (1.0 / 4294967296.0); }
-vec2 rand2() { return vec2(rand(), rand()); }
+
+// Monte Carlo sampling for the renderer. Each pair of dimensions (sub-pixel
+// jitter, lens, sun direction, bounce direction, ...) takes the next point of a
+// 2D Sobol sequence, Owen-scrambled per dimension (Burley 2020, "Practical
+// hash-based Owen scrambling"), so every pixel's samples are well stratified
+// over time and converge much faster than independent random numbers. Each
+// pixel then shifts its points by a blue-noise value (Cranley-Patterson
+// rotation), which spreads the remaining error as fine, even grain instead of
+// clumps: the image looks better long before it converges.
+uniform sampler2D uBlueNoise;  // 64x64, two independent void-and-cluster masks
+uint g_sampleIndex, g_dim;
+ivec2 g_pixel;
+
+uint lkPermute(uint x, uint seed) {  // Laine-Karras style hash permutation
+    x += seed;
+    x ^= x * 0x6c50b47cu;
+    x ^= x * 0xb82f1e52u;
+    x ^= x * 0xc7afe638u;
+    x ^= x * 0x8d22f6e6u;
+    return x;
+}
+uint nestedScramble(uint x, uint seed) { return bitfieldReverse(lkPermute(bitfieldReverse(x), seed)); }
+uint sobolDim1(uint i) {  // second Sobol dimension (primitive polynomial x + 1)
+    uint r = 0u, v = 1u << 31;
+    for (; i != 0u; i >>= 1, v ^= v >> 1)
+        if ((i & 1u) != 0u) r ^= v;
+    return r;
+}
+
+void rngSeed(uvec2 pixel, uint frame) {
+    g_pixel = ivec2(pixel);
+    g_sampleIndex = frame;
+    g_dim = 0u;
+}
+vec2 rand2() {
+    uint seed = pcgHash(g_dim * 0x9E3779B9u + 0x5bd1e995u);
+    uint idx = nestedScramble(g_sampleIndex, seed);  // shuffle: decorrelates dimension pairs
+    uvec2 s = uvec2(bitfieldReverse(idx), sobolDim1(idx));
+    s.x = nestedScramble(s.x, pcgHash(seed ^ 0xa511e9b3u));
+    s.y = nestedScramble(s.y, pcgHash(seed ^ 0x63d83595u));
+    // a different, fixed window of the blue-noise tile for every dimension pair
+    vec2 shift = texelFetch(uBlueNoise, (g_pixel + ivec2(int(g_dim) * 23, int(g_dim) * 41)) & 63, 0).rg;
+    g_dim++;
+    return fract(vec2(s) * (1.0 / 4294967296.0) + shift);
+}
+float rand() { return rand2().x; }

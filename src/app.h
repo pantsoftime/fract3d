@@ -221,6 +221,8 @@ public:
         float start = 0, yaw0 = 0, pitch0 = 0, dist0 = 1, yaw1 = 0, pitch1 = 0, dist1 = 1;
     } camAnim;
     bool quit = false;
+    bool idle = false;  // converged and nothing animating: wait for input instead of redrawing
+    bool computeIdle();
 };
 
 std::string timestampName();

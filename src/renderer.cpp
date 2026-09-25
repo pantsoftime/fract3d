@@ -1,5 +1,7 @@
 #include "renderer.h"
 
+#include "bluenoise.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -40,6 +42,15 @@ bool Renderer::init(const fs::path& dataDir, std::string& err) {
     glTextureParameteri(paletteTex_, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
     buildRetroLuts();
+
+    // two independent blue-noise masks (x and y shifts for the sampler in common.glsl)
+    std::vector<float> a = makeBlueNoise(64, 0x1234567u), b = makeBlueNoise(64, 0x89abcdefu), rg(64 * 64 * 2);
+    for (int i = 0; i < 64 * 64; i++) rg[i * 2] = a[i], rg[i * 2 + 1] = b[i];
+    glCreateTextures(GL_TEXTURE_2D, 1, &blueNoise_);
+    glTextureStorage2D(blueNoise_, 1, GL_RG32F, 64, 64);
+    glTextureSubImage2D(blueNoise_, 0, 0, 0, 64, 64, GL_RG, GL_FLOAT, rg.data());
+    glTextureParameteri(blueNoise_, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTextureParameteri(blueNoise_, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
     probeRT_.ensure(2, 1, GL_RG32F, GL_NEAREST);
     glCreateBuffers(2, probePbo_);
@@ -102,6 +113,7 @@ void Renderer::shutdown() {
     glDeleteBuffers(2, probePbo_);
     glDeleteTextures(1, &paletteTex_);
     glDeleteTextures(2, retroLut_);
+    glDeleteTextures(1, &blueNoise_);
     glDeleteVertexArrays(1, &vao_);
 }
 
@@ -316,6 +328,7 @@ bool Renderer::renderSample3D(RenderTarget& target, int sampleIndex, const Fract
     p.set("uSpecular", rs.specular);
     p.set("uRoughness", rs.roughness);
     p.set("uPalette", 0);
+    p.set("uBlueNoise", 5);
     setFractalParams(p, f, v.animTime);
 
     glBindFramebuffer(GL_FRAMEBUFFER, target.fbo);
@@ -327,6 +340,7 @@ bool Renderer::renderSample3D(RenderTarget& target, int sampleIndex, const Fract
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE);
     glBindTextureUnit(0, paletteTex_);
+    glBindTextureUnit(5, blueNoise_);
     glBindVertexArray(vao_);
     p.use();
     glDrawArrays(GL_TRIANGLES, 0, 3);

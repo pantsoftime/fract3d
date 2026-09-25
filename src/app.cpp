@@ -313,7 +313,10 @@ void App::setMode(ViewMode m) {
 
 // ------------------------------------------------------------------ frame
 void App::frame() {
-    glfwPollEvents();
+    // Nothing can change on screen until the user does something: sleep until an
+    // event arrives (waking now and then so edited shader files still reload).
+    if (idle) glfwWaitEventsTimeout(0.25);
+    else glfwPollEvents();
     now = glfwGetTime();
     double rawDt = now - lastFrameTime;
     dt = (float)std::min(rawDt, 0.1);  // animation/motion step, clamped after stalls
@@ -392,6 +395,23 @@ void App::frame() {
         quit = true;
     }
     glfwSwapBuffers(win);
+    idle = computeIdle();
+}
+
+bool App::computeIdle() {
+    if (cli.hidden) return false;  // headless renders and tests run flat out
+    if (poster.active || job2D.active || camAnim.active || dragButton >= 0 || flying) return false;
+    if (rs.cycleSpeed != 0.0f || glfwGetTime() < toastUntil) return false;
+    if (!animPaused)
+        for (auto& p : fractal().params)
+            if (p.animate) return false;
+    if (mode == ViewMode::Fractal3D) {
+        if (rend.status(fractal()) == Renderer::ProgStatus::Compiling) return false;
+        if (interactive || samples < (rs.renderMode ? rs.maxSamplesPT : rs.maxSamplesRT)) return false;
+    } else if (interactive) {
+        return false;
+    }
+    return true;
 }
 
 // ------------------------------------------------------------------ keys

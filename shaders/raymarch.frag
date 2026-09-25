@@ -57,6 +57,11 @@ uniform float uSpecular, uRoughness;
 
 float g_pixelAngle;
 
+// Glow and "step count" AO count ray-march steps. Measure them against a fixed
+// reference, so raising Max steps improves quality without changing the look.
+const float kStepReference = 256.0;
+float stepRatio(int steps) { return min(float(steps) / kStepReference, 1.0); }
+
 // ------------------------------------------------------------------ environment
 vec3 sky(vec3 rd, bool withSun) {
     if (uBackground == 1) return uBgColor;
@@ -98,12 +103,27 @@ Hit march(vec3 ro, vec3 rd, float tStart, float maxT, float epsScale) {
         if (tf > tStart) tFloor = tf;
     }
     float tEnd = min(maxT, tFloor);
+    float prevT = tStart;
     for (int i = 0; i < uMaxSteps; i++) {
         vec4 trap;
         float d = DE(ro + rd * h.t, trap);
         float eps = max(h.t * g_pixelAngle * uDetail * epsScale, 1e-7);
         h.steps = i;
-        if (d < eps) { h.hit = true; h.trap = trap; return h; }
+        if (d < eps) {
+            if (d < 0.0 && i > 0) {
+                // Overshot into the surface (distance estimates that aren't true distances,
+                // like height fields, can do this): bisect back to the crossing.
+                float a = prevT, b = h.t;
+                for (int k = 0; k < 10; k++) {
+                    float m = 0.5 * (a + b);
+                    if (DE(ro + rd * m, trap) < 0.0) b = m; else a = m;
+                }
+                h.t = b;
+                DE(ro + rd * h.t, trap);  // coloring data at the refined point
+            }
+            h.hit = true; h.trap = trap; return h;
+        }
+        prevT = h.t;
         h.t += d * uStepFactor;
         if (h.t > tEnd) break;
     }
@@ -201,10 +221,10 @@ vec3 cosineHemisphere(vec3 n) {
 
 // ------------------------------------------------------------------ shading
 vec3 shadeRealtime(vec3 ro, vec3 rd, Hit h, float maxT) {
-    float stepRatio = float(h.steps) / float(uMaxSteps);
-    vec3 glow = uGlowColor * uGlowStrength * pow(stepRatio, 1.5) * 2.0;
+    float sr = stepRatio(h.steps);
+    vec3 glow = uGlowColor * uGlowStrength * pow(sr, 1.5) * 2.0;
 
-    if (!h.hit) return sky(rd, true) + glow;
+    if (!h.hit) return sky(rd, false) + glow;  // the sun disc is added after fog, in main()
 
     vec3 p = ro + rd * h.t;
     float eps = max(h.t * g_pixelAngle * uDetail, 1e-7);
@@ -216,7 +236,7 @@ vec3 shadeRealtime(vec3 ro, vec3 rd, Hit h, float maxT) {
     if (uShadows != 0)
         sh = softShadow(p + n * eps * 4.0, uSunDir, eps * 4.0, uSceneScale * 4.0, 1.0 / max(uSunSize, 0.005));
     float ao = mix(1.0, ambientOcclusion(p, n, h.t * 0.06), uAOStrength);
-    ao *= mix(1.0, 1.0 - stepRatio, uAOStrength * 0.6);              // step-count AO (the classic look)
+    ao *= mix(1.0, 1.0 - sr, uAOStrength * 0.6);                    // step-count AO (the classic look)
 
     float ndl = max(dot(n, uSunDir), 0.0);
     vec3 skyAmb = mix(uSkyHorizon, uSkyZenith, n.y * 0.5 + 0.5) * uSkyIntensity;
@@ -242,12 +262,9 @@ vec3 tracePath(vec3 ro, vec3 rd, out float firstT) {
     float eps0 = 0.0;
     for (int b = 0; b <= uBounces; b++) {
         Hit h = march(ro, rd, 0.0, maxT, b == 0 ? 1.0 : 2.0);
-        if (b == 0) {
-            float stepRatio = float(h.steps) / float(uMaxSteps);
-            radiance += uGlowColor * uGlowStrength * pow(stepRatio, 1.5) * 2.0;
-        }
+        if (b == 0) radiance += uGlowColor * uGlowStrength * pow(stepRatio(h.steps), 1.5) * 2.0;
         if (!h.hit) {
-            radiance += throughput * sky(rd, b == 0);
+            radiance += throughput * sky(rd, false);  // primary rays get the sun disc in main(), after fog
             break;
         }
         vec3 p = ro + rd * h.t;
@@ -270,10 +287,20 @@ vec3 tracePath(vec3 ro, vec3 rd, out float firstT) {
             rd = cosineHemisphere(n);
         } else {
             vec3 r = reflect(rd, n);
+            float fres = 0.04 + 0.96 * pow(1.0 - max(dot(n, -rd), 0.0), 5.0);
+            vec3 specColor = mix(vec3(fres), alb, 0.3);
+            // next-event estimation toward the sun through the glossy lobe (normalized
+            // Phong), so path-traced surfaces get sun highlights; bounced rays that
+            // reach the sky leave the sun out, so it is never counted twice
+            vec3 L = sampleCone(uSunDir, max(uSunSize, 0.002));
+            float ndl = dot(n, L);
+            if (ndl > 0.0 && (uShadows == 0 || !occluded(pOff, L, eps0 * 2.0, maxT, eps0))) {
+                float shin = exp2(10.0 * (1.0 - g_rough) + 1.0);
+                radiance += throughput * specColor * uSunColor * pow(max(dot(r, L), 0.0), shin) * (shin + 2.0) * 0.5 * ndl;
+            }
             rd = normalize(mix(r, cosineHemisphere(n), g_rough * g_rough));
             if (dot(rd, n) < 0.0) break;
-            float fres = 0.04 + 0.96 * pow(1.0 - max(dot(n, -rd), 0.0), 5.0);
-            throughput *= mix(vec3(fres), alb, 0.3);
+            throughput *= specColor;
         }
         ro = pOff;
         maxT = uMaxDist * uSceneScale;
@@ -319,11 +346,15 @@ void main() {
         t = h.hit ? h.t : -1.0;
     }
 
-    // distance fog (relative to scene scale so it behaves at any zoom level)
+    // distance fog (relative to scene scale so it behaves at any zoom level). Rays that
+    // escape to the sky get fog only toward the horizon, so the zenith stays clear...
     if (uFogDensity > 0.0) {
-        float fd = t < 0.0 ? 1e9 : t / uSceneScale;
-        col = mix(uFogColor, col, exp(-fd * uFogDensity));
+        float amount = t < 0.0 ? (1.0 - exp(-uMaxDist * uFogDensity)) * (1.0 - smoothstep(0.0, 0.5, rd.y))
+                               : 1.0 - exp(-t / uSceneScale * uFogDensity);
+        col = mix(col, uFogColor, amount);
     }
+    // ...and the sun disc shows through it
+    if (t < 0.0 && uBackground == 0) col += sky(rd, true) - sky(rd, false);
 
     // guard against NaN/Inf fireflies poisoning the accumulation buffer
     if (any(isnan(col)) || any(isinf(col))) col = vec3(0);
