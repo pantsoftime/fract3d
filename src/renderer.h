@@ -23,7 +23,8 @@ struct View3D {
     float time = 0.0f;
     float animTime = 0.0f;
     int fullW = 1, fullH = 1;  // resolution of the whole image (for tiled renders)
-    float formulaP[6] = {0, 0, 0, 0, 0, 0};  // p1..p3 of the user formula (the landscape can use it)
+    float formulaP[5][2] = {};  // p1..p5 of the user formula (the landscape can use it)
+    float formulaMaxit = 100;   // its "maxit" (the landscape's iteration count)
 };
 
 class Renderer {
@@ -72,9 +73,11 @@ public:
     void setDeepOffset(double dx, double dy) { deepOffset_[0] = dx, deepOffset_[1] = dy; }
     int referenceLength() const { return refLen_; }
     // Transpiled user formula (see formula.h); empty to clear. Rebuilds the custom programs.
-    void setCustomFormula(const std::string& glsl);
-    const std::string& customFormulaError() const { return customError_; }
-    bool hasCustomFormula() const { return !customGlsl_.empty() && customError_.empty(); }
+    void setCustomFormula(const std::string& glsl, int slot = 0);
+    // Slot 0 is the main formula (2D view, posters, landscape); slot 1 is the Julia
+    // inset's (a formula's @julia partner), used by dispatch2D's stateSlot 1.
+    const std::string& customFormulaError(int slot = 0) const { return customError_[slot & 1]; }
+    bool hasCustomFormula(int slot = 0) const { return !customGlsl_[slot & 1].empty() && customError_[slot & 1].empty(); }
 
     // ---- final image: 3D accumulation or 2D iteration buffer -> fbo
     void display(ViewMode mode, const RenderTarget* accum, const IndexTarget* index, const RenderSettings& rs,
@@ -96,7 +99,7 @@ public:
 
 private:
     bool loadCore(std::string& err);
-    Program* classicProgram(bool fp64, bool custom);
+    Program* classicProgram(bool fp64, int customSlot);  // -1: the built-in formulas
     std::filesystem::file_time_type newestShaderTime() const;
     void buildRetroLuts();
 
@@ -104,14 +107,14 @@ private:
     std::filesystem::file_time_type coreTime_{};
     std::string vert_, common_, raymarch_, probeSrc_, classicSrc_;
     Program displayProg_;
-    Program classic_[2][2];  // [fp64][custom formula]
-    bool classicBuilt_[2][2] = {};
+    Program classic_[2][3];  // [fp64][built-in, custom slot 0, custom slot 1]
+    bool classicBuilt_[2][3] = {};
     Program classicDeep_;
     bool classicDeepBuilt_ = false;
     GLuint refSsbo_ = 0;
     int refLen_ = 0;
     double deepOffset_[2] = {0, 0};
-    std::string customGlsl_, customError_;
+    std::string customGlsl_[2], customError_[2];
     std::unordered_map<std::string, std::unique_ptr<FractalPrograms>> progs_;
     GLuint vao_ = 0, paletteTex_ = 0, retroLut_[2] = {0, 0}, blueNoise_ = 0;
     StateImages state2D_[2];

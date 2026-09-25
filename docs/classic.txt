@@ -60,6 +60,14 @@ Everything before the colon runs once per pixel; after it comes the loop, and it
 * "Lift into 3D landscape" works with your formula too.
 * Put your own .frm files in ~/.config/fract3d/formulas, or drop one onto the window.
 
+# The language
+* Numbers can be complex: (0.5, -0.2). Operators: + - * / ^, comparisons (they compare real parts), && and ||.
+* Built in: pixel, p1 to p5 (set in the panel), maxit (the iteration limit), whitesq (1 on every other pixel, like the white squares of a checkerboard), pi and e.
+* Branches, as in Fractint:
+$ if (|z| < 1)  z = z*z + c  elseif (real(z) > 0)  z = sin(z)  else  z = z/2  endif
+* Functions: sin cos tan cotan sinh cosh tanh cotanh cosxx exp log sqr sqrt abs conj flip ident recip zero one asin acos atan asinh acosh atanh floor ceil trunc round real imag cabs, and fn1 to fn4, which you choose in the panel.
+* A line "; @julia = OtherFormula" before a formula names the formula that draws its Julia sets (with c = p1): right-click then works like it does for the Mandelbrot set, and the Julia preview (J) shows it live.
+
 # Smooth colors for your formula
 Smooth coloring needs to know how far out the escape circle is and how fast z grows. The circle is read from a test like |z| <= 4 (radius 2). For other tests, or maps that aren't squares, add comment lines inside the formula:
 $ ; @bailout = 8     escape radius (|z| > 8 counts as escaped)

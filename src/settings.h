@@ -93,9 +93,11 @@ void visitClassic(Classic2DSettings& c, F&& f) {
     f("classic.banded", nullptr, &c.banded, 1, C);
     f("classic.coloring", nullptr, &c.coloring, 1, C);
     f("classic.trapSize", nullptr, &c.trapSize, 1, C);
-    f("classic.p1", nullptr, c.p1, 2, C);
-    f("classic.p2", nullptr, c.p2, 2, C);
-    f("classic.p3", nullptr, c.p3, 2, C);
+    f("classic.p1", nullptr, c.formulaP[0], 2, C);
+    f("classic.p2", nullptr, c.formulaP[1], 2, C);
+    f("classic.p3", nullptr, c.formulaP[2], 2, C);
+    f("classic.p4", nullptr, c.formulaP[3], 2, C);
+    f("classic.p5", nullptr, c.formulaP[4], 2, C);
     f("classic.supersample", nullptr, &c.supersample, 1, D);
     f("classic.colorDensity", nullptr, &c.colorDensity, 1, D);
     f("classic.insideMode", nullptr, &c.insideMode, 1, D);

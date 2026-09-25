@@ -90,7 +90,7 @@ void sanitize(Classic2DSettings& c) {
     fix(c.rootSpread, 0.0f, 256.0f, d.rootSpread);
     fix(c.coloring, 0, kColoringModeCount - 1, d.coloring);
     fix(c.trapSize, 0.01f, 100.0f, d.trapSize);
-    for (float* p : {c.p1, c.p2, c.p3})
+    for (auto& p : c.formulaP)
         for (int k = 0; k < 2; k++) fix(p[k], -1e6f, 1e6f, 0.0f);
 }
 

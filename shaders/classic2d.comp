@@ -76,7 +76,8 @@ void accumulate(CPLX z) {
 
 // With CUSTOM_FORMULA defined, the host has placed the transpiled user formula
 // (src/formula.cpp) before this file: frm_init(pixel), frm_step(i) -> keep going?,
-// frm_z(), frm_save(...) and frm_load(pixel, ...) for the orbit state.
+// frm_z(), frm_save(...) and frm_load(pixel, ...) for the orbit state, and the
+// v_whitesq global this file sets.
 
 ivec2 g_local;
 void finish(float value, float aux, int iter, uint flags) {
@@ -221,6 +222,7 @@ void main() {
         g_accA = uColoring == 4 || uColoring == 5 ? 1e20 : 0.0;
         g_accB = 0.0;
 #ifdef CUSTOM_FORMULA
+        v_whitesq = vec2(float((pix.x + pix.y) & 1), 0.0);  // Fractint's whitesq: alternate pixels
         frm_init(vec2(pixel));
         z = CPLX(frm_z());
 #endif
@@ -234,6 +236,7 @@ void main() {
         z = unpackC(imageLoad(uState0, g_local));
         zprev = unpackC(imageLoad(uState1, g_local));
 #ifdef CUSTOM_FORMULA
+        v_whitesq = vec2(float((pix.x + pix.y) & 1), 0.0);
         frm_load(vec2(pixel), imageLoad(uState0, g_local), imageLoad(uState1, g_local), imageLoad(uState3, g_local));
 #endif
     }

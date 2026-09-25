@@ -75,8 +75,9 @@ if(FRACT3D_TESTS)
   enable_testing()
   add_executable(imgdiff tools/imgdiff.cpp)
   target_include_directories(imgdiff SYSTEM PRIVATE third_party/stb)
-  add_executable(itercheck tools/itercheck.cpp)
-  target_link_libraries(itercheck PRIVATE PkgConfig::MPFR)
+  add_executable(itercheck tools/itercheck.cpp src/formula.cpp src/gl_util.cpp)
+  target_include_directories(itercheck PRIVATE src)
+  target_link_libraries(itercheck PRIVATE PkgConfig::MPFR PkgConfig::EPOXY)
 
   set(TEST_OUT ${CMAKE_BINARY_DIR}/test-out)
   file(MAKE_DIRECTORY ${TEST_OUT})
@@ -127,7 +128,8 @@ if(FRACT3D_TESTS)
   # app logic that normally needs input: undo/redo, PAR round trips, sanitizing
   add_test(NAME app.self-test COMMAND fract3d --self-test)
 
-  # formula parser/transpiler unit tests, and every shipped formula on the GPU
+  # formula parser/transpiler/interpreter unit tests, and every shipped formula on the GPU
+  # checked against the interpreter
   add_executable(formula_test tests/formula_test.cpp src/formula.cpp)
   target_include_directories(formula_test PRIVATE src)
   add_test(NAME formula.unit COMMAND formula_test ${CMAKE_SOURCE_DIR}/formulas/classics.frm)
@@ -135,8 +137,21 @@ if(FRACT3D_TESTS)
   file(STRINGS ${CMAKE_SOURCE_DIR}/formulas/classics.frm FRM_HEADERS REGEX "^[A-Za-z0-9_]+ *[({]")
   foreach(h ${FRM_HEADERS})
     string(REGEX MATCH "^[A-Za-z0-9_]+" fname "${h}")
-    add_test(NAME formula.${fname} COMMAND fract3d --formula ${fname} --render ${TEST_OUT}/formula-${fname}.png --size 96x54)
+    add_test(NAME formula.${fname}
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:fract3d> -DCHECK=$<TARGET_FILE:itercheck>
+                     -DFRM=${CMAKE_SOURCE_DIR}/formulas/classics.frm -DNAME=${fname} -DOUT=${TEST_OUT}
+                     -P ${CMAKE_SOURCE_DIR}/tests/formula_check.cmake)
   endforeach()
+  file(STRINGS ${CMAKE_SOURCE_DIR}/tests/formulas/language.frm LANG_HEADERS REGEX "^[A-Za-z0-9_]+ *[({]")
+  foreach(h ${LANG_HEADERS})
+    string(REGEX MATCH "^[A-Za-z0-9_]+" fname "${h}")
+    add_test(NAME formula.language-${fname}
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:fract3d> -DCHECK=$<TARGET_FILE:itercheck>
+                     -DFRM=${CMAKE_SOURCE_DIR}/tests/formulas/language.frm -DNAME=${fname} -DOUT=${TEST_OUT}
+                     -P ${CMAKE_SOURCE_DIR}/tests/formula_check.cmake)
+  endforeach()
+  add_test(NAME ui.formula-inset-and-orbit COMMAND fract3d --formula FnMandel --inset --orbit --mouse 820,300
+                                                   --ui-shot ${TEST_OUT}/ui-formula-inset.png --size 1600x900 --frames 30)
   add_test(NAME formula.in-3d-landscape
            COMMAND fract3d --par ${CMAKE_SOURCE_DIR}/tests/custom-landscape.par --render ${TEST_OUT}/formula-3d.png --size 96x54 --samples 1)
   add_test(NAME ui.julia-inset-and-orbit COMMAND fract3d --2d --inset --orbit --mouse 700,330 --ui-shot ${TEST_OUT}/ui-inset.png --size 1280x720 --frames 30)

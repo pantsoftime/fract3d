@@ -19,6 +19,7 @@ static void usage() {
         "  --theme modern|fractint   UI theme\n"
         "  --gl-debug           print OpenGL errors and performance warnings\n"
         "  --formula NAME       start in Classic 2D with a formula from formulas/*.frm\n"
+        "  --frm FILE           load more formulas from a .frm file\n"
         "  --path FILE          load a camera path (.f3dpath); with --render out.mp4 it's exported\n"
         "  --fps N              frame rate for video export (default 30)\n"
         "  --path-time T        with --path and --render out.png: render the path at T seconds\n");
@@ -53,6 +54,7 @@ int main(int argc, char** argv) {
         else if (a == "--theme") o.theme = next() == "fractint" ? 1 : 0;
         else if (a == "--gl-debug") o.glDebug = true;
         else if (a == "--formula") o.formula = next();
+        else if (a == "--frm") o.frmFiles.push_back(next());
         else if (a == "--mouse") {  // testing: pretend the cursor is here (window coordinates)
             std::string s = next();
             if (sscanf(s.c_str(), "%f,%f", &o.fakeMouse[0], &o.fakeMouse[1]) != 2) { fprintf(stderr, "bad --mouse\n"); return 2; }

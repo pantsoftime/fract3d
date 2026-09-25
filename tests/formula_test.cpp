@@ -1,6 +1,7 @@
 // Unit tests for the formula parser/transpiler (no GPU needed).
 #include "formula.h"
 
+#include <complex>
 #include <cstdio>
 #include <fstream>
 #include <sstream>
@@ -69,6 +70,73 @@ int main(int argc, char** argv) {
     CHECK(tr("M { ; @power = 3\n z = 0: z = z*z*z + pixel, |z| <= 4 }").power == 3.0, "@power annotation");
     CHECK(tr("M { ; @bailout = 8\n z = 0: z = exp(z) + pixel, |real(z)| < 50 }").bailout == 8.0, "@bailout annotation");
     CHECK(tr("M { ; @smooth = 0\n z = 0: z = z*z + pixel, |z| <= 4 }").bailout == 0.0, "@smooth = 0");
+
+    // ---- the CPU interpreter (FormulaVM): same semantics as the GLSL
+    using C = std::complex<double>;
+    auto near = [](C a, C b, double tol = 1e-9) { return std::abs(a - b) <= tol * std::max(1.0, std::abs(b)); };
+    auto run = [&](const std::string& src, C pixel, int steps, const int* fn = nullptr, C p1 = 0) {
+        int f0[4] = {0, 0, 0, 0};
+        auto t = transpileFormula(src, fn ? fn : f0);
+        if (!t.ok) fprintf(stderr, "  %s\n", t.error.c_str());
+        FormulaVM vm(t);
+        C ps[kFormulaParams] = {p1, 0, 0, 0, 0};
+        vm.setParams(ps, 100);
+        vm.init(pixel);
+        for (int i = 0; i < steps; i++) vm.step();
+        return vm.z();
+    };
+    {   // Mandelbrot orbit against plain complex arithmetic
+        C c(-0.2, 0.3), z = 0;  // (inside the set: the orbit converges, so rounding differences don't grow)
+        for (int i = 0; i < 50; i++) z = z * z + c;
+        CHECK(near(run("M { z = 0, c = pixel: z = z*z + c, |z| <= 4 }", c, 50), z), "VM: Mandelbrot orbit");
+    }
+    {   // escape iteration
+        auto t = tr("M { z = 0: z = z*z + pixel, |z| <= 4 }");
+        FormulaVM vm(t);
+        vm.init(C(0.3, 0.6));
+        int n = 0;
+        while (vm.step() && n < 1000) n++;
+        C z = 0;
+        int m = 0;
+        for (;; m++) { z = z * z + C(0.3, 0.6); if (std::norm(z) > 4) break; }
+        CHECK(n == m, "VM: escapes at the same iteration as direct arithmetic");
+    }
+    // if / elseif / else / endif (on separate lines, and compact)
+    const char* branchy = "B { z = 0 :\n if (real(pixel) < 0)\n z = (-1, 0)\n elseif (real(pixel) < 1)\n z = (1, 0)\n else\n z = (2, 0)\n endif\n 0 }";
+    CHECK(tr(branchy).ok, "if/elseif/else/endif parses");
+    CHECK(run(branchy, -0.5, 1) == C(-1, 0) && run(branchy, 0.5, 1) == C(1, 0) && run(branchy, 5, 1) == C(2, 0),
+          "VM: if/elseif/else picks the right branch");
+    CHECK(run("B { z = 0: if (real(pixel) > 0), z = z + 1, endif, 1 }", 1, 3) == C(3, 0), "compact if with commas");
+    CHECK(errorContains("B { z = 0: if (z < 1) z = 1, |z| < 4 }", "'if' without 'endif'"), "missing endif");
+    CHECK(errorContains("B { z = 0: endif, |z| < 4 }", "without 'if'"), "endif without if");
+    CHECK(errorContains("B { z = 0: z = z + 1, if (z < 1) z = 1 endif }", "must end with the bailout test"), "loop ending in if");
+    // new built-ins
+    CHECK(tr("P { z = p4 + p5: z = z, 1 }").usesP[3] && tr("P { z = p4 + p5: z = z, 1 }").usesP[4], "p4, p5 detected");
+    CHECK(run("P { z = maxit: z = z, 1 }", 0, 1) == C(100, 0), "maxit");
+    CHECK(tr("W { z = whitesq: z = z, 1 }").usesWhitesq, "whitesq detected");
+    // functions: inverses, rounding, Fractint specials
+    C a(0.3, 0.2);
+    auto fnOf = [&](const char* name, C x) {
+        std::string src = std::string("F { z = ") + name + "(pixel): z = z, 1 }";
+        return run(src, x, 0);
+    };
+    CHECK(near(fnOf("asin", fnOf("sin", a)), a) && near(fnOf("acos", fnOf("cos", a)), a) && near(fnOf("atan", fnOf("tan", a)), a),
+          "asin/acos/atan invert sin/cos/tan");
+    CHECK(near(fnOf("asinh", fnOf("sinh", a)), a) && near(fnOf("acosh", fnOf("cosh", C(1.3, 0.2))), C(1.3, 0.2)) &&
+              near(fnOf("atanh", fnOf("tanh", a)), a),
+          "asinh/acosh/atanh invert sinh/cosh/tanh");
+    CHECK(near(fnOf("cotanh", a), 1.0 / std::tanh(a)) && near(fnOf("cosxx", a), std::conj(std::cos(a))), "cotanh, cosxx");
+    CHECK(fnOf("round", C(-2.5, 2.5)) == C(-3, 3) && fnOf("floor", C(-0.5, 1.5)) == C(-1, 1) &&
+              fnOf("ceil", C(-0.5, 1.5)) == C(0, 2) && fnOf("trunc", C(-1.7, 1.7)) == C(-1, 1),
+          "round/floor/ceil/trunc work per component");
+    CHECK(fnOf("zero", a) == C(0, 0) && fnOf("one", a) == C(1, 0) && near(fnOf("cabs", C(3, 4)), C(5, 0)) &&
+              fnOf("real", a) == C(0.3, 0) && fnOf("imag", a) == C(0.2, 0),
+          "zero, one, cabs, real, imag");
+    int fnCos[4] = {1, 0, 0, 0};
+    CHECK(near(run("F { z = fn1(pixel): z = z, 1 }", a, 0, fnCos), std::cos(a)), "fn1 follows the UI's choice");
+    CHECK(near(run("J { z = pixel, c = p1: z = z*z + c, |z| <= 4 }", a, 2, nullptr, C(-0.8, 0.156)),
+               (a * a + C(-0.8, 0.156)) * (a * a + C(-0.8, 0.156)) + C(-0.8, 0.156)),
+          "p1 reaches the formula");
 
     // helpful errors
     CHECK(errorContains("M { z = 0: z = foo(z), |z| < 4 }", "unknown function 'foo'"), "unknown function");

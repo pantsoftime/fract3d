@@ -40,7 +40,7 @@ Mandelbulb, Mandelbox, Menger sponge, Sierpinski tetrahedron, Kaleidoscopic IFS,
 - progressive rendering in resumable chunks (Fractint's scanline reveal), so even millions of iterations never stall the desktop
 - **Lift into 3D** turns the current view into a landscape
 
-**Formula files.** Fractint-style `.frm` formulas (`Name { init : loop, test }`, with `|z|`, `fn1..fn4`, `p1..p3`) are transpiled to GPU code; twelve classics ship in `formulas/`, and the editor compiles yours with Ctrl+Enter. They work in 2D and as 3D landscapes.
+**Formula files.** Fractint-style `.frm` formulas (`Name { init : loop, test }`, with `|z|`, `if/elseif/else/endif`, `fn1..fn4`, `p1..p5`, `maxit`, `whitesq` and Fractint's function list) are transpiled to GPU code; thirteen classics ship in `formulas/`, and the editor compiles yours with Ctrl+Enter. They work in 2D and as 3D landscapes, and a CPU interpreter of the same language drives the orbit viewer (and checks the GPU in the tests).
 
 **Animation.** Add keyframes (K), and the app flies smoothly between them - camera, lighting, colors and every parameter are interpolated; 2D zooms keep a constant zoom rate. Export to MP4 through ffmpeg (x264 or NVENC).
 

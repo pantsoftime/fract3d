@@ -123,6 +123,12 @@ bool App::init(const CliOptions& opts) {
     palettes.push_back(makeGradientPalette("Custom (gradient editor)", view.gradient));
 
     refreshDocs();
+    for (auto& f : session.cli.frmFiles) {
+        bool ok = false;
+        auto defs = parseFormulaFile(readTextFile(f, &ok));
+        if (!ok) fprintf(stderr, "fract3d: can't read %s\n", f.c_str());
+        formulas.insert(formulas.end(), defs.begin(), defs.end());
+    }
     // a user formula is always compiled, so "Custom formula" works from the start
     if (!selectFormula(session.cli.formula.empty() ? "Mandel" : session.cli.formula) && !formulas.empty()) {
         if (!session.cli.formula.empty()) fprintf(stderr, "fract3d: no formula named %s\n", session.cli.formula.c_str());
@@ -313,10 +319,9 @@ bool App::selectFormula(const std::string& name) {
     view.formulaSource = f->source;
     ui.formulaEdit = f->source;
     // the formula's suggested parameters and view (see the @ lines in formulas/*.frm)
-    float* ps[3] = {view.cs.p1, view.cs.p2, view.cs.p3};
-    for (int i = 0; i < 3; i++) {
-        ps[i][0] = f->hasP[i] ? f->p[i][0] : 0.0f;
-        ps[i][1] = f->hasP[i] ? f->p[i][1] : 0.0f;
+    for (int i = 0; i < kFormulaParams; i++) {
+        view.cs.formulaP[i][0] = f->hasP[i] ? f->p[i][0] : 0.0f;
+        view.cs.formulaP[i][1] = f->hasP[i] ? f->p[i][1] : 0.0f;
     }
     for (int i = 0; i < 4; i++)
         if (f->fn[i] >= 0) view.fn[i] = f->fn[i];
@@ -565,7 +570,7 @@ int App::selfTest() {
     // custom formulas: right-click goes to the @julia partner with c = p1, and back
     loadParText("mode = 2d\nclassic.formula = 8\nformula.name = FnMandel\nformula.fn = 5 0 0 0\nclassic.center = 1 0.5\n", "julia", true);
     toggleJulia(-0.25, 0.75);
-    check(view.formulaName == "FnJulia" && view.cs.p1[0] == -0.25f && view.cs.p1[1] == 0.75f && view.fn[0] == 5,
+    check(view.formulaName == "FnJulia" && view.cs.formulaP[0][0] == -0.25f && view.cs.formulaP[0][1] == 0.75f && view.fn[0] == 5,
           "right-click on FnMandel shows FnJulia for that c (same fn1)");
     toggleJulia(0, 0);
     check(view.formulaName == "FnMandel" && view.cs.cx == 1.0 && view.cs.cy == 0.5 && view.fn[0] == 5,
@@ -1126,12 +1131,12 @@ void App::toggleJulia(double px, double py) {
     if (view.cs.formula == kCustomFormula) {
         // A formula's Julia sets are another formula (named by "; @julia = Name"),
         // with the clicked point as p1 - Fractint's formula files worked the same way.
-        float* ps[3] = {view.cs.p1, view.cs.p2, view.cs.p3};
+        auto& ps = view.cs.formulaP;
         if (!juliaReturn.formula.empty()) {
             std::string back = juliaReturn.formula;
             juliaReturn.formula.clear();
             selectFormula(back);
-            for (int i = 0; i < 3; i++) ps[i][0] = juliaReturn.p[i][0], ps[i][1] = juliaReturn.p[i][1];
+            for (int i = 0; i < kFormulaParams; i++) ps[i][0] = juliaReturn.p[i][0], ps[i][1] = juliaReturn.p[i][1];
             std::copy(juliaReturn.fn, juliaReturn.fn + 4, view.fn);
             compileFormula();
             view.cs.cx = savedMandel[0], view.cs.cy = savedMandel[1], view.cs.height = savedMandel[2];
@@ -1151,12 +1156,12 @@ void App::toggleJulia(double px, double py) {
         savedMandel[0] = view.cs.cx, savedMandel[1] = view.cs.cy, savedMandel[2] = view.cs.height;
         savedMandelHP[0] = view.hpRe, savedMandelHP[1] = view.hpIm;
         juliaReturn.formula = view.formulaName;
-        for (int i = 0; i < 3; i++) juliaReturn.p[i][0] = ps[i][0], juliaReturn.p[i][1] = ps[i][1];
+        for (int i = 0; i < kFormulaParams; i++) juliaReturn.p[i][0] = ps[i][0], juliaReturn.p[i][1] = ps[i][1];
         std::copy(view.fn, view.fn + 4, juliaReturn.fn);
         std::string partner = d->julia;
         selectFormula(partner);  // its own @view and defaults...
         std::copy(juliaReturn.fn, juliaReturn.fn + 4, view.fn);  // ...but the same functions
-        view.cs.p1[0] = (float)px, view.cs.p1[1] = (float)py;
+        view.cs.formulaP[0][0] = (float)px, view.cs.formulaP[0][1] = (float)py;
         compileFormula();
         char buf[160];
         snprintf(buf, sizeof buf, "%s for c = p1 = %.6f %+.6fi (right-click again to go back)", partner.c_str(), px, py);
@@ -1208,8 +1213,8 @@ View3D App::makeView(int w, int h) const {
     v.animTime = animTime;
     v.fullW = w;
     v.fullH = h;
-    const float* ps[3] = {view.cs.p1, view.cs.p2, view.cs.p3};
-    for (int i = 0; i < 3; i++) v.formulaP[2 * i] = ps[i][0], v.formulaP[2 * i + 1] = ps[i][1];
+    std::copy(&view.cs.formulaP[0][0], &view.cs.formulaP[0][0] + 10, &v.formulaP[0][0]);
+    if (const Param* it = lib_.all()[view.fractal].find("iterations")) v.formulaMaxit = it->value[0];
     return v;
 }
 
@@ -1237,9 +1242,7 @@ std::vector<uint8_t> App::signature3D(int w, int h) const {
     appendBytes(s, view.fractal);
     appendBytes(s, generation);
     appendBytes(s, formulaGeneration);  // the landscape can use the user formula...
-    appendBytes(s, view.cs.p1);         // ...and its parameters
-    appendBytes(s, view.cs.p2);
-    appendBytes(s, view.cs.p3);
+    appendBytes(s, view.cs.formulaP);   // ...and its parameters
     appendBytes(s, paletteVersion);
     appendBytes(s, w);
     appendBytes(s, h);
@@ -1537,11 +1540,30 @@ bool App::ensureReference(int targetH, bool wait) {
 // ------------------------------------------------------------------ Julia inset
 // Fractint could show the Julia set belonging to the point under the cursor
 // while you explored the Mandelbrot set. Same here: a small live preview.
+const FormulaDef* App::juliaPartner() const {
+    if (view.cs.formula != kCustomFormula) return nullptr;
+    const FormulaDef* d = findFormula(view.formulaName);
+    return d && !d->julia.empty() ? findFormula(d->julia) : nullptr;
+}
+
 void App::updateJuliaInset() {
     const auto& c0 = view.cs;
+    const FormulaDef* partner = juliaPartner();
     bool usable = ui.showJuliaInset && view.mode == ViewMode::Classic2D && !c0.julia && c0.formula != 4 &&
-                  c0.formula != kCustomFormula && ImGui::IsMousePosValid() && !ImGui::GetIO().WantCaptureMouse;
+                  (c0.formula != kCustomFormula || partner) && ImGui::IsMousePosValid() && !ImGui::GetIO().WantCaptureMouse;
     if (!usable) return;
+    bool restart = false;
+    if (partner) {  // custom formulas: the inset draws the @julia partner with c = p1 (its own program slot)
+        std::string key = partner->source + "|" + std::to_string(view.fn[0]) + std::to_string(view.fn[1]) +
+                          std::to_string(view.fn[2]) + std::to_string(view.fn[3]);
+        if (key != inset.formula) {
+            TranspiledFormula t = transpileFormula(partner->source, view.fn);
+            if (!t.ok) return;
+            rend.setCustomFormula(t.glsl, 1);
+            inset.formula = key;
+            restart = true;
+        }
+    }
     ImGuiIO& io = ImGui::GetIO();
     float sx = (float)fbW / std::max(winW, 1), sy = (float)fbH / std::max(winH, 1);
     double ps = c0.height / fbH;
@@ -1549,7 +1571,7 @@ void App::updateJuliaInset() {
     if (c0.formula == 1) py = -py;  // Burning Ship is drawn flipped
     int size = std::clamp(fbH / 3, 128, 512);
     if (!inset.index.ensure(size, size) || !inset.image.ensure(size, size, GL_RGBA8, GL_LINEAR)) return;
-    if (px != inset.jx || py != inset.jy || (!inset.job.active && !inset.ready)) {
+    if (restart || px != inset.jx || py != inset.jy || (!inset.job.active && !inset.ready)) {
         inset.jx = px;
         inset.jy = py;
         Job2D& j = inset.job;
@@ -1562,6 +1584,13 @@ void App::updateJuliaInset() {
         j.cs.cx = 0;
         j.cs.cy = 0;
         j.cs.height = 3.2;
+        if (partner) {  // the partner's own defaults and view, with c = p1 = the point
+            j.cs.julia = false;
+            for (int i = 0; i < kFormulaParams; i++)
+                j.cs.formulaP[i][0] = partner->hasP[i] ? partner->p[i][0] : 0.0f, j.cs.formulaP[i][1] = partner->hasP[i] ? partner->p[i][1] : 0.0f;
+            j.cs.formulaP[0][0] = (float)px, j.cs.formulaP[0][1] = (float)py;
+            if (partner->hasView) j.cs.cx = partner->view[0], j.cs.cy = partner->view[1], j.cs.height = partner->view[2];
+        }
         j.cs.supersample = 1;
         j.cs.maxIter = std::min(c0.maxIter, 2000);
         j.chunk = j.cs.maxIter;

@@ -34,6 +34,7 @@ struct CliOptions {
     int uiShotFrames = 90;
     int theme = -1;          // override the saved UI theme
     std::string formula;     // start in Classic 2D with this formula from the formula files
+    std::vector<std::string> frmFiles;  // --frm: more formula files to load (like dropping them on the window)
     bool glDebug = false;    // report OpenGL errors (always on in debug builds)
     bool glDebugVerbose = false;
     bool selfTest = false;
@@ -220,7 +221,7 @@ public:
     std::string formulaError;
     std::string compiledSource;  // what the renderer has now (compileFormula skips identical requests)
     int compiledFn[4] = {-1, -1, -1, -1};
-    TranspiledFormula formulaInfo;     // what the current formula uses (fn1..4, p1..3)
+    TranspiledFormula formulaInfo;     // what the current formula uses (fn1..4, p1..5)
 
     // progressive 3D accumulation
     std::vector<uint8_t> lastSig3D;
@@ -260,7 +261,9 @@ public:
         RenderTarget image;   // palette-mapped result, drawn by ImGui
         double jx = 1e9, jy = 1e9;  // c of the image being shown/rendered
         bool ready = false;
+        std::string formula;  // custom formulas: the @julia partner (+ fn choices) compiled for the inset
     } inset;
+    const FormulaDef* juliaPartner() const;  // the current custom formula's @julia partner, if any
     void updateJuliaInset();
 
     // probe results
@@ -286,7 +289,7 @@ public:
     // custom formulas: the formula and parameters to return to from its @julia partner
     struct {
         std::string formula;
-        float p[3][2];
+        float p[kFormulaParams][2];
         int fn[4];
     } juliaReturn;
     // deep zoom

@@ -85,7 +85,7 @@ struct Classic2DSettings {
     bool showOrbit = false;
     int coloring = 0;       // outside coloring mode, see kColoringModes
     float trapSize = 4.0f;  // stripe density / orbit trap scale
-    float p1[2] = {0, 0}, p2[2] = {0, 0}, p3[2] = {0, 0};  // user formula parameters
+    float formulaP[5][2] = {};  // user formula parameters p1..p5 (kFormulaParams)
 };
 
 inline const char* kClassicFormulas[] = {"Mandelbrot", "Burning Ship", "Tricorn (Mandelbar)", "Multibrot",

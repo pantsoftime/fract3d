@@ -175,31 +175,34 @@ bool Renderer::loadCore(std::string& err) {
     return true;
 }
 
-Program* Renderer::classicProgram(bool fp64, bool custom) {
-    if (custom && customGlsl_.empty()) return nullptr;
-    Program& p = classic_[fp64][custom];
-    if (!classicBuilt_[fp64][custom]) {
-        classicBuilt_[fp64][custom] = true;
+Program* Renderer::classicProgram(bool fp64, int customSlot) {
+    bool custom = customSlot >= 0;
+    int k = custom ? 1 + customSlot : 0;
+    if (custom && customGlsl_[customSlot].empty()) return nullptr;
+    Program& p = classic_[fp64][k];
+    if (!classicBuilt_[fp64][k]) {
+        classicBuilt_[fp64][k] = true;
         std::string header = "#version 460\n";
         if (fp64) header += "#define FP64\n";
         if (custom) header += "#define CUSTOM_FORMULA\n";
         std::vector<ShaderChunk> chunks = {{"header", header}, {"common.glsl", common_}};
-        if (custom) chunks.push_back({"(your formula)", customGlsl_});
+        if (custom) chunks.push_back({"(your formula)", customGlsl_[customSlot]});
         chunks.push_back({"classic2d.comp", classicSrc_});
-        if (!p.buildCompute(chunks) && custom) customError_ = p.error();
+        if (!p.buildCompute(chunks) && custom) customError_[customSlot] = p.error();
     }
     return p.valid() ? &p : nullptr;
 }
 
-void Renderer::setCustomFormula(const std::string& glsl) {
-    customGlsl_ = glsl;
-    customError_.clear();
+void Renderer::setCustomFormula(const std::string& glsl, int slot) {
+    slot &= 1;
+    customGlsl_[slot] = glsl;
+    customError_[slot].clear();
     for (int fp = 0; fp < 2; fp++) {
-        classic_[fp][1] = Program();
-        classicBuilt_[fp][1] = false;
+        classic_[fp][1 + slot] = Program();
+        classicBuilt_[fp][1 + slot] = false;
     }
-    if (!glsl.empty()) classicProgram(false, true);  // compile now so errors show immediately
-    progs_.erase("landscape");                       // it embeds the formula too
+    if (!glsl.empty()) classicProgram(false, slot);  // compile now so errors show immediately
+    if (slot == 0) progs_.erase("landscape");        // it embeds the (main) formula too
 }
 
 bool Renderer::reloadCoreIfChanged() {
@@ -230,10 +233,10 @@ Renderer::FractalPrograms& Renderer::programs(const Fractal& f) {
     fp.error.clear();
     std::string fname = f.path.filename().string();
     // The landscape can use the user's 2D formula: splice it in when there is one.
-    bool withFormula = f.key == "landscape" && hasCustomFormula();
+    bool withFormula = f.key == "landscape" && hasCustomFormula(0);
     std::vector<ShaderChunk> trace = {{"header", withFormula ? "#version 460\n#define HAVE_CUSTOM_FORMULA\n" : "#version 460\n"},
                                       {"common.glsl", common_}};
-    if (withFormula) trace.push_back({"(your formula)", customGlsl_});
+    if (withFormula) trace.push_back({"(your formula)", customGlsl_[0]});
     trace.push_back({"(parameters of " + fname + ")", f.uniformDecls()});
     trace.push_back({fname, f.code});
     trace.push_back({"raymarch.frag", raymarch_});
@@ -260,6 +263,12 @@ void Renderer::warmUp(const std::vector<Fractal>& all) {
 }
 
 // ------------------------------------------------------------------ 3D
+static void setFormulaUniforms(Program& p, const float fp[5][2], float maxit) {
+    static const char* names[5] = {"uP1", "uP2", "uP3", "uP4", "uP5"};
+    for (int i = 0; i < 5; i++) p.set(names[i], fp[i][0], fp[i][1]);
+    p.set("uFrmMaxit", maxit);
+}
+
 static void setFractalParams(Program& prog, const Fractal& f, float animTime) {
     for (auto& p : f.params) {
         float v[4];
@@ -339,9 +348,7 @@ bool Renderer::renderSample3D(RenderTarget& target, int sampleIndex, const Fract
     p.set("uRoughness", rs.roughness);
     p.set("uPalette", 0);
     p.set("uBlueNoise", 5);
-    p.set("uP1", v.formulaP[0], v.formulaP[1]);  // only the landscape's custom formula uses these
-    p.set("uP2", v.formulaP[2], v.formulaP[3]);
-    p.set("uP3", v.formulaP[4], v.formulaP[5]);
+    setFormulaUniforms(p, v.formulaP, v.formulaMaxit);  // only the landscape's custom formula uses these
     setFractalParams(p, f, v.animTime);
 
     glBindFramebuffer(GL_FRAMEBUFFER, target.fbo);
@@ -407,7 +414,7 @@ bool Renderer::dispatch2D(IndexTarget& out, const Classic2DSettings& cs, int y0,
         if (!classicDeep_.valid() || refLen_ < 2) return false;
         pp = &classicDeep_;
     } else {
-        pp = classicProgram(classicUsesFp64(cs, out.h), custom);
+        pp = classicProgram(classicUsesFp64(cs, out.h), custom ? stateSlot & 1 : -1);  // the inset (slot 1) has its own formula
     }
     if (!pp) return false;
     Program& p = *pp;
@@ -432,9 +439,7 @@ bool Renderer::dispatch2D(IndexTarget& out, const Classic2DSettings& cs, int y0,
     p.set("uPhoenixP", cs.phoenixP[0], cs.phoenixP[1]);
     p.set("uColoring", cs.coloring);
     p.set("uTrapSize", cs.trapSize);
-    p.set("uP1", cs.p1[0], cs.p1[1]);
-    p.set("uP2", cs.p2[0], cs.p2[1]);
-    p.set("uP3", cs.p3[0], cs.p3[1]);
+    setFormulaUniforms(p, cs.formulaP, (float)cs.maxIter);
     if (deep) {
         double pixel = cs.height / out.h;
         p.setd("uRefOffsetPx", deepOffset_[0] / pixel, deepOffset_[1] / pixel);
@@ -508,9 +513,7 @@ bool Renderer::probe(const Fractal& f, const RenderSettings& rs, const View3D& v
     p.set("uMaxT", rs.maxDist * v.sceneScale);
     p.set("uFloor", (int)rs.floorOn);
     p.set("uFloorY", rs.floorY);
-    p.set("uP1", v.formulaP[0], v.formulaP[1]);
-    p.set("uP2", v.formulaP[2], v.formulaP[3]);
-    p.set("uP3", v.formulaP[4], v.formulaP[5]);
+    setFormulaUniforms(p, v.formulaP, v.formulaMaxit);  // only the landscape's custom formula uses these
     setFractalParams(p, f, v.animTime);
     glBindFramebuffer(GL_FRAMEBUFFER, probeRT_.fbo);
     glViewport(0, 0, 2, 1);

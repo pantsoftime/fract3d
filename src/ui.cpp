@@ -854,9 +854,9 @@ void App::drawJuliaInset() {
         ImGui::End();
         return;
     }
-    bool applicable = !view.cs.julia && view.cs.formula != 4 && view.cs.formula != kCustomFormula;
+    bool applicable = !view.cs.julia && view.cs.formula != 4 && (view.cs.formula != kCustomFormula || juliaPartner());
     if (!applicable) {
-        ImGui::TextDisabled("Available on the parameter plane of\nMandelbrot-type formulas.");
+        ImGui::TextDisabled("Available on the parameter plane of\nMandelbrot-type formulas (and formulas\nwith a ; @julia partner).");
     } else if (inset.ready && inset.image.tex) {
         ImGui::Image((ImTextureID)(intptr_t)inset.image.tex, ImVec2(size, size), ImVec2(0, 1), ImVec2(1, 0));  // GL is bottom-up
         ImGui::Text("c = %.6f %+.6fi", inset.jx, inset.jy);
@@ -1124,8 +1124,8 @@ void App::drawFormulaControls() {
         ImGui::TextWrapped("%s", cur->comment.c_str());
         ImGui::PopStyleColor();
     }
-    float* ps[3] = {view.cs.p1, view.cs.p2, view.cs.p3};
-    for (int i = 0; i < 3; i++)
+    auto& ps = view.cs.formulaP;
+    for (int i = 0; i < kFormulaParams; i++)
         if (formulaInfo.usesP[i]) {
             char lbl[8];
             snprintf(lbl, sizeof lbl, "p%d", i + 1);
@@ -1203,8 +1203,10 @@ void App::drawFormulaEditor() {
         ImGui::TextDisabled("Compiled OK - %d variable%s carried between iterations", formulaInfo.stateVars,
                             formulaInfo.stateVars == 1 ? "" : "s");
     }
-    ImGui::TextDisabled("Name { init : loop, test }   |z| = x*x+y*y   pixel p1 p2 p3 pi e");
-    ImGui::TextDisabled("sin cos tan cotan sinh cosh tanh exp log sqr sqrt abs cabs conj real imag flip recip fn1..fn4");
+    ImGui::TextDisabled("Name { init : loop, test }   |z| = x*x+y*y   pixel p1..p5 maxit whitesq pi e");
+    ImGui::TextDisabled("if (c) ... elseif (c) ... else ... endif      fn1..fn4 and any function below:");
+    ImGui::TextDisabled("sin cos tan cotan sinh cosh tanh cotanh cosxx exp log sqr sqrt abs conj flip ident recip");
+    ImGui::TextDisabled("zero one asin acos atan asinh acosh atanh floor ceil trunc round real imag cabs");
     ImGui::End();
 }
 
@@ -1577,7 +1579,6 @@ static int computeOrbit(const Classic2DSettings& c2, double px, double py, std::
 void App::drawOrbitOverlay() {
     ImGuiIO& io = ImGui::GetIO();
     if (io.WantCaptureMouse || !ImGui::IsMousePosValid()) return;
-    if (view.cs.formula == kCustomFormula) return;  // user formulas only exist as GPU code
     float sx = (float)fbW / std::max(winW, 1), sy = (float)fbH / std::max(winH, 1);
     if (hp::bitsForPixel(view.cs.height / std::max(fbH, 1)) > 64) {  // the orbit viewer computes in doubles
         const char* msg = "orbits: too deep for double precision here";
@@ -1590,7 +1591,28 @@ void App::drawOrbitOverlay() {
     double ps = view.cs.height / fbH;
     double px = view.cs.cx + (io.MousePos.x * sx - fbW * 0.5) * ps, py = view.cs.cy + (fbH * 0.5 - io.MousePos.y * sy) * ps;
     std::vector<std::complex<double>> pts;
-    int esc = computeOrbit(view.cs, px, py, pts);
+    int esc;
+    if (view.cs.formula == kCustomFormula) {
+        // user formulas run in the CPU interpreter (the same meaning as their GPU code)
+        if (!formulaInfo.ast) return;
+        FormulaVM vm(formulaInfo);
+        FormulaVM::C ps_[kFormulaParams];
+        for (int i = 0; i < kFormulaParams; i++) ps_[i] = {view.cs.formulaP[i][0], view.cs.formulaP[i][1]};
+        vm.setParams(ps_, view.cs.maxIter);
+        vm.init({px, py});
+        pts.push_back(vm.z());
+        esc = -1;
+        for (int i = 0; i < std::min(view.cs.maxIter, 2000); i++) {
+            bool keep = vm.step();
+            pts.push_back(vm.z());
+            if (!keep) {
+                esc = i + 1;
+                break;
+            }
+        }
+    } else {
+        esc = computeOrbit(view.cs, px, py, pts);
+    }
     bool flip = view.cs.formula == 1 && !view.cs.julia;
     auto toScreen = [&](std::complex<double> z) {
         double zy = flip ? -z.imag() : z.imag();
@@ -1609,12 +1631,14 @@ void App::drawOrbitOverlay() {
     dl->AddCircle(toScreen(pts[0]), 6.0f, IM_COL32(255, 255, 255, 230), 0, 2.0f);
     // the escape circle |z| = bailout (in view if zoomed out)
     ImVec2 o = toScreen({0, 0});
-    float r = (float)(std::max((double)view.cs.bailout, 2.0) / ps / sx);
-    if (r < 1e5f) dl->AddCircle(o, r, IM_COL32(255, 255, 255, 60), 128, 1.0f);
+    double radius = view.cs.formula == kCustomFormula ? formulaInfo.bailout : std::max((double)view.cs.bailout, 2.0);  // 0: unknown
+    float r = (float)(radius / ps / sx);
+    if (radius > 0 && r < 1e5f) dl->AddCircle(o, r, IM_COL32(255, 255, 255, 60), 128, 1.0f);
 
     char buf[160];
     if (esc < 0) snprintf(buf, sizeof buf, "bounded after %d steps: inside (black)", (int)pts.size() - 1);
     else if (view.cs.formula == 4 || view.cs.formula == 7) snprintf(buf, sizeof buf, "converged to a root after %d steps", esc);
+    else if (view.cs.formula == kCustomFormula) snprintf(buf, sizeof buf, "the bailout test stopped it after %d steps", esc);
     else snprintf(buf, sizeof buf, "escaped after %d steps", esc);
     ImVec2 m(io.MousePos.x + 16, io.MousePos.y + 12);
     ImVec2 ts = ImGui::CalcTextSize(buf);

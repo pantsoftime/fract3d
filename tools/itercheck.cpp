@@ -1,6 +1,7 @@
 // itercheck — checks a 2D render's iteration counts against exact arithmetic.
 //
 //   itercheck DUMP CENTER_RE CENTER_IM HEIGHT MAXITER [--max-mismatch F] [--bits N] [--save-truth FILE]
+//   itercheck DUMP --frm FILE NAME [--max-mismatch F]
 //
 // DUMP comes from  fract3d --par X --render out.png --dump-iterations DUMP  for a
 // Mandelbrot view rendered with Fractint bands and bailout 2 (classic.banded = 1,
@@ -11,6 +12,15 @@
 // differ by a step, which is why the check allows a small fraction. --save-truth
 // writes the exact result in the dump format (to measure how well-conditioned a view is:
 // compare it against the truth for a center moved by a millionth of a pixel).
+//
+// With --frm, the render is  fract3d --formula NAME ...  of a formula from FILE (at
+// its own @view, @p and @fn defaults, 256 iterations, bands on), and every pixel is
+// recomputed by the CPU formula interpreter (FormulaVM, doubles): this checks that
+// the GLSL the transpiler writes means the same as the interpreter. The GPU runs
+// formulas in floats, so chaotic pixels may differ; the allowance covers that.
+#include "formula.h"
+#include "gl_util.h"
+
 #include <mpfr.h>
 
 #include <algorithm>
@@ -21,7 +31,69 @@
 #include <thread>
 #include <vector>
 
+static int formulaMode(int argc, char** argv) {
+    if (argc < 5) return 2;
+    double maxMismatch = 0.01;
+    for (int i = 5; i < argc; i++)
+        if (!strcmp(argv[i], "--max-mismatch") && i + 1 < argc) maxMismatch = atof(argv[++i]);
+    bool ok = false;
+    std::string text = readTextFile(argv[3], &ok);
+    const FormulaDef* def = nullptr;
+    auto defs = parseFormulaFile(text);
+    for (auto& d : defs)
+        if (d.name == argv[4]) def = &d;
+    if (!ok || !def) {
+        fprintf(stderr, "itercheck: no formula %s in %s\n", argv[4], argv[3]);
+        return 2;
+    }
+    int fn[4] = {0, 0, 0, 0};
+    for (int i = 0; i < 4; i++)
+        if (def->fn[i] >= 0) fn[i] = def->fn[i];
+    TranspiledFormula t = transpileFormula(def->source, fn);
+    if (!t.ok) {
+        fprintf(stderr, "itercheck: %s\n", t.error.c_str());
+        return 2;
+    }
+    FILE* f = fopen(argv[1], "rb");
+    int32_t hdr[2];
+    if (!f || fread(hdr, sizeof hdr, 1, f) != 1 || hdr[0] <= 0 || hdr[1] <= 0) return 2;
+    int W = hdr[0], H = hdr[1];
+    std::vector<float> got((size_t)W * H);
+    if (fread(got.data(), sizeof(float), got.size(), f) != got.size()) return 2;
+    fclose(f);
+    // the app's view for --formula: the formula's @view, else the default 2D view
+    double cx = def->hasView ? def->view[0] : -0.6, cy = def->hasView ? def->view[1] : 0.0, h = def->hasView ? def->view[2] : 3.0;
+    const int maxIter = 256;
+    FormulaVM::C ps[kFormulaParams];
+    for (int i = 0; i < kFormulaParams; i++) ps[i] = {def->hasP[i] ? def->p[i][0] : 0.0f, def->hasP[i] ? def->p[i][1] : 0.0f};
+    long wrong = 0;
+    for (int row = 0; row < H; row++)
+        for (int x = 0; x < W; x++) {
+            int gy = H - 1 - row;
+            // the shader's pixel: computed in doubles, then rounded to floats (formulas run in floats)
+            FormulaVM::C pixel((float)(cx + (x + 0.5 - 0.5 * W) * (h / H)), (float)(cy + (gy + 0.5 - 0.5 * H) * (h / H)));
+            FormulaVM vm(t);
+            vm.setParams(ps, maxIter);
+            vm.init(pixel, ((x + gy) & 1) != 0);
+            int res = -1;
+            for (int i = 0; i < maxIter; i++)
+                if (!vm.step()) {
+                    res = i;
+                    break;
+                }
+            float g = got[(size_t)row * W + x];
+            int gi = g < 0 ? -1 : (int)std::floor(g);
+            if (gi != res) wrong++;
+        }
+    double frac = (double)wrong / got.size();
+    bool pass = frac <= maxMismatch;
+    printf("itercheck: %s (%dx%d): %ld pixels differ from the CPU interpreter (%.3f%%) -> %s\n", def->name.c_str(), W, H, wrong,
+           frac * 100.0, pass ? "PASS" : "FAIL");
+    return pass ? 0 : 1;
+}
+
 int main(int argc, char** argv) {
+    if (argc >= 3 && !strcmp(argv[2], "--frm")) return formulaMode(argc, argv);
     if (argc < 6) {
         fprintf(stderr, "usage: itercheck DUMP CENTER_RE CENTER_IM HEIGHT MAXITER [--max-mismatch F] [--bits N]\n");
         return 2;
