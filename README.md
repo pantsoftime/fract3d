@@ -10,7 +10,7 @@ A GPU fractal explorer for Linux, built as a 3D homage to **Fractint**. You can 
 
 ## Build & run
 
-Needs a C++20 compiler, CMake, GLFW 3 and libepoxy, plus an OpenGL 4.6 GPU. Dear ImGui and stb are vendored in `third_party/`.
+Needs a C++20 compiler, CMake, GLFW 3, libepoxy and MPFR/GMP, plus an OpenGL 4.6 GPU; ffmpeg is optional (video export). Dear ImGui and stb are vendored in `third_party/` (see its README).
 
 ```bash
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build
@@ -30,22 +30,32 @@ Mandelbulb, Mandelbox, Menger sponge, Sierpinski tetrahedron, Kaleidoscopic IFS,
 
 **Two renderers.** *Real-time* uses soft shadows, ambient occlusion, fog and glow, and adapts its resolution to hold your target frame rate. *Path traced* adds global illumination, glossy reflections and depth of field. Both keep refining (anti-aliasing and noise) while the camera is still.
 
-**Classic 2D mode.** Mandelbrot, Burning Ship, Tricorn, Multibrot, Newton, Phoenix, Lambda and Magnet I:
+**Classic 2D mode.** Mandelbrot, Burning Ship, Tricorn, Multibrot, Newton, Phoenix, Lambda and Magnet I, plus your own formulas:
 - the exact VGA power-on palette with Fractint-style integer color bands, or smooth coloring
 - free color cycling (only palette indices are stored, just like rotating the VGA DAC)
-- right-click any point for its Julia set
+- seven coloring methods: escape time, binary decomposition, escape angle, stripe average, two orbit traps, biomorphs
+- right-click any point for its Julia set, or press J for a live Julia preview under the cursor
 - an orbit viewer that draws z0, z1, z2 ... under the cursor
-- automatic fp64 for deep zooms (to about 10^13x)
+- **deep zoom**: floats, then doubles, then perturbation theory with an arbitrary-precision reference orbit - zooms to 10^100x and far beyond
+- progressive rendering in resumable chunks (Fractint's scanline reveal), so even millions of iterations never stall the desktop
 - **Lift into 3D** turns the current view into a landscape
+
+**Formula files.** Fractint-style `.frm` formulas (`Name { init : loop, test }`, with `|z|`, `fn1..fn4`, `p1..p3`) are transpiled to GPU code; twelve classics ship in `formulas/`, and the editor compiles yours with Ctrl+Enter. They work in 2D and as 3D landscapes.
+
+**Animation.** Add keyframes (K), and the app flies smoothly between them - camera, lighting, colors and every parameter are interpolated; 2D zooms keep a constant zoom rate. Export to MP4 through ffmpeg (x264 or NVENC).
+
+**Your work is never lost.** Undo/redo with a history of views (Ctrl+Z / Ctrl+Y), the last session reopens at startup, and every screenshot carries its complete view inside the PNG: drop it back on the window to continue from exactly there.
 
 **Learning.** The Learn panel has three tabs:
 - **This fractal:** a lesson on the current fractal
 - **Concepts:** fractal dimension, escape time, distance estimation, IFS and folding, orbit traps, precision, path tracing, history
-- **Tour:** a guided walk through 15 curated views
+- **Tour:** a guided walk through 17 curated views
 
 Every slider has a tooltip explaining what it does.
 
-**Nostalgia.** A "Fractint (DOS blue)" UI theme, a retro filter (VGA 256 or EGA 16 colors with ordered dithering, chunky pixels, scanlines), Fractint `.MAP` palette files, and `.par` parameter files. Every screenshot saves a `.par` beside it, so you can recreate the view later.
+**Nostalgia.** A "Fractint (DOS blue)" UI theme, a retro filter (VGA 256 or EGA 16 colors with ordered dithering, chunky pixels, scanlines), Fractint `.MAP` palette files, a gradient palette editor, and `.par` parameter files.
+
+**Rendering.** Samples come from Owen-scrambled Sobol sequences with a blue-noise shift, so path-traced images converge about twice as fast and look clean early. Shaders compile in parallel in the background, and the app sleeps once an image is finished.
 
 ## Controls
 
@@ -56,17 +66,19 @@ Every slider has a tooltip explaining what it does.
 | Middle drag / Shift+left drag | pan |
 | Wheel | zoom toward the target |
 | W A S D, Q/E | fly (speed adapts to the distance to the surface); Shift = 4x |
-| Double-click | orbit around the clicked point |
+| Double-click | turn toward the clicked point (it becomes the orbit center) |
 | F | focus depth of field at screen center |
 | P | toggle path tracing |
 | R | reset view |
 | 1-9 | switch fractal |
+| K | add a camera-path keyframe |
 
 | 2D | |
 |---|---|
 | Left drag / wheel | pan / zoom at cursor |
 | Right-click or Space | Julia set of the point (and back) |
 | O | show orbit under cursor |
+| J | live Julia preview for the point under the cursor |
 | B | Fractint bands vs smooth color |
 | + / - | double / halve max iterations |
 
@@ -79,8 +91,12 @@ Every slider has a tooltip explaining what it does.
 | L | Learn panel |
 | F1 | help |
 | F11 | fullscreen |
-| F12 | screenshot (+ .par) to ~/Pictures/fract3d |
+| F12 | screenshot to ~/Pictures/fract3d (the view is stored inside the PNG) |
 | Ctrl+S | save view as .par |
+| Ctrl+Z / Ctrl+Y | undo / redo (Edit menu: history) |
+| Drag & drop | a screenshot PNG, .par, .frm or .map file onto the window |
+
+A gamepad works too: sticks fly and look, triggers go down/up (F1 lists it all).
 
 ## Write your own fractal
 
@@ -112,18 +128,33 @@ Parameter types are `float`, `int`, `bool`, `vec2`, `vec3`, `vec4`, `color` and 
 ## Command line
 
 ```
-fract3d [--fractal KEY] [--par FILE] [--2d] [--pt|--rt] [--theme modern|fractint]
+fract3d [--fractal KEY] [--par FILE|IMAGE.png] [--2d] [--formula NAME] [--pt|--rt] [--theme modern|fractint]
 fract3d --par presets/07-mandelbulb-path-traced.par --render out.png --size 3840x2160 --samples 1024
+fract3d --path my.f3dpath --render flight.mp4 --size 1920x1080 --fps 30 --samples 64
 ```
 
-`--render` renders offscreen and exits, which is handy for wallpapers.
+`--render` renders offscreen and exits (images, or videos with `--path`). `--gl-debug` reports OpenGL errors.
+
+## Tests
+
+```bash
+ctest --test-dir build                      # ~60 tests, a few seconds (needs a GPU and a display)
+cmake --build build -t update-golden        # after an intentional visual change
+cmake --preset asan && cmake --build --preset asan && ctest --preset asan
+```
+
+The suite renders every fractal, preset (against golden images), formula and UI window headlessly; checks
+that saved views reproduce their images exactly, that hostile PAR files are repaired, that deep zoom agrees
+with double precision, and (with `--self-test`) undo/redo and exact deep-zoom panning.
 
 ## Layout
 
 ```
 src/        C++: app loop & input, renderer, UI, fractal file parser, PAR files, palettes
-shaders/    raymarch.frag (3D), classic2d.frag, display.frag (tonemap/palette/retro), common.glsl
+shaders/    raymarch.frag (3D), classic2d.comp (2D, resumable + perturbation), display.frag, common.glsl
 fractals/   one self-describing .glsl per 3D fractal
+formulas/   Fractint-style .frm formula files
 presets/    the guided tour (.par)
-docs/       concepts.txt and classic.txt (Learn panel content)
+docs/       concepts.txt and classic.txt (Learn panel content), the code review and its resolution
+tests/      golden images, hostile inputs, test paths; tools/imgdiff
 ```
