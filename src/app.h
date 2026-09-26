@@ -263,7 +263,7 @@ public:
         int frames = 0;             // frames it has been stepped
         std::vector<uint8_t> sig;
     } job2D;
-    // While the view moves, previews are drawn at 1/down2D of the window size when a
+    // While the view moves, previews are drawn at 1/down2D (up to 1/16) of the window size when a
     // full-size one doesn't fit in a frame (adapted from the measured cost, like the 3D
     // renderer's adaptive resolution); at rest the image goes full size, then anti-aliased.
     int down2D = 1;
@@ -322,6 +322,11 @@ public:
     // deep zoom
     RefOrbitWorker refWorker;
     int refUploaded = -1;
+    RefOrbitRequest refUploadedReq;  // the reference the GPU holds (the worker may be on a newer one)
+    std::shared_ptr<const std::vector<double>> refUploadedOrbit;
+    std::shared_ptr<const BlaTable> refUploadedBla;
+    SeriesResult seriesHeld;         // the last series computed: also serves views inside the one it was made for
+    SeriesRequest seriesHeldReq;
     bool refPending = false;
     double busySince2D = -1;  // when the 2D image last became unfinished (-1: it's complete); for the panel's status bar
     void syncCenter();                        // make hpRe/hpIm agree with cs.cx/cy

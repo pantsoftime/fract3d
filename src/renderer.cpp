@@ -421,7 +421,7 @@ bool Renderer::renderSample3D(RenderTarget& target, int sampleIndex, const Fract
 int Renderer::seriesSkip(const Classic2DSettings& cs, int w, int h) const {
     if (series_.skip <= 0 || !cs.series || cs.coloring >= 3 || !classicUsesDeep(cs, h)) return 0;
     double pixel = cs.height / std::max(h, 1);  // as ensureReference computes it: the same image, or nothing
-    return series_.half[0] == 0.5 * w * pixel && series_.half[1] == 0.5 * h * pixel ? series_.skip : 0;
+    return seriesHalf_[0] == 0.5 * w * pixel && seriesHalf_[1] == 0.5 * h * pixel ? series_.skip : 0;
 }
 
 bool Renderer::classicUsesDeep(const Classic2DSettings& cs, int targetH) const {
@@ -438,13 +438,17 @@ void Renderer::setReferenceOrbit(const std::vector<double>& xy) {
     refLen_ = (int)(xy.size() / 2);
 }
 
-void Renderer::setSeries(const SeriesResult* s) {
+void Renderer::setSeries(const SeriesResult* s, const double shift[2], const double viewHalf[2]) {
     if (!s || s->skip <= 0) {
         series_ = SeriesResult();
         seriesUploaded_ = nullptr;
         return;
     }
-    if (s == seriesUploaded_ && s->skip == series_.skip && s->base[0] == series_.base[0]) return;  // unchanged
+    seriesShift_[0] = shift[0], seriesShift_[1] = shift[1];
+    seriesHalf_[0] = viewHalf[0], seriesHalf_[1] = viewHalf[1];
+    if (s == seriesUploaded_ && s->skip == series_.skip && s->base[0] == series_.base[0] && s->base[1] == series_.base[1] &&
+        s->coef == series_.coef)
+        return;  // unchanged
     series_ = *s;
     seriesUploaded_ = s;
     if (!seriesSsbo_) glCreateBuffers(1, &seriesSsbo_);
@@ -543,12 +547,14 @@ bool Renderer::dispatch2D(IndexTarget& out, const Classic2DSettings& cs, int y0,
             p.set(name, blaCount_[j]);
         }
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, blaSsbo_);
+        p.setd("uBlaDcMax2", blaDcMax_ * blaDcMax_);
         bool series = seriesSkip(cs, out.w, out.h) > 0;
         p.set("uSaSkip", series ? series_.skip : 0);
         if (series) {
             p.set("uSaTerms", (int)(series_.coef.size() / 2));
             p.setd("uSaInvR", series_.invR);
             p.setd("uSaBase", series_.base[0], series_.base[1]);
+            p.setd("uSaShift", seriesShift_[0], seriesShift_[1]);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, seriesSsbo_);
         }
         p.set("uRefLen", refLen_);

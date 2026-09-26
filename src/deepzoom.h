@@ -147,6 +147,8 @@ public:
     void request(const SeriesRequest& r);  // restarts unless it's the same view
     // The result for exactly this view, or nullptr (not ready, or a different view).
     const SeriesResult* resultFor(const SeriesRequest& r) const;
+    const SeriesRequest& current() const { return req_; }  // the request being computed (or last finished)
+    bool busy() const { return running_ && !ready_; }
     void wait() const;
 
 private:

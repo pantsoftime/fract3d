@@ -192,6 +192,7 @@ uniform dvec2 uRefOffsetPx;  // (view center - reference point) in pixels
 struct BlaStep { dvec2 A, B; double r2, pad; };
 layout(std430, binding = 1) readonly buffer Bla { BlaStep bla[]; };
 uniform int uBlaLevels;  // 0: no skipping
+uniform double uBlaDcMax2;  // the table was built for |delta_c|^2 up to this: farther pixels don't jump
 
 // Series approximation (see src/deepzoom.h): every pixel starts at iteration
 // uSaSkip with delta = base + sum c_p u^p, u = (sample - view center) / R.
@@ -200,6 +201,7 @@ uniform int    uSaSkip;   // 0: start from the beginning
 uniform int    uSaTerms;
 uniform double uSaInvR;
 uniform dvec2  uSaBase;
+uniform dvec2  uSaShift;  // this view's center relative to the center the series is around (plane units)
 uniform int uBlaOffset[31], uBlaCount[31];
 
 dvec2 dcmul(dvec2 a, dvec2 b) { return dvec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
@@ -218,7 +220,7 @@ void mainPerturb() {
         i = 0;
         flags = 0u;
         if (uSaSkip > 0) {  // skip the shared start: evaluate the series (Horner)
-            dvec2 u = samplePos(pix) * uPixelSize * uSaInvR, eta = dvec2(0);
+            dvec2 u = (samplePos(pix) * uPixelSize + uSaShift) * uSaInvR, eta = dvec2(0);
             for (int p = uSaTerms - 1; p >= 0; p--) eta = dcmul(eta + saCoef[p], u);
             eps = uSaBase + eta;
             m = uSaSkip;
@@ -244,7 +246,7 @@ void mainPerturb() {
         // Skip ahead while delta is small enough for the linear approximation: the
         // longest valid jump that starts at this (aligned) reference index. Jumps may
         // run past this pass's chunk, never past the iteration limit or the reference.
-        if (uBlaLevels > 0 && m >= 1) {
+        if (uBlaLevels > 0 && m >= 1 && dot(cD, cD) <= uBlaDcMax2) {
             // A longer jump is only valid where its first half is, so the radius shrinks
             // as the level grows: scan upward and stop at the first level that fails.
             // (Scanning down from the longest cost a table read per level before every

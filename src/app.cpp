@@ -626,6 +626,54 @@ int App::selfTest() {
         t.release();
         check(ok, "a 2D render in the smallest steps leaves no band undrawn");
     }
+    // series approximation: the series of a view, evaluated with a shift, describes a view
+    // inside it as well as that view's own series does (the kernel uses it while zooming in)
+    {
+        using C = std::complex<double>;
+        RefOrbitRequest rr;
+        rr.re = "-0.743643887037158704752191506114774";
+        rr.im = "0.131825904205311970493132056385139";
+        rr.maxIter = 20000;
+        rr.bits = 128;
+        rr.bailout = 2;
+        rr.dcMax = 1e-19;
+        rr.blaEps = kBlaEpsilon;
+        RefOrbitWorker rw;
+        rw.request(rr);
+        while (!rw.ready()) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        SeriesRequest big, sub;
+        big.orbit = sub.orbit = rw.orbitPtr();
+        big.bla = sub.bla = rw.blaPtr();
+        big.orbitVersion = sub.orbitVersion = rw.version();
+        big.maxIter = sub.maxIter = 20000;
+        big.bailout = sub.bailout = 2;
+        big.dc0[0] = 3e-21, big.dc0[1] = -2e-21, big.half[0] = 1.6e-20, big.half[1] = 0.9e-20;
+        sub.dc0[0] = big.dc0[0] + 0.4 * big.half[0], sub.dc0[1] = big.dc0[1] - 0.3 * big.half[1];
+        sub.half[0] = big.half[0] / 3, sub.half[1] = big.half[1] / 3;
+        SeriesWorker sw;
+        sw.request(big);
+        sw.wait();
+        SeriesResult B = *sw.resultFor(big);
+        sw.request(sub);
+        sw.wait();
+        SeriesResult S = *sw.resultFor(sub);
+        const std::vector<double>& z = *rw.orbitPtr();
+        double worst = 0;
+        for (double fx : {-1.0, 1.0})
+            for (double fy : {-1.0, 1.0}) {
+                C v(fx * sub.half[0], fy * sub.half[1]), dc = C(sub.dc0[0], sub.dc0[1]) + v;
+                auto eval = [&](const SeriesResult& r, C u) {
+                    C e(0), up = u;
+                    for (size_t p = 0; p < r.coef.size() / 2; p++, up *= u) e += C(r.coef[2 * p], r.coef[2 * p + 1]) * up;
+                    return C(r.base[0], r.base[1]) + e;
+                };
+                C eb = eval(B, (v + C(sub.dc0[0] - big.dc0[0], sub.dc0[1] - big.dc0[1])) * B.invR);  // shifted, as the kernel does
+                for (int n = B.skip; n < S.skip; n++) eb = 2.0 * C(z[2 * n], z[2 * n + 1]) * eb + eb * eb + dc;  // catch up
+                C es = eval(S, v * S.invR);
+                worst = std::max(worst, std::abs(eb - es) / std::abs(es));
+            }
+        check(B.skip > 0 && S.skip >= B.skip && worst < 1e-9, "a view's series, shifted, serves a view inside it");
+    }
     // mouse-wheel zoom: eased notches add up exactly; a zoom covers a share of the gap to
     // the surface ahead (not to the orbit target) and never all of it
     wheelPending = 3;
@@ -1659,7 +1707,7 @@ void App::render2D() {
 // at half the size (a quarter of the work); when it had plenty of room, at double.
 void App::adaptDown2D(double budgetMs, bool finished) {
     if (!job2D.preview || !view.rs.adaptiveRes) return;
-    if (!finished || job2D.frames > 1 || job2D.estMs > budgetMs) down2D = std::min(down2D * 2, 8);
+    if (!finished || job2D.frames > 1 || job2D.estMs > budgetMs) down2D = std::min(down2D * 2, 16);
     else if (down2D > 1 && job2D.estMs * 4 < budgetMs * 0.6) down2D /= 2;
 }
 
@@ -1707,45 +1755,88 @@ bool App::ensureReference(int targetW, int targetH, bool wait) {
     // plus the 4 screens the reference may be reused for
     want.dcMax = cs.julia ? 0.0 : cs.height * 6.5;
     want.blaEps = kBlaEpsilon;
-    const RefOrbitRequest& cur = refWorker.current();
-    bool compatible = cur.julia == want.julia && cur.jre == want.jre && cur.jim == want.jim &&
-                      cur.maxIter >= want.maxIter && cur.bits >= want.bits && cur.bailout == want.bailout &&
-                      cur.dcMax >= want.dcMax && cur.blaEps == want.blaEps;
-    bool reuse = false;
-    if (compatible && !cur.re.empty()) {
-        double ox = hp::diffOver(want.re, cur.re, pixel, want.bits), oy = hp::diffOver(want.im, cur.im, pixel, want.bits);
-        reuse = std::abs(ox) < 4.0 * targetH && std::abs(oy) < 4.0 * targetH;  // within a few screens
-    }
-    if (!reuse) refWorker.request(want);
-    if (wait)
+    // A reference serves a view when its point is within a few screens and its orbit is
+    // long and precise enough. Its skip-ahead table only reaches |delta_c| <= dcMax:
+    // beyond that the kernel iterates without jumps (uBlaDcMax2). So zooming out keeps
+    // drawing with the uploaded reference while a wider one is computed - it used to wait
+    // for it, and as every frame of the zoom asked for a wider one still, the image froze
+    // until you stopped.
+    auto serves = [&](const RefOrbitRequest& r, bool withTable) {
+        if (r.re.empty() || r.julia != want.julia || r.jre != want.jre || r.jim != want.jim || r.maxIter < want.maxIter ||
+            r.bits < want.bits || r.bailout != want.bailout || r.blaEps != want.blaEps || (withTable && r.dcMax < want.dcMax))
+            return false;
+        double ox = hp::diffOver(want.re, r.re, pixel, want.bits), oy = hp::diffOver(want.im, r.im, pixel, want.bits);
+        return std::abs(ox) < 4.0 * targetH && std::abs(oy) < 4.0 * targetH;
+    };
+    // A request that will serve the view is left to finish, even if a wider table is
+    // wanted by now: a zoom that started before the first reference was done kept
+    // restarting it, and nothing was ever drawn until the zoom stopped.
+    auto takeFinished = [&] {  // (before asking for another one: a request replaces the finished orbit)
+        if (refWorker.ready() && refWorker.version() != refUploaded) {
+            rend.setReferenceOrbit(refWorker.orbit());
+            rend.setBlaTable(refWorker.bla());
+            refUploaded = refWorker.version();
+            refUploadedReq = refWorker.current();
+            refUploadedOrbit = refWorker.orbitPtr();
+            refUploadedBla = refWorker.blaPtr();
+        }
+    };
+    takeFinished();
+    if (!serves(refWorker.current(), false) || (refWorker.ready() && !serves(refWorker.current(), true))) refWorker.request(want);
+    if (wait) {
         while (!refWorker.ready()) std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    if (!refWorker.ready()) return false;
-    if (refWorker.version() != refUploaded) {
-        rend.setReferenceOrbit(refWorker.orbit());
-        rend.setBlaTable(refWorker.bla());
-        refUploaded = refWorker.version();
+        takeFinished();
     }
-    const RefOrbitRequest& ref = refWorker.current();
+    if (!serves(refUploadedReq, false)) return false;  // keep showing the old image until one is ready
+    const RefOrbitRequest& ref = refUploadedReq;
     double off[2] = {hp::diffOver(view.hpRe, ref.re, 1.0, ref.bits), hp::diffOver(view.hpIm, ref.im, 1.0, ref.bits)};
     rend.setDeepOffset(off[0], off[1]);
-    // the series that lets every pixel skip the shared start of its orbit - only ever
-    // used for exactly the view it was computed for
+    rend.setBlaDcMax(ref.dcMax);
+    // The series that lets every pixel skip the shared start of its orbit: the one made
+    // for exactly this view, or else the last one as long as this view lies inside the
+    // view it was made for (it's a power series around that view's center, checked at
+    // that view's corners, so it's at least as accurate anywhere inside) - which is what
+    // keeps it in use while you zoom in.
     const SeriesResult* series = nullptr;
+    double shift[2] = {0, 0}, half[2] = {0.5 * targetW * pixel, 0.5 * targetH * pixel};
     if (cs.series && seriesSupported(cs)) {
         SeriesRequest sr;
-        sr.orbit = refWorker.orbitPtr();
-        sr.bla = refWorker.blaPtr();
-        sr.orbitVersion = refWorker.version();
+        sr.orbit = refUploadedOrbit;
+        sr.bla = refUploadedBla;
+        sr.orbitVersion = refUploaded;
         sr.julia = cs.julia;
         sr.dc0[0] = off[0], sr.dc0[1] = off[1];
-        sr.half[0] = 0.5 * targetW * pixel, sr.half[1] = 0.5 * targetH * pixel;
+        sr.half[0] = half[0], sr.half[1] = half[1];
         sr.maxIter = cs.maxIter;
         sr.bailout = want.bailout;
-        seriesWorker.request(sr);
-        if (wait) seriesWorker.wait();
-        series = seriesWorker.resultFor(sr);
+        auto covers = [&](const SeriesRequest& big) {  // this view lies inside the view `big` was made for
+            return big.orbitVersion == refUploaded && big.julia == sr.julia && big.maxIter == sr.maxIter && big.bailout == sr.bailout &&
+                   std::abs(off[0] - big.dc0[0]) + half[0] <= big.half[0] && std::abs(off[1] - big.dc0[1]) + half[1] <= big.half[1];
+        };
+        if (wait) {
+            seriesWorker.request(sr);
+            seriesWorker.wait();
+        }
+        if (const SeriesResult* done = seriesWorker.resultFor(seriesWorker.current()))  // the newest finished one
+            if (!seriesHeldReq.sameView(seriesWorker.current())) {
+                seriesHeld = *done;
+                seriesHeldReq = seriesWorker.current();
+            }
+        // Ask for this view's own series - unless one that covers this view is being
+        // computed (zooming in asks for a slightly smaller view every frame, which would
+        // restart it forever). While the view moves, ask for one covering 4x the view, so
+        // zooming out is covered for a while too.
+        if (!seriesHeldReq.sameView(sr) && !(seriesWorker.busy() && covers(seriesWorker.current()))) {
+            SeriesRequest ask = sr;
+            if (interactive) ask.half[0] *= 4, ask.half[1] *= 4;
+            seriesWorker.request(ask);
+        }
+        if (seriesHeld.skip > 0 && covers(seriesHeldReq)) {
+            series = &seriesHeld;
+            shift[0] = off[0] - seriesHeldReq.dc0[0], shift[1] = off[1] - seriesHeldReq.dc0[1];
+        }
     }
-    rend.setSeries(series);
+    rend.setSeries(series, shift, half);
     return true;
 }
 

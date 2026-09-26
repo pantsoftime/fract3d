@@ -73,7 +73,11 @@ public:
     bool classicUsesDeep(const Classic2DSettings& cs, int targetH) const;
     void setReferenceOrbit(const std::vector<double>& xy);  // uploads Z_0..Z_n
     void setBlaTable(const BlaTable& t);                      // the skip-ahead table that goes with it
-    void setSeries(const SeriesResult* s);                    // series approximation for the current view (or none)
+    // Series approximation for the current view (or none): `shift` is the current view's center
+    // relative to the center the series was made around; `viewHalf` the current image's half
+    // extents (plane units) - the series is used only for an image of exactly that size.
+    void setSeries(const SeriesResult* s, const double shift[2], const double viewHalf[2]);
+    void setBlaDcMax(double d) { blaDcMax_ = d; }  // the table's reach: pixels farther from the reference don't jump
     int seriesSkip(const Classic2DSettings& cs, int w, int h) const;  // iterations every pixel starts at (0: none)
     // (view center - reference point), in plane units
     void setDeepOffset(double dx, double dy) { deepOffset_[0] = dx, deepOffset_[1] = dy; }
@@ -125,6 +129,8 @@ private:
     std::vector<int> blaOffset_, blaCount_;
     GLuint seriesSsbo_ = 0;
     SeriesResult series_;  // skip = 0: none
+    double seriesShift_[2] = {0, 0}, seriesHalf_[2] = {0, 0};
+    double blaDcMax_ = 0;
     const SeriesResult* seriesUploaded_ = nullptr;
     double deepOffset_[2] = {0, 0};
     std::string customGlsl_[2], customError_[2];
