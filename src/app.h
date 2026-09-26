@@ -314,6 +314,7 @@ public:
     RefOrbitWorker refWorker;
     int refUploaded = -1;
     bool refPending = false;
+    double busySince2D = -1;  // when the 2D image last became unfinished (-1: it's complete); for the panel's status bar
     void syncCenter();                        // make hpRe/hpIm agree with cs.cx/cy
     void moveCenter(double dx, double dy);    // pan by a (tiny) amount without losing precision
     bool ensureReference(int targetW, int targetH, bool wait);

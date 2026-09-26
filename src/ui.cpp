@@ -829,8 +829,13 @@ void App::drawClassicPanel() {
     ImGui::SeparatorText("Iteration");
     ImGui::SliderInt("Max iterations", &view.cs.maxIter, 16, kMaxIterations, "%d", ImGuiSliderFlags_Logarithmic);
     helpTip("Points still bounded after this many steps are declared 'inside'. Deeper zooms need more. Keys: + and - double or halve it.");
-    // one status bar, always there
-    if (deep && (refPending || !refWorker.ready())) {
+    // One status bar, in a slot that is always there, for renders that take a while:
+    // a pan or zoom restarts the drawing every frame, and a bar flashing between
+    // "drawing" and "done" at that rate was noise.
+    bool slow = busySince2D >= 0 && now - busySince2D > 1.0;
+    if (!slow) {
+        ImGui::Dummy(ImVec2(0, ImGui::GetFrameHeight()));
+    } else if (deep && (refPending || !refWorker.ready())) {
         ImGui::ProgressBar(refWorker.progress(), ImVec2(-1, 0), "reference orbit (high precision)...");
     } else if (job2D.active) {
         float th = (float)(job2D.offscreen ? work2D.h : rend.index2D.h);
@@ -838,7 +843,7 @@ void App::drawClassicPanel() {
         float prog = th > 0 ? (job2D.row + job2D.bandRows * bandFrac) / th : 0.0f;
         ImGui::ProgressBar(prog, ImVec2(-1, 0), "drawing...");
     } else {
-        ImGui::ProgressBar(1.0f, ImVec2(-1, 0), "done");
+        ImGui::ProgressBar(1.0f, ImVec2(-1, 0), "done");  // (until the frame after it finished)
     }
     ImGui::Checkbox("Periodicity checking", &view.cs.periodicity);
     helpTip("Fractint's trick for the black inside of the set: when a point's orbit comes back to where it was, "

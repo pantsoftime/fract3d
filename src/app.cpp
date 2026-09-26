@@ -906,6 +906,9 @@ void App::frame() {
     else if (view.mode == ViewMode::Fractal3D) render3D();
     else {
         render2D();
+        bool busy2D = job2D.active || refPending;  // (a job that finished within the frame never counts)
+        if (!busy2D) busySince2D = -1;
+        else if (busySince2D < 0) busySince2D = now;
         updateJuliaInset();
     }
     if (view.mode == ViewMode::Fractal3D) updateProbe();
@@ -1595,10 +1598,14 @@ void App::render2D() {
         job2D.active = true;
         job2D.row = 0;
         job2D.bandRows = 0;
+        // Keep the pass length the previous job learned (stepJob2D still caps it by the
+        // measured worst case every frame). Starting every job at 512 iterations meant
+        // that while you pan or zoom - a new job every frame - it never grew, so a
+        // preview that fits in one pass per band took several, and more than a frame.
+        if (job2D.chunk <= 0 || job2D.cs.maxIter != view.cs.maxIter) job2D.chunk = std::min(std::max(view.cs.maxIter, 1), 512);
         job2D.sig = sig;
         job2D.cs = view.cs;
         job2D.cs.supersample = ss;
-        job2D.chunk = std::min(std::max(view.cs.maxIter, 1), 512);
         // the finished 1x preview of this very view already holds the center samples
         // (whatever reference orbit it used: every reference gives the same values)
         int shownSS = 0;
