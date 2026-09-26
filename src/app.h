@@ -258,8 +258,17 @@ public:
         bool offscreen = false;  // rendering into work2D, swapped in when complete
         Classic2DSettings cs;    // settings snapshot (supersample = the job's factor)
         bool reusePreview = false;  // the shown 1x image of this view supplies the center samples
+        bool preview = false;       // started while the view was moving (adapts down2D)
+        double estMs = 0;           // estimated GPU time issued so far
+        int frames = 0;             // frames it has been stepped
         std::vector<uint8_t> sig;
     } job2D;
+    // While the view moves, previews are drawn at 1/down2D of the window size when a
+    // full-size one doesn't fit in a frame (adapted from the measured cost, like the 3D
+    // renderer's adaptive resolution); at rest the image goes full size, then anti-aliased.
+    int down2D = 1;
+    int shownFbW = 0, shownFbH = 0;  // the window size the complete image in index2D was made for
+    void adaptDown2D(double budgetMs, bool finished);
     IndexTarget work2D;
     // Advances a 2D job on `target` for up to budgetMs; returns true once the image is complete.
     bool stepJob2D(Job2D& job, IndexTarget& target, double budgetMs, int stateSlot = 0);

@@ -20,6 +20,7 @@ uniform float uSaturation;
 
 // 2D
 uniform int   uSS;
+uniform float uIndexScale;   // index size / output size (< 1: a reduced preview, drawn while the view moves)
 uniform int   uBanded;           // 1 = classic integer iteration bands (nearest palette entry)
 uniform int   uColoring;         // outside coloring mode (see kColoringModes)
 uniform float uCycleOffset;      // palette rotation, in palette entries
@@ -67,6 +68,8 @@ vec3 paletteColor(float v, float aux) {
     return texture(uPalette, vec2((e + 0.5) / 256.0, 0.5)).rgb;
 }
 
+vec3 indexColor(ivec2 p) { return paletteColor(texelFetch(uIndex, p, 0).r, texelFetch(uAux, p, 0).r); }
+
 vec3 sceneColor(vec2 fragPx) {
     if (uMode == 0) {
         vec4 acc = texture(uAccum, fragPx / uOutSize);
@@ -76,6 +79,14 @@ vec3 sceneColor(vec2 fragPx) {
         if (uTonemap == 0) c = aces(c);
         else if (uTonemap == 1) c = c / (1.0 + c);
         return c;
+    }
+    if (uSS == 1 && uIndexScale < 0.999) {  // reduced preview: blend the four nearest colors
+        vec2 sp = fragPx * uIndexScale - 0.5;
+        ivec2 i0 = ivec2(floor(sp)), hi = textureSize(uIndex, 0) - 1;
+        vec2 f = sp - vec2(i0);
+        vec3 c00 = indexColor(clamp(i0, ivec2(0), hi)), c10 = indexColor(clamp(i0 + ivec2(1, 0), ivec2(0), hi));
+        vec3 c01 = indexColor(clamp(i0 + ivec2(0, 1), ivec2(0), hi)), c11 = indexColor(clamp(i0 + ivec2(1, 1), ivec2(0), hi));
+        return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
     }
     ivec2 base = ivec2(fragPx) * uSS;
     vec3 sum = vec3(0);

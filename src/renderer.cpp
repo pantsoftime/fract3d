@@ -582,6 +582,7 @@ void Renderer::display(ViewMode mode, const RenderTarget* accum, const IndexTarg
     p.set("uVignette", rs.vignette);
     p.set("uSaturation", rs.saturation);
     p.set("uSS", ss);
+    p.set("uIndexScale", m2d && index && index->w > 0 ? (float)index->w / std::max(outW, 1) : 1.0f);
     p.set("uBanded", (int)cs.banded);
     p.set("uColoring", cs.coloring);
     p.set("uCycleOffset", cycleOffset);

@@ -1499,17 +1499,21 @@ bool App::stepJob2D(Job2D& job, IndexTarget& target, double budgetMs, int stateS
     // from falling far behind when an estimate is too optimistic.
     PassTimer& pt = rend.passTimer(stateSlot);
     pt.poll();
+    job.frames++;
     // Pass length follows real measurements only, changing by at most 2x up (4x down) per
     // measurement, and is capped by the worst case: a band's first pass, when every pixel
     // is still iterating. Late passes are cheap because most pixels are done, and a chunk
     // grown on them would make the next band's first pass run for seconds - which the
     // driver kills, silently wiping the image (a 300000-iteration deep zoom did that).
+    // The unit of work is iterations x megapixels, so the estimate carries over between
+    // bands and images of different sizes (a reduced preview, the anti-aliased image).
+    double bandMpx = std::min(rend.bandRowsFor(tw), std::max(th, 1)) * (double)tw / (1 << 20);
     if (pt.fresh > 0 && pt.lastMs > 0) {
-        double ideal = pt.lastWork * (budgetMs / 3.0) / pt.lastMs;
+        double ideal = pt.lastWork * (budgetMs / 3.0) / pt.lastMs / bandMpx;
         job.chunk = (int)std::clamp(ideal, std::max(job.chunk / 4.0, 16.0), job.chunk * 2.0);
         pt.fresh = 0;
     }
-    double worstCap = pt.worstMsPerWork > 0 ? budgetMs / pt.worstMsPerWork : 512.0;
+    double worstCap = pt.worstMsPerWork > 0 ? budgetMs / pt.worstMsPerWork / bandMpx : 512.0;
     job.chunk = (int)std::clamp((double)job.chunk, (double)std::min(16, maxIter), std::max(16.0, std::min(worstCap, (double)maxIter)));
     double spent = 0;
     int passes = 0;
@@ -1524,12 +1528,13 @@ bool App::stepJob2D(Job2D& job, IndexTarget& target, double budgetMs, int stateS
         // or the band would run (and budget) passes with nothing left to do.
         int itersDone = first ? std::min(rend.seriesSkip(job.cs, tw, th), maxIter) : job.itersDone;
         int k = std::max(std::min(job.chunk, maxIter - itersDone), 1);
-        double est = pt.msPerWork * k;
+        double work = (double)k * bandRows * tw / (1 << 20);
+        double est = pt.msPerWork * work;
         if (passes > 0 && spent + est > budgetMs) break;
         job.bandRows = bandRows;
         job.itersDone = itersDone;
         int y0 = th - job.row - job.bandRows;  // bands run top-down (GL rows count up)
-        pt.begin((float)k, first);
+        pt.begin((float)work, first);
         bool ok = rend.dispatch2D(target, job.cs, y0, job.bandRows, k, first, stateSlot,
                                   job.reusePreview && &target != &rend.index2D ? &rend.index2D : nullptr);
         pt.end();
@@ -1539,6 +1544,7 @@ bool App::stepJob2D(Job2D& job, IndexTarget& target, double budgetMs, int stateS
         }
         passes++;
         spent += est;
+        job.estMs += est;
         job.itersDone += k;
         if (job.itersDone >= maxIter) {  // every orbit in the band has escaped or hit the limit
             job.row += job.bandRows;
@@ -1574,10 +1580,17 @@ void App::render2D() {
         lastChange = now;
     }
     interactive = now - lastChange < 0.2;
+    double budgetMs = 1000.0 / std::max(view.rs.targetFps, 10.0f) * 0.8;  // the 3D renderer's budget
     int ss = interactive ? 1 : std::clamp(view.cs.supersample, 1, 4);
+    int down = interactive && view.rs.adaptiveRes ? down2D : 1;  // (see down2D)
     const std::vector<uint8_t> sigView = sig;  // the view, before the sampling details
-    appendBytes(sig, ss);
-    int tw = fbW * ss, th = fbH * ss;
+    // what is shown of this very view: its sampling (supersample, or -reduction), 0 if another view
+    int shownCode = 0;
+    bool sameShown = shownSig2D.size() >= sigView.size() + sizeof(int) && std::equal(sigView.begin(), sigView.end(), shownSig2D.begin());
+    if (sameShown) std::memcpy(&shownCode, shownSig2D.data() + sigView.size(), sizeof(int));
+    if (!interactive && ss > 1 && sameShown && shownCode < 0) ss = 1;  // a reduced preview is up: full size first, then anti-aliased
+    appendBytes(sig, down > 1 ? -down : ss);
+    int tw = down > 1 ? (fbW + down - 1) / down : fbW * ss, th = down > 1 ? (fbH + down - 1) / down : fbH * ss;
     refPending = false;
     if (rend.classicUsesDeep(view.cs, th)) {
         if (!ensureReference(tw, th, false)) {  // keep showing the old image until the reference is ready
@@ -1595,7 +1608,11 @@ void App::render2D() {
                              std::equal(sigView.begin(), sigView.end(), job2D.sig.begin());
     bool wantNew = previewOfThisView ? false : job2D.active ? job2D.sig != sig : shownSig2D != sig;
     if (wantNew) {
+        if (job2D.active) adaptDown2D(budgetMs, false);  // a preview overtaken by the next move didn't fit its frame
         job2D.active = true;
+        job2D.preview = interactive;
+        job2D.estMs = 0;
+        job2D.frames = 0;
         job2D.row = 0;
         job2D.bandRows = 0;
         // Keep the pass length the previous job learned (stepJob2D still caps it by the
@@ -1608,15 +1625,11 @@ void App::render2D() {
         job2D.cs.supersample = ss;
         // the finished 1x preview of this very view already holds the center samples
         // (whatever reference orbit it used: every reference gives the same values)
-        int shownSS = 0;
-        bool sameView = shownSig2D.size() >= sigView.size() + sizeof(int) &&
-                        std::equal(sigView.begin(), sigView.end(), shownSig2D.begin());
-        if (sameView) std::memcpy(&shownSS, shownSig2D.data() + sigView.size(), sizeof(int));
-        job2D.reusePreview = ss > 1 && sameView && shownSS == 1;
-        // If index2D holds a complete image for this window (at any supersampling), keep
+        job2D.reusePreview = ss > 1 && down == 1 && sameShown && shownCode == 1;
+        // If index2D holds a complete image for this window (at any sampling), keep
         // showing it: draw over it when the size matches (the reveal), otherwise render
         // offscreen and swap when done. After a resize there's nothing valid to keep.
-        bool shownValid = rend.index2D.w > 0 && rend.index2D.w % fbW == 0 && rend.index2D.h == fbH * (rend.index2D.w / fbW);
+        bool shownValid = rend.index2D.w > 0 && shownFbW == fbW && shownFbH == fbH;
         job2D.offscreen = shownValid && (rend.index2D.w != tw || rend.index2D.h != th);
         IndexTarget& t = job2D.offscreen ? work2D : rend.index2D;
         if (t.w != tw || t.h != th) {
@@ -1630,13 +1643,24 @@ void App::render2D() {
     }
     if (!job2D.active) return;
     IndexTarget& target = job2D.offscreen ? work2D : rend.index2D;
-    if (stepJob2D(job2D, target, 1000.0 / std::max(view.rs.targetFps, 10.0f) * 0.8)) {  // the 3D renderer's budget
+    if (stepJob2D(job2D, target, budgetMs)) {
         if (job2D.offscreen) {
             rend.index2D.swap(work2D);
             work2D.release();
         }
         shownSig2D = job2D.sig;
+        shownFbW = fbW;
+        shownFbH = fbH;
+        adaptDown2D(budgetMs, true);
     }
+}
+
+// A moving preview should fit in one frame: when the last one didn't, the next is drawn
+// at half the size (a quarter of the work); when it had plenty of room, at double.
+void App::adaptDown2D(double budgetMs, bool finished) {
+    if (!job2D.preview || !view.rs.adaptiveRes) return;
+    if (!finished || job2D.frames > 1 || job2D.estMs > budgetMs) down2D = std::min(down2D * 2, 8);
+    else if (down2D > 1 && job2D.estMs * 4 < budgetMs * 0.6) down2D /= 2;
 }
 
 // ------------------------------------------------------------------ deep zoom
@@ -1677,7 +1701,7 @@ bool App::ensureReference(int targetW, int targetH, bool wait) {
     want.jre = cs.jx;
     want.jim = cs.jy;
     want.maxIter = cs.maxIter;
-    want.bits = hp::bitsForPixel(pixel);
+    want.bits = hp::bitsForPixel(cs.height / std::max(targetH, fbH * std::clamp(cs.supersample, 1, 4)));  // the finest image this view will need
     want.bailout = cs.banded ? std::max(cs.bailout, 2.0f) : std::max(cs.bailout, 64.0f);  // as the shader uses
     // the skip-ahead table is valid for |delta_c| up to: half the (widest) screen's diagonal
     // plus the 4 screens the reference may be reused for

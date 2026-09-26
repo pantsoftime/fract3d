@@ -661,6 +661,7 @@ void App::drawRenderTab() {
 
     ImGui::SeparatorText("Performance");
     ImGui::Checkbox("Adaptive resolution while moving", &view.rs.adaptiveRes);
+    helpTip("While you pan, zoom or fly, the picture is drawn at a reduced size when a full-size one would not fit in a frame, so the motion stays smooth. At rest it is drawn in full (2D: then anti-aliased).");
     ImGui::SliderFloat("Target fps", &view.rs.targetFps, 20.0f, 240.0f, "%.0f");
     ImGui::SliderFloat("Render scale", &view.rs.stillScale, 0.25f, 2.0f, "%.2fx");
     helpTip("Resolution of the still image relative to the window. Above 1 supersamples.");
