@@ -5,9 +5,13 @@
 #include <cstring>
 #include <string>
 
+#ifndef FRACT3D_VERSION
+#define FRACT3D_VERSION "dev"
+#endif
+
 static void usage() {
     printf(
-        "fract3d - a 3D fractal explorer in the spirit of Fractint\n\n"
+        "fract3d " FRACT3D_VERSION " - a 3D fractal explorer in the spirit of Fractint\n\n"
         "usage: fract3d [options] [file.par]\n"
         "  --fractal KEY        start on a fractal (mandelbulb, mandelbox, menger, ...)\n"
         "  --par FILE           load a saved view (.par, or a PNG saved by Fract3D), or import a Fractint .PAR\n"
@@ -40,6 +44,7 @@ int main(int argc, char** argv) {
             return argv[++i];
         };
         if (a == "-h" || a == "--help") { usage(); return 0; }
+        else if (a == "--version") { printf("fract3d %s\n", FRACT3D_VERSION); return 0; }
         else if (a == "--fractal") o.fractal = next();
         else if (a == "--par") o.parFile = next();
         else if (a == "--par-entry") o.parEntry = next();

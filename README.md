@@ -164,3 +164,7 @@ presets/    the guided tour (.par)
 docs/       concepts.txt and classic.txt (Learn panel content), the two code reviews and their resolutions
 tests/      golden images, hostile inputs, test paths and deep views; tools/ imgdiff and itercheck (exact MPFR check)
 ```
+
+## License
+
+MIT (see `LICENSE`). Dear ImGui and stb are vendored under their own MIT/public-domain licenses in `third_party/`.

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(fract3d LANGUAGES C CXX)
+project(fract3d VERSION 1.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -43,6 +43,7 @@ add_executable(fract3d
   src/pngmeta.cpp
   src/animation.cpp
   src/deepzoom.cpp)
+target_compile_definitions(fract3d PRIVATE FRACT3D_VERSION="${PROJECT_VERSION}")
 target_include_directories(fract3d PRIVATE src)
 target_include_directories(fract3d SYSTEM PRIVATE third_party/stb)
 target_link_libraries(fract3d PRIVATE imgui PkgConfig::GLFW PkgConfig::EPOXY PkgConfig::MPFR)
