@@ -574,6 +574,13 @@ int App::selfTest() {
     applyPathTime(0.5f);
     check((view.rs.sunAzimuth > 355 || view.rs.sunAzimuth < 5) && view.cs.maxIter > 3500 && view.cs.maxIter < 4500,
           "paths: the sun turns the short way; maxIter in log space");
+    // a frame exactly on a middle keyframe shows that keyframe, not the path's end
+    camPath.keys.resize(3);
+    camPath.keys[2].par = "mode = 2d\nlight.sunAzimuth = 90\nclassic.maxIter = 16000\n";
+    camPath.keys[1].duration = 1;
+    applyPathTime(1.0f);
+    check(std::abs(view.rs.sunAzimuth - 10) < 0.01f, "paths: a frame on a middle keyframe shows it");
+    camPath.keys.resize(2);
     camPath.keys[0].ease = true;
     applyPathTime(0.25f);
     int eased = view.cs.maxIter;

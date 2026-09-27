@@ -111,7 +111,10 @@ void App::applyPathTime(float t) {
         t = std::clamp(t, 0.0f, pathDuration());
         while (seg < n - 2 && t > keys[seg].duration) t -= keys[seg].duration, seg++;
         u = std::clamp(t / std::max(keys[seg].duration, 0.01f), 0.0f, 1.0f);
-        if (u >= 1.0f) seg = n - 1, u = 0.0f;  // the very end: exactly the last keyframe, switches included
+        // exactly on the next keyframe (a frame time that lands on it, or the very end): that
+        // keyframe itself, switches included. (Jumping to the last keyframe here instead put
+        // one frame of the path's end into exported videos at every keyframe they hit exactly.)
+        if (u >= 1.0f) seg = seg + 1, u = 0.0f;
         else if (keys[seg].ease) u = u * u * (3.0f - 2.0f * u);  // slow in and out of this segment
     }
     const Keyframe& B = keys[seg];
