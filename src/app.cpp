@@ -1872,6 +1872,22 @@ void App::updateCockpit(float dt) {
     }
     cockpit.lastPos = p;
     cockpit.lastPosValid = true;
+    // the needles: the clearance eased in log space (bumpy walls make the raw reading jump),
+    // the speed dial from that eased clearance, both with about a quarter second's lag
+    {
+        float de = probeValid && deAtCam > 0 ? deAtCam : 0;
+        float k = 1 - std::exp(-dt / 0.25f);
+        if (de <= 0) {
+            cockpit.shownValid = false;
+        } else if (!cockpit.shownValid) {
+            cockpit.shownDe = de;
+            cockpit.shownRush = cockpit.speed / de;
+            cockpit.shownValid = true;
+        } else {
+            cockpit.shownDe = std::exp(std::log(cockpit.shownDe) + (std::log(de) - std::log(cockpit.shownDe)) * k);
+            cockpit.shownRush += (cockpit.speed / cockpit.shownDe - cockpit.shownRush) * (1 - std::exp(-dt / 0.5f));  // (a heavier needle)
+        }
+    }
     if (now - cockpit.lastTrail > 0.1) {
         cockpit.lastTrail = now;
         if (cockpit.trail.empty() || (cockpit.trail.back() - p).length() > 1e-9f) cockpit.trail.push_back(p);

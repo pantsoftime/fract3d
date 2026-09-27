@@ -110,6 +110,8 @@ struct UiState {
     ImFont* fontRetro = nullptr;
     std::string toastMsg;
     double toastUntil = 0;
+    float shownFps = 0;        // the frame rate as displayed: refreshed 4 times a second, so it can be read
+    double shownFpsAt = -1;
     float lastDisplayW = 0, lastDisplayH = 0;  // the room the panels were last laid out in: width, usable bottom (see fitPanel)
     float panelPrefW[3] = {0, 0, 0}, panelPrefH[3] = {0, 0, 0};  // a panel's size before fitPanel shrank it (0: not shrunk)
     int posterW = 3840, posterH = 2160, posterSamples = 256;
@@ -336,6 +338,12 @@ public:
         Vec3 lastPos;
         bool lastPosValid = false;
         std::vector<uint8_t> mapSig;  // what the map was last drawn for (see updateCockpit)
+        // what the instruments show: needles damped like real gauges, digits refreshed a few
+        // times a second (as on an aircraft's displays) so they can be read, not dance
+        float shownDe = 0, shownRush = 0;
+        bool shownValid = false;
+        double lastReadout = -1;
+        std::string roX, roY, roZ, roSpeed, roClear, roRange, roHdg, roWalls;
     } cockpit;
     struct TourFlight {              // the autopilot tour: flies each 3D stop for a while
         bool active = false;

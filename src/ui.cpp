@@ -235,7 +235,7 @@ std::string shortNum(double v) {
 
 // A round gauge: 270 degrees of arc from lower left, clockwise. frac in 0..1.
 void gauge(ImDrawList* dl, ImVec2 c, float r, float frac, const char* title, const std::string& value,
-           const std::vector<std::string>& ticks, float redFrom, float bug = -1) {
+           const std::vector<std::string>& ticks, float redFrom, float bug = -1, ImFont* valueFont = nullptr) {
     dl->AddCircleFilled(c, r, kBezel, 48);
     dl->AddCircleFilled(c, r * 0.93f, kFace, 48);
     const float a0 = 2.356f, sweep = 4.712f;  // 135 degrees, then 270 clockwise (y down)
@@ -258,8 +258,13 @@ void gauge(ImDrawList* dl, ImVec2 c, float r, float frac, const char* title, con
     }
     ImVec2 ts = ImGui::CalcTextSize(title);
     dl->AddText(ImVec2(c.x - ts.x * 0.5f, c.y + r * 0.22f), kPhosphorDim, title);
-    ts = ImGui::CalcTextSize(value.c_str());
-    dl->AddText(ImVec2(c.x - ts.x * 0.5f, c.y + r * 0.45f), frac >= redFrom ? kRed : kPhosphor, value.c_str());
+    if (valueFont) {  // (a fixed-width font: the reading doesn't shift as its digits change)
+        ts = valueFont->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, 0, value.c_str());
+        dl->AddText(valueFont, ImGui::GetFontSize(), ImVec2(std::floor(c.x - ts.x * 0.5f), c.y + r * 0.45f), frac >= redFrom ? kRed : kPhosphor, value.c_str());
+    } else {
+        ts = ImGui::CalcTextSize(value.c_str());
+        dl->AddText(ImVec2(c.x - ts.x * 0.5f, c.y + r * 0.45f), frac >= redFrom ? kRed : kPhosphor, value.c_str());
+    }
     float f = std::clamp(frac, -0.02f, 1.02f);
     ImVec2 tip = at(f, r * 0.82f), s1 = at(f + 0.25f, r * 0.06f), s2 = at(f - 0.25f, r * 0.06f);
     dl->AddTriangleFilled(tip, s1, s2, kAmber);
@@ -267,7 +272,7 @@ void gauge(ImDrawList* dl, ImVec2 c, float r, float frac, const char* title, con
 }
 
 // Attitude indicator: sky and ground, banked by the roll, shifted by the pitch.
-void horizon(ImDrawList* dl, ImVec2 c, float r, float pitch, float roll, float headingDeg) {
+void horizon(ImDrawList* dl, ImVec2 c, float r, float pitch, float roll, const std::string& hdgText, ImFont* font) {
     dl->AddCircleFilled(c, r, kBezel, 48);
     float rr = r * 0.93f;
     dl->AddCircleFilled(c, rr, IM_COL32(40, 110, 200, 255), 48);
@@ -312,11 +317,11 @@ void horizon(ImDrawList* dl, ImVec2 c, float r, float pitch, float roll, float h
     dl->AddLine(ImVec2(c.x + w * 0.35f, c.y), ImVec2(c.x + w, c.y), kAmber, 3.0f);
     dl->AddLine(ImVec2(c.x - w * 0.35f, c.y), ImVec2(c.x, c.y + w * 0.25f), kAmber, 3.0f);
     dl->AddLine(ImVec2(c.x, c.y + w * 0.25f), ImVec2(c.x + w * 0.35f, c.y), kAmber, 3.0f);
-    char b[32];
-    snprintf(b, sizeof b, "HDG %03.0f", headingDeg);
-    ImVec2 ts = ImGui::CalcTextSize(b);
-    dl->AddRectFilled(ImVec2(c.x - ts.x * 0.5f - 3, c.y + rr * 0.62f - 1), ImVec2(c.x + ts.x * 0.5f + 3, c.y + rr * 0.62f + ts.y + 1), IM_COL32(0, 0, 0, 170), 3);
-    dl->AddText(ImVec2(c.x - ts.x * 0.5f, c.y + rr * 0.62f), kPhosphor, b);
+    const char* b = hdgText.c_str();
+    ImVec2 ts = font->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, 0, b);
+    float x0 = std::floor(c.x - ts.x * 0.5f);
+    dl->AddRectFilled(ImVec2(x0 - 3, c.y + rr * 0.62f - 1), ImVec2(x0 + ts.x + 3, c.y + rr * 0.62f + ts.y + 1), IM_COL32(0, 0, 0, 170), 3);
+    dl->AddText(font, ImGui::GetFontSize(), ImVec2(x0, c.y + rr * 0.62f), kPhosphor, b);
 }
 }  // namespace
 
@@ -327,11 +332,21 @@ float App::cockpitHeight() const {
 
 void App::drawCockpit() {
     ImGuiIO& io = ImGui::GetIO();
-    float fs_ = ImGui::GetFontSize(), H = fs_ * 10.5f, gap = fs_ * 0.6f;
-    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y - 10), ImGuiCond_Always, ImVec2(0.5f, 1));
+    const ImGuiStyle& st = ImGui::GetStyle();
+    float fs_ = ImGui::GetFontSize(), H = fs_ * 10.5f, gap = fs_ * 0.6f, readW = fs_ * 19.0f;
+    // narrow windows drop instruments from the ends, so the map and controls always fit
+    float avail = io.DisplaySize.x - 40 - readW;
+    int slots = std::clamp((int)(avail / (H + gap)), 1, 4);
+    bool showSpeed = slots >= 3, showHorizon = slots >= 2, showClear = slots >= 4;
+    // A fixed size, worked out from what's shown: sized to its contents, the panel changed
+    // width whenever a readout did (a number, a status word) and so bounced from side to side.
+    int instruments = 1 + (int)showSpeed + (int)showHorizon + (int)showClear;
+    ImVec2 size(instruments * (H + gap) + readW + st.WindowPadding.x * 2, H + st.WindowPadding.y * 2);
+    ImGui::SetNextWindowPos(ImVec2(std::floor(io.DisplaySize.x * 0.5f - size.x * 0.5f), io.DisplaySize.y - 10 - size.y), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(size, ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(0.88f);
-    ImGuiWindowFlags fl = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
-                          ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove;
+    ImGuiWindowFlags fl = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+                          ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
     if (!ImGui::Begin("##cockpit", nullptr, fl)) {
         ImGui::End();
         return;
@@ -339,11 +354,27 @@ void App::drawCockpit() {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const Fractal& f = fractal();
     float S = f.sceneSize();
-    float de = probeValid && deAtCam > 0 ? deAtCam : 0;
-    // narrow windows drop instruments from the ends, so the map and controls always fit
-    float avail = io.DisplaySize.x - 40 - fs_ * 17;
-    int slots = std::clamp((int)(avail / (H + gap)), 1, 4);
-    bool showSpeed = slots >= 3, showHorizon = slots >= 2, showClear = slots >= 4;
+    float de = cockpit.shownValid ? cockpit.shownDe : 0;  // (the damped reading: see updateCockpit)
+    Vec3 fw = view.cam.forward();
+    float hdg = std::fmod(std::atan2(fw.x, fw.z) * 57.29578f + 360.0f, 360.0f);
+    if (now - cockpit.lastReadout > 0.14 || cockpit.lastReadout < 0 || now < cockpit.lastReadout) {  // the digits, ~7 times a second
+        cockpit.lastReadout = now;
+        auto coord = [](float v) {  // fixed width, in the mono font: the digits don't dance
+            char b[24];
+            if (std::fabs(v) < 1000.0f) snprintf(b, sizeof b, "%+9.4f", v);
+            else snprintf(b, sizeof b, "%+9.2e", v);
+            return std::string(b);
+        };
+        Vec3 p = view.cam.pos;
+        cockpit.roX = coord(p.x), cockpit.roY = coord(p.y), cockpit.roZ = coord(p.z);
+        cockpit.roSpeed = shortNum(cockpit.speed) + " u/s";
+        cockpit.roClear = de > 0 ? shortNum(de) : "--";
+        cockpit.roRange = "RNG " + shortNum(cockpit.span * 0.5f);
+        char h[16];
+        snprintf(h, sizeof h, "HDG %03.0f", std::fmod(std::round(hdg), 360.0f));
+        cockpit.roHdg = h;
+        cockpit.roWalls = shortNum(autopilot.wallDistance);
+    }
     auto slot = [&]() {
         ImVec2 p = ImGui::GetCursorScreenPos();
         ImGui::Dummy(ImVec2(H, H));
@@ -351,14 +382,10 @@ void App::drawCockpit() {
         return ImVec2(p.x + H * 0.5f, p.y + H * 0.5f);
     };
     if (showSpeed) {  // speed, in clearances per second: how fast the surfaces rush past
-        float rush = de > 0 ? cockpit.speed / de : 0;
-        gauge(dl, slot(), H * 0.5f, rush / 5.0f, "SPEED", shortNum(cockpit.speed) + " u/s", {"0", "1", "2", "3", "4", "5"}, 0.8f);
+        float rush = cockpit.shownValid ? cockpit.shownRush : 0;
+        gauge(dl, slot(), H * 0.5f, rush / 5.0f, "SPEED", cockpit.roSpeed, {"0", "1", "2", "3", "4", "5"}, 0.8f, -1, ui.fontMono);
     }
-    if (showHorizon) {
-        Vec3 fw = view.cam.forward();
-        float hdg = std::fmod(std::atan2(fw.x, fw.z) * 57.29578f + 360.0f, 360.0f);
-        horizon(dl, slot(), H * 0.5f, view.cam.pitch, view.cam.roll, hdg);
-    }
+    if (showHorizon) horizon(dl, slot(), H * 0.5f, view.cam.pitch, view.cam.roll, cockpit.roHdg, ui.fontMono);
     {  // the moving map
         ImVec2 p = ImGui::GetCursorScreenPos(), c(p.x + H * 0.5f, p.y + H * 0.5f);
         if (cockpit.map.tex) ImGui::Image((ImTextureID)(intptr_t)cockpit.map.tex, ImVec2(H, H), ImVec2(0, 1), ImVec2(1, 0));
@@ -383,8 +410,7 @@ void App::drawCockpit() {
         // the ship, pointing up (the way it's heading)
         float s = fs_ * 0.55f;
         dl->AddTriangleFilled(ImVec2(c.x, c.y - s), ImVec2(c.x - s * 0.6f, c.y + s * 0.6f), ImVec2(c.x + s * 0.6f, c.y + s * 0.6f), kAmber);
-        std::string rng = "RNG " + shortNum(span * 0.5f);
-        dl->AddText(ImVec2(p.x + 4, p.y + 2), kPhosphor, rng.c_str());
+        dl->AddText(ui.fontMono, ImGui::GetFontSize(), ImVec2(p.x + 4, p.y + 2), kPhosphor, cockpit.roRange.c_str());
         dl->AddText(ImVec2(p.x + 4, p.y + H - fs_ - 2), kPhosphorDim, "SLICE AT SHIP");
         dl->PopClipRect();
         dl->AddRect(p, ImVec2(p.x + H, p.y + H), kBezel, 0, 0, 2.0f);
@@ -392,18 +418,15 @@ void App::drawCockpit() {
     if (showClear) {  // distance to the nearest surface, on a log scale of the fractal's size
         float frac = de > 0 ? (std::log10(de / S) + 5.0f) / 5.0f : 0;
         float bug = autopilot.active ? (std::log10(autopilot.clearance / S) + 5.0f) / 5.0f : -1;
-        gauge(dl, slot(), H * 0.5f, frac, "CLEARANCE", de > 0 ? shortNum(de) : "--", {"-5", "-4", "-3", "-2", "-1", "0"}, 2.0f, bug);
+        gauge(dl, slot(), H * 0.5f, frac, "CLEARANCE", cockpit.roClear, {"-5", "-4", "-3", "-2", "-1", "0"}, 2.0f, bug, ui.fontMono);
     }
     // readouts and the autopilot
     ImGui::BeginGroup();
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(kPhosphor));
     ImGui::PushItemWidth(fs_ * 9);
-    Vec3 p = view.cam.pos;
-    ImGui::Text("X %s", shortNum(p.x).c_str());
-    ImGui::SameLine(fs_ * 6.2f);
-    ImGui::Text("Y %s", shortNum(p.y).c_str());
-    ImGui::SameLine(fs_ * 12.4f);
-    ImGui::Text("Z %s", shortNum(p.z).c_str());
+    ImGui::PushFont(ui.fontMono, 0.0f);
+    ImGui::Text("X%s Y%s Z%s", cockpit.roX.c_str(), cockpit.roY.c_str(), cockpit.roZ.c_str());
+    ImGui::PopFont();
     ImGui::PopStyleColor();
     ImGui::Separator();
     bool on = autopilot.active;
@@ -412,7 +435,7 @@ void App::drawCockpit() {
     ImGui::TextColored(on ? ImVec4(0.45f, 1, 0.6f, 1) : ImVec4(0.6f, 0.6f, 0.6f, 1), "%s", on ? autopilot.status : "off");
     if (on && autopilot.style == FlightStyle::Through) {
         ImGui::SameLine();
-        ImGui::TextDisabled("(walls %s)", shortNum(autopilot.wallDistance).c_str());
+        ImGui::TextDisabled("(walls %s)", cockpit.roWalls.c_str());
         ImGui::SetItemTooltip("The distance it keeps from the walls: it adapts to the room it's in, up to the Clearance below");
     }
     auto styleButton = [&](const char* label, int style) {
@@ -446,6 +469,7 @@ void App::drawCockpit() {
 
 // ------------------------------------------------------------------ top level
 void App::drawUI() {
+    if (now - ui.shownFpsAt > 0.25 || ui.shownFpsAt < 0 || now < ui.shownFpsAt) ui.shownFpsAt = now, ui.shownFps = fps;
     if (ui.showUI) {
         if (ui.showPanels) {
             drawMenuBar();
@@ -598,13 +622,13 @@ void App::drawMenuBar() {
     if (view.mode == ViewMode::Fractal3D) {
         int maxS = view.rs.renderMode ? view.rs.maxSamplesPT : view.rs.maxSamplesRT;
         if (rend.status(fractal()) == Renderer::ProgStatus::Compiling)
-            snprintf(buf, sizeof buf, "%s  |  compiling shaders...  |  %.0f fps", fractal().name.c_str(), fps);
+            snprintf(buf, sizeof buf, "%s  |  compiling shaders...  |  %.0f fps", fractal().name.c_str(), ui.shownFps);
         else
             snprintf(buf, sizeof buf, "%s  |  %s  |  %d/%d samples  |  %.0f fps", fractal().name.c_str(),
-                     view.rs.renderMode ? "path traced" : "real-time", samples, maxS, fps);
+                     view.rs.renderMode ? "path traced" : "real-time", samples, maxS, ui.shownFps);
     } else {
         snprintf(buf, sizeof buf, "%s%s  |  zoom %.3gx  |  %.0f fps", kClassicFormulas[view.cs.formula], view.cs.julia ? " Julia" : "",
-                 3.0 / view.cs.height, fps);
+                 3.0 / view.cs.height, ui.shownFps);
     }
     float w = ImGui::CalcTextSize(buf).x;
     ImGui::SameLine(ImGui::GetWindowWidth() - w - ImGui::GetStyle().ItemSpacing.x * 2);
@@ -1756,7 +1780,7 @@ void App::drawHud() {
     if (ImGui::Begin("##hud", nullptr, fl)) {
         if (view.mode == ViewMode::Fractal3D) {
             bool compiling = rend.status(fractal()) == Renderer::ProgStatus::Compiling;
-            ImGui::Text("%.0f fps  |  %d x %d  |  scale %.2f  |  %s", fps, rend.accum.w, rend.accum.h,
+            ImGui::Text("%.0f fps  |  %d x %d  |  scale %.2f  |  %s", ui.shownFps, rend.accum.w, rend.accum.h,
                         (float)rend.accum.w / std::max(fbW, 1), compiling ? "compiling shaders..." : interactive ? "moving" : "refining");
             ImGui::TextDisabled("F1 help  |  Tab hide UI  |  F12 screenshot  |  P %s  |  M 2D mode", view.rs.renderMode ? "real-time" : "path trace");
         } else {
