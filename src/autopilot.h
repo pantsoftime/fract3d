@@ -48,6 +48,15 @@ struct Autopilot {
     float orbitRadius = 0;
     Vec3 heading{0, 0, 1};
     Vec3 gaze{0, 0, 1};         // where the camera looks (eased, so the view drifts rather than twitches)
+    // Smooth steering (a vehicle, not a pointer): the wanted direction and the surface normal
+    // are filtered, and the heading turns with an angular velocity whose change is limited.
+    Vec3 wantF{0, 0, 1};        // the filtered wanted direction
+    Vec3 normalF{0, 1, 0};      // the filtered normal
+    bool normalFValid = false;
+    Vec3 omega{0, 0, 0};        // angular velocity of the heading (axis * radians per second)
+    float gazeYaw = 0, gazePitch = 0, gazeYawV = 0, gazePitchV = 0;  // the gaze's spring (angles, radians per second)
+    Vec3 gazeTarget{0, 0, 1};   // ...toward this, which may only move so fast
+    float openF = 0;            // Through: how open the surroundings are, filtered
     float speed = 0;           // world units per second (smoothed)
     float roll = 0;            // bank angle for the camera (radians; Camera::roll: + raises the right wing)
     float time = 0;            // seconds engaged
@@ -71,6 +80,7 @@ struct Autopilot {
 struct FlightLog {
     std::vector<Vec3> pos;
     std::vector<float> de;
+    std::vector<Vec3> look;  // where the camera looked, every frame (smoothness)
     float minDe = 1e30f;
     float travelled = 0;
 };

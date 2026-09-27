@@ -40,6 +40,25 @@ static float swept(const FlightLog& L) {
     }
     return std::fabs(a) * 57.29578f;
 }
+// How smoothly the camera turned: the 95th-percentile turn rate (degrees per second) and the
+// largest angular acceleration (degrees per second squared). The autopilot is a camera
+// operator as much as a pilot: a view that snaps from frame to frame is unwatchable.
+struct Smooth {
+    float turnP95 = 0, accelMax = 0;
+};
+static Smooth smoothness(const FlightLog& L, float dt) {
+    std::vector<Vec3> w;  // angular velocity vectors
+    for (size_t i = 1; i < L.look.size(); i++) w.push_back(L.look[i - 1].cross(L.look[i]) * (1.0f / dt));
+    std::vector<float> rate;
+    Smooth s;
+    for (size_t i = 0; i < w.size(); i++) {
+        rate.push_back(w[i].length() * 57.29578f);
+        if (i > 0) s.accelMax = std::max(s.accelMax, (w[i] - w[i - 1]).length() / dt * 57.29578f);
+    }
+    std::sort(rate.begin(), rate.end());
+    s.turnP95 = rate.empty() ? 0 : rate[rate.size() * 95 / 100];
+    return s;
+}
 static float meanDeLastHalf(const FlightLog& L) {
     double s = 0;
     size_t n = 0;
@@ -57,12 +76,18 @@ int main() {
         check(a.minDe > 0.25f, "around: never comes closer than half the clearance");
         check(m > 0.35f && m < 0.8f, "around: holds about the height it was given");
         check(a.travelled > 25, "around: keeps flying");
+        Smooth sm = smoothness(a, dt);
+        printf("    view turns at %.0f deg/s (95%%), accelerates at most %.0f deg/s^2\n", sm.turnP95, sm.accelMax);
+        check(sm.turnP95 < 70 && sm.accelMax < 400, "around: the view turns smoothly");
     }
     ap.engage(FlightStyle::Through, Vec3(1, 0, 0), 0.3f, 7);
     FlightLog t = simulateFlight(torusTube, ap, Vec3(0, 0, -3), 90, 1 / 60.0f);
     printf("  donut tunnel: closest %.3f, %.0f degrees around the ring\n", t.minDe, swept(t));
     check(t.minDe > 0.05f, "through: never touches the tunnel wall");
     check(swept(t) > 360, "through: follows a curving tunnel all the way round");
+    Smooth st = smoothness(t, 1 / 60.0f);
+    printf("    view turns at %.0f deg/s (95%%), accelerates at most %.0f deg/s^2\n", st.turnP95, st.accelMax);
+    check(st.turnP95 < 70 && st.accelMax < 400, "through: the view turns smoothly in a tunnel");
 
     ap.engage(FlightStyle::Through, Vec3(0, 0, 1), 0.2f, 7);
     FlightLog d = simulateFlight(deadEnd, ap, Vec3(0, 0, 0), 40, 1 / 60.0f);
@@ -77,6 +102,9 @@ int main() {
     printf("  city of pillars: closest %.3f, %.0f units flown\n", c.minDe, c.travelled);
     check(c.minDe > 0.05f, "through: weaves between pillars without touching one");
     check(c.travelled > 20, "through: keeps exploring");
+    Smooth sc = smoothness(c, 1 / 60.0f);
+    printf("    view turns at %.0f deg/s (95%%), accelerates at most %.0f deg/s^2\n", sc.turnP95, sc.accelMax);
+    check(sc.turnP95 < 70 && sc.accelMax < 400, "through: the view turns smoothly weaving between pillars");
     printf("%s\n", failures ? "autopilot test FAILED" : "autopilot test passed");
     return failures ? 1 : 0;
 }

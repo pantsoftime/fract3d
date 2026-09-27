@@ -1835,9 +1835,15 @@ void App::flyAutopilot(float dt) {
     // the orbit target (and so the renderer's sense of scale) follows the surface ahead, as when flying with WASD
     // (it also sets how far the renderer draws: with nothing ahead, it eases back out to the
     // fractal's size, or everything beyond the last wall passed would vanish into the fog)
+    // The renderer's sense of scale (fog, how far it draws) follows this distance, so it must
+    // change slowly: chasing whichever wall is dead ahead made it swing tenfold within half a
+    // second in the Kleinian caves, and the fog visibly thickened and thinned with it. It
+    // eases in log space over about a second and a half, within sensible bounds.
     bool hit = probeValid && centerHitT > 0;
-    float want = hit ? centerHitT : fractal().sceneSize();
-    float dist = view.cam.distance + (want - view.cam.distance) * std::min(dt * (hit ? 4.0f : 1.0f), 1.0f);
+    float S = fractal().sceneSize();
+    float want = std::clamp(hit ? centerHitT : S, std::max(autopilot.wallDistance, autopilot.clearance * 0.1f) * 2.0f, S * 2.0f);
+    float dist = std::exp(std::log(std::max(view.cam.distance, 1e-9f)) +
+                          (std::log(std::max(want, 1e-9f)) - std::log(std::max(view.cam.distance, 1e-9f))) * (1 - std::exp(-dt / 1.5f)));
     view.cam.lookAt(pos, pos + look * dist);
     view.cam.roll = autopilot.roll;
 }

@@ -24,6 +24,14 @@ void Autopilot::engage(FlightStyle s, const Vec3& look, float clearanceTarget, u
     style = s;
     heading = limitClimb(look, 0.8f);
     gaze = look.normalized();
+    wantF = heading;
+    omega = Vec3(0, 0, 0);
+    gazeTarget = gaze;
+    gazeYaw = std::atan2(gaze.x, gaze.z);
+    gazePitch = std::asin(std::clamp(gaze.y, -1.0f, 1.0f));
+    gazeYawV = gazePitchV = 0;
+    openF = 0;
+    normalFValid = false;
     clearance = std::max(clearanceTarget, 1e-7f);
     wallDistance = clearance;
     speed = 0;
@@ -72,6 +80,12 @@ Vec3 Autopilot::step(float dt, const Vec3& pos, const ShipSensors& s, Vec3& look
     }
     const bool nOk = s.normalValid && std::isfinite(s.normal.length()) && s.normal.length() > 0;
     Vec3 n = nOk ? s.normal.normalized() : Vec3(0, 1, 0);
+    if (nOk) {  // (filtered over about a fifth of a second: bumpy walls make it jump from frame to frame)
+        Vec3 m = normalFValid ? normalF + (n - normalF) * (1 - std::exp(-dt / 0.2f)) : n;
+        normalF = m.length() > 0.2f ? m.normalized() : n;  // (a flip to another wall: take it)
+        normalFValid = true;
+        n = normalF;
+    }
     // The nearest surface can't be farther than the free distance along any whisker: where
     // the distance estimate runs long (height fields near cliffs), believe the whiskers.
     float de = s.de;
@@ -158,29 +172,46 @@ Vec3 Autopilot::step(float dt, const Vec3& pos, const ShipSensors& s, Vec3& look
            std::sin(time * 0.13f + ph[4]) + 0.6f * std::sin(time * 0.23f + ph[5]));
     desired = limitClimb(desired.normalized() + w * (0.18f * (1 - urgency)), 0.8f);
 
-    // Turn toward it at a limited rate - faster when something is in the way, and fast
-    // enough to follow a surface curving at the scale of the clearance.
-    float c = std::clamp(heading.dot(desired), -1.0f, 1.0f), ang = std::acos(c);
-    float follow = 1.5f * speed / std::max(std::max(de, clearance), 1e-9f);
-    float maxTurn = (std::max(0.45f, follow) + 2.2f * urgency) * dt;
-    Vec3 nh = desired;
-    if (ang > maxTurn && ang > 1e-6f) {
-        Vec3 side = desired - heading * c;
-        side = side.length() < 1e-6f ? anyPerpendicular(heading) : side.normalized();
-        nh = heading * std::cos(maxTurn) + side * std::sin(maxTurn);
+    // Steer like a vehicle, not a pointer. The wanted direction is recomputed every frame
+    // from noisy probes, so it is filtered first (quicker when something is in the way); the
+    // heading then turns toward it with an angular velocity that can only change so fast,
+    // so turns ease in and out instead of snapping. (Unfiltered, the ship turned at 90
+    // degrees a second in calm flight through the Kleinian caves.)
+    float tauWant = 0.3f * (1 - 0.7f * urgency);
+    Vec3 wf = wantF + (desired - wantF) * (1 - std::exp(-dt / std::max(tauWant, 0.02f)));
+    wantF = wf.length() > 0.1f ? wf.normalized() : desired;
+    float c = std::clamp(heading.dot(wantF), -1.0f, 1.0f), ang = std::acos(c);
+    Vec3 axis = heading.cross(wantF);
+    axis = axis.length() > 1e-6f ? axis.normalized() : (ang > 1.0f ? anyPerpendicular(heading) : Vec3(0, 0, 0));
+    // limits: turning fast enough to follow a surface curving at the scale of the clearance
+    // (Around) and to dodge what's ahead, but no faster
+    float follow = 0.9f * speed / std::max(std::max(de, clearance * 0.5f), 1e-9f);
+    float wMax = std::clamp(follow, 0.5f, 1.0f) + 1.4f * urgency;  // radians per second (1: 57 degrees)
+    float aMax = 1.8f + 6.0f * urgency;                             // radians per second squared
+    // the turn rate that still stops at the target without overshooting it
+    float wWant = std::min(wMax, std::sqrt(2.0f * aMax * ang));
+    Vec3 dw = axis * wWant - omega;
+    float dwMax = aMax * dt;
+    if (dw.length() > dwMax) dw = dw * (dwMax / dw.length());
+    omega += dw;
+    float rate = omega.length();
+    Vec3 nh = heading;
+    if (rate * dt > 1e-7f) {  // rotate the heading about omega (Rodrigues)
+        Vec3 k = omega * (1.0f / rate);
+        float th = rate * dt, ct = std::cos(th), st = std::sin(th);
+        nh = heading * ct + k.cross(heading) * st + k * (k.dot(heading) * (1 - ct));
     }
     nh = limitClimb(nh, 0.85f);
-    float yaw0 = std::atan2(heading.x, heading.z), yaw1 = std::atan2(nh.x, nh.z), dyaw = yaw1 - yaw0;
-    if (dyaw > 3.14159265f) dyaw -= 6.2831853f;
-    if (dyaw < -3.14159265f) dyaw += 6.2831853f;
-    turnRate = dt > 0 ? dyaw / dt : 0;
+    turnRate = omega.dot(Vec3(0, 1, 0));  // yaw rate: positive turns toward +x from +z, i.e. right
     heading = nh;
-    // lean into turns: turning right (yaw growing) lowers the right wing, a negative roll
-    float bank = std::clamp(-turnRate * 0.6f, -0.55f, 0.55f);
-    roll += (bank - roll) * (1 - std::exp(-dt * 2.5f));
+    // lean into turns - gently: turning right lowers the right wing (a negative roll)
+    float bank = std::clamp(-turnRate * 0.35f, -0.4f, 0.4f);
+    roll += (bank - roll) * (1 - std::exp(-dt * 1.5f));
 
-    // speed: a few clearances per second, less in tight spots and when something's ahead
+    // speed: a few clearances per second, less in tight spots, when something's ahead, and
+    // when a sharp turn is needed (as a pilot slows for a hairpin rather than whipping round)
     float cruise = speedFactor * std::clamp(de, wall * 0.3f, wall * (style == FlightStyle::Around ? 1.5f : 3.0f));
+    cruise *= 0.35f + 0.65f * std::max(heading.dot(wantF), 0.0f);
     cruise = std::max(std::min(cruise, ahead / 1.2f), speedFactor * wall * 0.05f);
     speed += (cruise - speed) * (1 - std::exp(-dt * 1.5f));
     float stepLen = std::min(speed * dt, 0.5f * de);  // never beyond the free sphere around the ship
@@ -198,11 +229,43 @@ Vec3 Autopilot::step(float dt, const Vec3& pos, const ShipSensors& s, Vec3& look
     } else {
         // In a tunnel it looks where it's going; skimming an outside wall (much of the
         // space around it open) it turns its gaze toward the wall, as Around does.
+        // (filtered: a single probe ray seeing through a gap made the gaze jolt)
         float open = std::clamp((misses / (float)s.dirs.size() - 0.2f) / 0.5f, 0.0f, 1.0f);
-        look = limitClimb(heading - n * (lookIn * open), 0.85f);
+        openF += (open - openF) * (1 - std::exp(-dt / 0.5f));
+        look = limitClimb(heading - n * (lookIn * openF), 0.85f);
         status = urgency > 0.5f ? "avoiding" : de < wall * 0.7f ? "threading" : "exploring";
     }
-    gaze = limitClimb(gaze + (look - gaze) * (1 - std::exp(-dt * 2.5f)), 0.85f);
+    // The camera's gaze follows on a critically damped spring rather than a simple lag: a
+    // lag's velocity jumps the moment its target does, a spring's only accelerates, so a
+    // sudden change of where to look becomes a smooth S-curve instead of a jolt.
+    // Where to look can itself jump (the normal flipping to the opposite wall of a narrow
+    // passage): the spring's target only moves toward it at up to 60 degrees a second. The
+    // limit on climbing is applied to the target, so the gaze eases into it (clamping the
+    // gaze itself stopped it dead: the worst jolts were exactly there).
+    look = limitClimb(look, 0.8f);
+    {
+        float c2 = std::clamp(gazeTarget.dot(look), -1.0f, 1.0f), a2 = std::acos(c2), step2 = 1.05f * dt;
+        if (a2 > step2) {
+            Vec3 side = look - gazeTarget * c2;
+            side = side.length() < 1e-6f ? anyPerpendicular(gazeTarget) : side.normalized();
+            gazeTarget = gazeTarget * std::cos(step2) + side * std::sin(step2);
+        } else {
+            gazeTarget = look;
+        }
+    }
+    // The spring runs on the gaze's yaw and pitch separately: on a single angle a critically
+    // damped spring never overshoots its target, so the pitch stays within the target's limit
+    // (a spring on the direction vector could climb past it while the target swung sideways,
+    // and a limit on the gaze then stopped it dead - the last jolts were exactly there).
+    const float w0 = 3.0f;  // radians per second: settles in about a second
+    float tYaw = std::atan2(gazeTarget.x, gazeTarget.z), tPitch = std::asin(std::clamp(gazeTarget.y, -1.0f, 1.0f));
+    float dYaw = std::remainder(tYaw - gazeYaw, 6.2831853f);  // (the short way round)
+    gazeYawV += (dYaw * (w0 * w0) - gazeYawV * (2.0f * w0)) * dt;
+    gazePitchV += ((tPitch - gazePitch) * (w0 * w0) - gazePitchV * (2.0f * w0)) * dt;
+    gazeYaw = std::remainder(gazeYaw + gazeYawV * dt, 6.2831853f);
+    gazePitch += gazePitchV * dt;
+    float cp = std::cos(gazePitch);
+    gaze = Vec3(std::sin(gazeYaw) * cp, std::sin(gazePitch), std::cos(gazeYaw) * cp);
     look = gaze;
     return pos + heading * stepLen;
 }
@@ -262,6 +325,7 @@ FlightLog simulateFlight(const std::function<float(const Vec3&)>& de, Autopilot 
         pos = np;
         float d = de(pos);
         log.pos.push_back(pos);
+        log.look.push_back(look);
         log.de.push_back(d);
         log.minDe = std::min(log.minDe, d);
     }
