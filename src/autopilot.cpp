@@ -19,7 +19,7 @@ static Vec3 limitClimb(Vec3 d, float maxY) {
     return Vec3(d.x * s, std::copysign(maxY, d.y), d.z * s);
 }
 
-void Autopilot::engage(FlightStyle s, const Vec3& look, float clearanceTarget, unsigned seed) {
+void Autopilot::engage(FlightStyle s, const Vec3& look, float clearanceTarget, unsigned seed, float clearanceOpenTarget) {
     active = true;
     style = s;
     heading = limitClimb(look, 0.8f);
@@ -33,6 +33,13 @@ void Autopilot::engage(FlightStyle s, const Vec3& look, float clearanceTarget, u
     openF = 0;
     normalFValid = false;
     clearance = std::max(clearanceTarget, 1e-7f);
+    clearanceOpen = s == FlightStyle::Through && clearanceOpenTarget > clearance ? clearanceOpenTarget : 0;
+    size = std::max(clearance, clearanceOpen);  // (starting enclosed, the room it's in holds it in at once, and the size follows)
+    closedF = 0;
+    openTime = diveTime = searchTime = 0;
+    inwardF = 0;
+    lastCenterDist = -1;
+    diving = false;
     wallDistance = clearance;
     speed = 0;
     time = 0;
@@ -43,6 +50,38 @@ void Autopilot::engage(FlightStyle s, const Vec3& look, float clearanceTarget, u
         phase[i] = (float)(seed >> 8) / (float)(1u << 24) * 6.2831853f;
     }
     status = "engaged";
+}
+
+// Through, between the inside and the outside: how big the ship is (see clearanceOpen).
+// closedF below this: out in the open; above the second: enclosed. (Skimming the outside of the
+// Mandelbox it reads 0 on every frame; in its rooms and slots about 0.25, dipping to 0.05.)
+static constexpr float CLO = 0.03f, CHI = 0.2f;
+void Autopilot::updateSize(float dt, float de, float inward) {
+    if (clearanceOpen <= clearance) {
+        size = clearance;
+        return;
+    }
+    // Enclosed or not by closedF, which is measured against the distance to the nearest wall,
+    // not the whiskers' reach: the reach grows with the ship, and "how much it sees nothing"
+    // (openF) then fed back into how big it grew.
+    float t = std::clamp((closedF - CLO) / (CHI - CLO), 0.0f, 1.0f), inOpen = 1 - t * t * (3 - 2 * t);  // 1: out in the open
+    if (inOpen > 0.9f) openTime += dt;
+    else if (inOpen < 0.3f) openTime = 0, diving = false;  // (enclosed: in, or never out)
+    if (!diving && openTime > 12.0f) diving = true, diveTime = searchTime = 0;
+    if (diving) {
+        diveTime += dt;
+        // down at the surface it searches for a while (nothing found: back up, look elsewhere);
+        // the clock stops while it's working its way into something (partly enclosed, or
+        // heading in toward the middle down a trench)
+        inwardF += (inward - inwardF) * (1 - std::exp(-dt / 2.0f));
+        if (size < clearance * 1.5f && closedF < CLO && inwardF < 0.1f * speed) searchTime += dt;
+        if (searchTime > 15.0f || diveTime > 90.0f) diving = false, openTime = 0;
+    }
+    float want = std::exp(std::log(clearance) + (std::log(clearanceOpen) - std::log(clearance)) * inOpen);
+    // diving: it shrinks with its height, so it comes down in a few seconds (holding its
+    // size, the descent slows as it nears - a steady swoop) and is small only at the surface
+    if (diving) want = std::clamp(0.5f * de, clearance, clearanceOpen);
+    size = std::exp(std::log(size) + (std::log(want) - std::log(size)) * (1 - std::exp(-dt / 1.5f)));
 }
 
 // Around sees a few clearances out; Through sees a few times the room it's in (so a
@@ -114,6 +153,7 @@ Vec3 Autopilot::step(float dt, const Vec3& pos, const ShipSensors& s, Vec3& look
         if (align > 0.9f) ahead = std::min(ahead, std::max(s.free[i], 0.0f));
         if (s.hit.size() == s.free.size() ? !s.hit[i] : s.free[i] >= L * 0.999f) misses++;
         float score = room * room * (0.55f + 0.45f * align);
+        if (diving && s.dirs[i].dot(n) > 0.2f) score *= 0.1f;  // diving: the way in is into the surface, not up into the sky
         float w = score * score * score * score;
         flow += s.dirs[i] * w;
         if (score > bestScore) bestScore = score, best = (int)i;
@@ -121,13 +161,31 @@ Vec3 Autopilot::step(float dt, const Vec3& pos, const ShipSensors& s, Vec3& look
     roomAhead = ahead;
     float urgency = std::clamp(1.0f - ahead / (0.6f * L), 0.0f, 1.0f);
     // Through keeps a distance from the walls that suits the room it's in (a third of the
-    // typical free distance around it), up to the clearance it was given.
+    // typical free distance around it), up to its size (the clearance it was given, unless it
+    // has two sizes: see updateSize).
     float wall = clearance;
     if (style == FlightStyle::Through) {
+        // how open the surroundings are - the share of whiskers that found nothing (filtered:
+        // a single ray seeing through a gap shouldn't count)
+        float open = std::clamp((misses / (float)s.dirs.size() - 0.2f) / 0.5f, 0.0f, 1.0f);
+        openF += (open - openF) * (1 - std::exp(-dt / 0.5f));
+        // enclosed: a wall on the far side too - of the whiskers pointing away from the nearest
+        // wall, the share that meet another within a few times its distance (outside, skimming
+        // a face, about none do; in a room or between the plates of a slot, most)
+        int away = 0, walled = 0;
+        for (size_t i = 0; i < s.dirs.size(); i++) {
+            if (s.dirs[i].dot(n) < 0.3f) continue;
+            away++;
+            walled += (s.hit.size() == s.free.size() ? s.hit[i] != 0 : s.free[i] < L * 0.999f) && s.free[i] < 6.0f * std::max(de, size);
+        }
+        if (away > 0) closedF += (walled / (float)away - closedF) * (1 - std::exp(-dt / 1.0f));
+        float r = (pos - center).length();
+        updateSize(dt, de, lastCenterDist > 0 && dt > 0 ? (lastCenterDist - r) / dt : 0);
+        lastCenterDist = r;
         std::vector<float> f = s.free;
         std::nth_element(f.begin(), f.begin() + f.size() / 2, f.end());
         float lo = std::min(std::max(s.eps * 4, clearance * 1e-4f), clearance);  // (clearance can be below float precision here)
-        wall = std::clamp(0.35f * f[f.size() / 2], lo, clearance);
+        wall = std::clamp(0.35f * f[f.size() / 2], lo, std::max(size, lo));
     }
     wallDistance = wall;
     // anything closer than that pushes the ship away (the floor too, which the normal ignores)
@@ -163,6 +221,8 @@ Vec3 Autopilot::step(float dt, const Vec3& pos, const ShipSensors& s, Vec3& look
         // along the surface, the roomiest way leads into the openings it passes.
         desired = desired + n * (0.8f * std::clamp((wall - obj) / wall, -1.0f, 1.0f));
     }
+    if (diving && (center - pos).length() > 1e-9f)  // diving: a leaning toward the middle, so it follows trenches in, not along
+        desired = desired.normalized() + (center - pos).normalized() * 0.35f;
     desired = desired.normalized() + push * 1.5f;
     if (best >= 0 && urgency > 0) desired = desired.normalized() * (1 - urgency) + s.dirs[best] * (1.5f * urgency);
     // a slow wander, so no two flights are the same and it doesn't circle one spot forever
@@ -234,11 +294,10 @@ Vec3 Autopilot::step(float dt, const Vec3& pos, const ShipSensors& s, Vec3& look
     } else {
         // In a tunnel it looks where it's going; skimming an outside wall (much of the
         // space around it open) it turns its gaze toward the wall, as Around does.
-        // (filtered: a single probe ray seeing through a gap made the gaze jolt)
-        float open = std::clamp((misses / (float)s.dirs.size() - 0.2f) / 0.5f, 0.0f, 1.0f);
-        openF += (open - openF) * (1 - std::exp(-dt / 0.5f));
-        look = limitClimb(heading - n * (lookIn * openF), 0.85f);
-        status = urgency > 0.5f ? "avoiding" : de < wall * 0.7f ? "threading" : "exploring";
+        // (diving, it looks ahead along the surface: looking down into it, close up, the whole
+        // picture was one flat wall)
+        look = limitClimb(heading - n * (lookIn * openF * (diving ? 0.3f : 1.0f)), 0.85f);
+        status = urgency > 0.5f ? "avoiding" : diving ? "diving" : de < wall * 0.7f ? "threading" : "exploring";
     }
     // The camera's gaze follows on a critically damped spring rather than a simple lag: a
     // lag's velocity jumps the moment its target does, a spring's only accelerates, so a
@@ -331,6 +390,7 @@ FlightLog simulateFlight(const std::function<float(const Vec3&)>& de, Autopilot 
         float d = de(pos);
         log.pos.push_back(pos);
         log.look.push_back(look);
+        log.size.push_back(ap.size);
         log.de.push_back(d);
         log.minDe = std::min(log.minDe, d);
     }

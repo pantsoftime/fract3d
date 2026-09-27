@@ -41,6 +41,18 @@ struct Autopilot {
     bool active = false;
     FlightStyle style = FlightStyle::Around;
     float clearance = 1.0f;    // Around: height to hold; Through: distance from the walls to aim for
+    // Through, where the inside is far finer than the outside (the Mandelbox's walls are a maze
+    // of rooms joined by gaps 1/400 of the box): out in the open the ship grows up to this, so
+    // it crosses the outside at the object's scale, and it shrinks back to `clearance` where
+    // it is enclosed. After cruising the outside a while it dives - shrinks down to the surface
+    // to look for a way in - and climbs back out if it finds none. 0: it keeps to `clearance`.
+    float clearanceOpen = 0;
+    float size = 1.0f;         // the most it keeps from the walls right now (eased between the two, in log space)
+    float closedF = 0;         // how enclosed it is: the share of whiskers meeting a wall on the far side (filtered)
+    float openTime = 0, diveTime = 0, searchTime = 0;
+    float inwardF = 0;         // how fast it's getting closer to `center` (filtered): diving, it keeps on while it is
+    float lastCenterDist = -1;
+    bool diving = false;
     float speedFactor = 1.0f;  // cruise speed, in clearances per second
     float lookIn = 1.2f;       // Around: how far the gaze turns toward the surface (1.2: about 50 degrees; terrain wants less)
     bool orbitCenter = false;  // Around: also circle `center` at `orbitRadius` (horizontally) - for terrain
@@ -67,8 +79,9 @@ struct Autopilot {
     float turnRate = 0;        // radians per second
     const char* status = "";
 
-    void engage(FlightStyle s, const Vec3& look, float clearanceTarget, unsigned seed);
+    void engage(FlightStyle s, const Vec3& look, float clearanceTarget, unsigned seed, float clearanceOpenTarget = 0);
     float whiskerRange(float de) const;
+    void updateSize(float dt, float de, float inward);
     std::vector<Vec3> whiskerDirs() const;  // for the next probe (world directions)
     // Advances the ship by dt from `pos`; returns the new position. `look` receives the
     // camera's view direction (Around looks partly toward the object).
@@ -81,6 +94,7 @@ struct FlightLog {
     std::vector<Vec3> pos;
     std::vector<float> de;
     std::vector<Vec3> look;  // where the camera looked, every frame (smoothness)
+    std::vector<float> size; // Autopilot::size, every frame
     float minDe = 1e30f;
     float travelled = 0;
 };

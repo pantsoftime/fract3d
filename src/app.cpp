@@ -760,6 +760,19 @@ int App::selfTest() {
         userClearance.clear();
         disengageAutopilot(nullptr);
     }
+    {   // the Mandelbox's inside is far finer than its outside: Through flies between two sizes
+        int keep = view.fractal;
+        selectFractal(lib_.indexOf("mandelbox"), true);
+        probeValid = false;
+        engageAutopilot(1);
+        const Fractal& m = fractal();
+        float S = m.sceneSize();
+        check(std::abs(autopilot.clearance - m.autopilotInside * S) < 1e-5f * S &&
+                  std::abs(autopilot.clearanceOpen - m.autopilotClearance * S) < 1e-5f * S,
+              "the Mandelbox: small inside, its own scale outside");
+        disengageAutopilot(nullptr);
+        selectFractal(keep, true);
+    }
     view.cam.roll = 0.4f;
     loadParText(parText(), "self-test", true);
     check(view.cam.roll == 0.0f, "a loaded view is level");
@@ -1780,8 +1793,16 @@ void App::engageAutopilot(int style) {
         // against a wall still leaves room to fly.
         clearance = std::min(clearance, std::max(deAtCam * 1.5f, view.cam.distance * 0.1f));
     }
+    // Through, where the inside is far finer than the outside ("inside=" in the fractal's
+    // @autopilot): the ship grows to the scale above in the open and shrinks to the inside's
+    // where it's enclosed (see Autopilot::clearanceOpen)
+    float open = 0;
+    if (remembered == userClearance.end() && style == 1 && f.autopilotInside > 0) {
+        open = clearance;
+        clearance = std::min(clearance, f.autopilotInside * f.sceneSize());
+    }
     unsigned seed = session.cli.fixedDt > 0 ? 12345u : (unsigned)(now * 1000.0) ^ 0x9e3779b9u;  // (tests: the same flight every time)
-    autopilot.engage(style == 1 ? FlightStyle::Through : FlightStyle::Around, makeView(fbW, fbH).fwd, clearance, seed);
+    autopilot.engage(style == 1 ? FlightStyle::Through : FlightStyle::Around, makeView(fbW, fbH).fwd, clearance, seed, open);
     autopilot.roll = view.cam.roll;  // (carry on from the current bank, so switching style doesn't jolt the view)
     autopilot.lookIn = f.autopilotLook;
     autopilot.orbitCenter = f.autopilotOrbit > 0;

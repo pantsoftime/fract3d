@@ -1,5 +1,5 @@
 // The "@autopilot" hint in fractal files (src/fractal_lib.cpp): the style, an optional
-// clearance and optional look=/orbit= in any order after it; unknown tokens are reported.
+// clearance and optional look=/orbit=/inside= in any order after it; unknown tokens are reported.
 // Also parses every fractal that ships, which must have no errors.
 #include <cmath>
 #include <cstdio>
@@ -48,6 +48,9 @@ int main(int argc, char** argv) {
     Fractal h = parse("// @autopilot around -1 nan zoom=3");
     check(near(h.autopilotClearance, 0.25f) && h.parseError.find("zoom=3") != std::string::npos, "bad values are ignored, unknown words reported");
     check(h.parseError.find("-1") != std::string::npos && h.parseError.find("nan") != std::string::npos, "a negative or NaN clearance is reported");
+    Fractal m = parse("// @autopilot through 0.03 inside=0.001");
+    check(m.autopilotStyle == 1 && near(m.autopilotClearance, 0.03f) && near(m.autopilotInside, 0.001f) && d.autopilotInside == 0,
+          "inside= (none unless given)");
 
     if (argc > 1) {  // every fractal that ships parses without errors
         int n = 0, bad = 0;

@@ -51,6 +51,7 @@ struct Fractal {
     int autopilotStyle = 0;
     float autopilotClearance = 0.25f;
     float autopilotLook = 1.2f;  // "look=X": Around's gaze toward the surface (see Autopilot::lookIn)
+    float autopilotInside = 0;   // "inside=X": Through shrinks to X x its scene size where it's enclosed (0: no finer inside)
     float autopilotOrbit = 0;    // "orbit=R": Around also circles the @camera target at R x its scene size (terrain)
     float sceneSize() const {
         float dx = camPos[0] - camTarget[0], dy = camPos[1] - camTarget[1], dz = camPos[2] - camTarget[2];

@@ -2,7 +2,7 @@
 // @category Folding
 // @credit Tom Lowe (Tglad), 2010
 // @camera 11 8 -15   0 0 0
-// @autopilot through 0.03
+// @autopilot through 0.03 inside=0.001
 // @render stepFactor=0.9 detail=0.5 maxSteps=320 maxDist=6
 // @look palette="Copper Patina" colorScale=1.2 paletteMix=0.9 specular=0.3 sunAzimuth=140 sunElevation=40 floor=1 floorY=-6.1
 // @param float scale = 2 [-3, 3] "Scale" -- Multiplies space after each fold. Negative scales (about -1.5) give sponge-like, organic shapes. Around 2 to 3 gives architectural boxes full of chambers.
@@ -29,6 +29,7 @@
 // * Set Min radius to 0 for sharper, more chaotic detail.
 // * Add a few degrees of rotation per step.
 // * Fly into one of the openings with WASD: a scale-2 box is a city of rooms inside rooms.
+// * Or press G and wait: the autopilot circles the box, dives to its surface and burrows in through gaps 1/400 of the box wide, shrinking to fit. The tour's "inside the Mandelbox" stop starts in there.
 // @end
 
 float DE(vec3 p, inout vec4 trap) {

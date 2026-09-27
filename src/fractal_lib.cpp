@@ -222,7 +222,7 @@ bool parseFractalFile(const fs::path& path, Fractal& f) {
                         f.look.push_back({k, v});
                     }
                 }
-                else if (tag == "autopilot") {  // around|through [CLEARANCE] [look=X] [orbit=R], in any order after the style
+                else if (tag == "autopilot") {  // around|through [CLEARANCE] [look=X] [orbit=R] [inside=X], in any order after the style
                     std::istringstream as(arg);
                     std::string tok;
                     bool first = true;
@@ -234,6 +234,9 @@ bool parseFractalFile(const fs::path& path, Fractal& f) {
                         } else if (tok.rfind("orbit=", 0) == 0) {
                             float o = std::strtof(tok.c_str() + 6, nullptr);
                             if (std::isfinite(o)) f.autopilotOrbit = std::clamp(o, 0.0f, 10.0f);
+                        } else if (tok.rfind("inside=", 0) == 0) {
+                            float v = std::strtof(tok.c_str() + 7, nullptr);
+                            if (std::isfinite(v)) f.autopilotInside = std::clamp(v, 0.0f, 10.0f);
                         } else if (tok.rfind("look=", 0) == 0) {
                             float l = std::strtof(tok.c_str() + 5, nullptr);
                             if (std::isfinite(l)) f.autopilotLook = std::clamp(l, 0.0f, 5.0f);
