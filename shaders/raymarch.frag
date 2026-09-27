@@ -131,6 +131,11 @@ Hit march(vec3 ro, vec3 rd, float tStart, float maxT, float epsScale) {
     return h;
 }
 
+// Near the draw distance the fractal dissolves into the sky instead of ending at an edge
+// (flying close to the walls, the draw distance is short: past it, a corridor's far end was a
+// hard-edged patch of sky)
+float drawFade(float t, float maxT) { return smoothstep(0.7 * maxT, maxT, t); }
+
 // Far away, the ground dissolves into the horizon instead of ending at an edge.
 vec3 floorFade(vec3 col, vec3 rd, float t, vec4 trap) {
     if (trap.w > -0.5) return col;
@@ -269,7 +274,7 @@ vec3 tracePath(vec3 ro, vec3 rd, out float firstT) {
         }
         vec3 p = ro + rd * h.t;
         if (b == 0) { firstT = h.t; eps0 = max(h.t * g_pixelAngle * uDetail, 1e-7); }
-        float fade = h.trap.w < -0.5 ? 1.0 - exp(-h.t / (uSceneScale * 12.0)) : 0.0;
+        float fade = h.trap.w < -0.5 ? 1.0 - exp(-h.t / (uSceneScale * 12.0)) : drawFade(h.t, maxT);
         if (fade > 0.0) { radiance += throughput * fade * sky(rd, false); throughput *= 1.0 - fade; }
         vec3 n = calcNormal(p, eps0 * 0.5);
         vec3 alb = albedo(h.trap, n);
@@ -347,6 +352,7 @@ void main() {
     } else {
         Hit h = march(ro, rd, 0.0, maxT, 1.0);
         col = shadeRealtime(ro, rd, h, maxT);
+        if (h.hit && h.trap.w > -0.5) col = mix(col, sky(rd, false), drawFade(h.t, maxT));
         t = h.hit ? h.t : -1.0;
     }
 

@@ -1869,7 +1869,10 @@ void App::flyAutopilot(float dt) {
     // eases in log space over about a second and a half, within sensible bounds.
     bool hit = probeValid && centerHitT > 0;
     float S = fractal().sceneSize();
-    float want = std::clamp(hit ? centerHitT : S, std::max(autopilot.wallDistance, autopilot.clearance * 0.1f) * 2.0f, S * 2.0f);
+    // (never below a fiftieth of the fractal's size - a draw distance of about an eighth of it:
+    // deep in the Mandelbox's walls the ship is 1/600 of the box, and scaled to that, a
+    // corridor's far end ended in a patch of sky)
+    float want = std::clamp(hit ? centerHitT : S, std::max(std::max(autopilot.wallDistance, autopilot.clearance * 0.1f) * 2.0f, S * 0.02f), S * 2.0f);
     float dist = std::exp(std::log(std::max(view.cam.distance, 1e-9f)) +
                           (std::log(std::max(want, 1e-9f)) - std::log(std::max(view.cam.distance, 1e-9f))) * (1 - std::exp(-dt / 1.5f)));
     view.cam.lookAt(pos, pos + look * dist);
