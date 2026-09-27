@@ -42,6 +42,7 @@ add_executable(fract3d
   src/fractint_par.cpp
   src/pngmeta.cpp
   src/animation.cpp
+  src/autopilot.cpp
   src/deepzoom.cpp)
 target_compile_definitions(fract3d PRIVATE FRACT3D_VERSION="${PROJECT_VERSION}")
 target_include_directories(fract3d PRIVATE src)
@@ -162,6 +163,10 @@ if(FRACT3D_TESTS)
   set_tests_properties(fractint.unit PROPERTIES LABELS nogpu)
   add_test(NAME formula.unit COMMAND formula_test ${CMAKE_SOURCE_DIR}/formulas/classics.frm)
   set_tests_properties(formula.unit PROPERTIES LABELS nogpu)  # runs in CI (no GPU there)
+  add_executable(autopilot_test tests/autopilot_test.cpp src/autopilot.cpp)
+  target_include_directories(autopilot_test PRIVATE src)
+  add_test(NAME autopilot.unit COMMAND autopilot_test)
+  set_tests_properties(autopilot.unit PROPERTIES LABELS nogpu)
   file(STRINGS ${CMAKE_SOURCE_DIR}/formulas/classics.frm FRM_HEADERS REGEX "^[A-Za-z0-9_]+ *[({]")
   foreach(h ${FRM_HEADERS})
     string(REGEX MATCH "^[A-Za-z0-9_]+" fname "${h}")
