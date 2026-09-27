@@ -44,7 +44,7 @@ struct Autopilot {
     float speedFactor = 1.0f;  // cruise speed, in clearances per second
     float lookIn = 1.2f;       // Around: how far the gaze turns toward the surface (1.2: about 50 degrees; terrain wants less)
     bool orbitCenter = false;  // Around: also circle `center` at `orbitRadius` (horizontally) - for terrain
-    Vec3 center;
+    Vec3 center;               // the fractal's middle (its @camera target): Around looks in toward it
     float orbitRadius = 0;
     Vec3 heading{0, 0, 1};
     Vec3 gaze{0, 0, 1};         // where the camera looks (eased, so the view drifts rather than twitches)

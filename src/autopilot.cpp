@@ -223,6 +223,11 @@ Vec3 Autopilot::step(float dt, const Vec3& pos, const ShipSensors& s, Vec3& look
         if (orbitCenter && orbitRadius > 0) {  // circling: look in across the middle, like a sightseeing flight
             Vec3 h(center.x - pos.x, 0, center.z - pos.z);
             if (h.length() > 1e-9f) look = look.normalized() + h.normalized() * 0.9f;
+        } else if ((center - pos).length() > 1e-9f) {
+            // An object: aim well in toward its middle as well as at the surface below, so
+            // it stays in frame as the ship circles (the local normal alone, on a bumpy
+            // object seen from close up, left it at the edge of the picture)
+            look = heading * 0.55f + (center - pos).normalized() * 0.8f - n * (0.4f * lookIn);
         }
         look = limitClimb(look, 0.85f);
         status = climb > 0.3f ? "climbing" : climb < -0.3f ? "descending" : urgency > 0.5f ? "avoiding" : "cruising";
