@@ -2,6 +2,7 @@
 // @category Inversion
 // @credit Apollonius of Perga (c. 200 BC); this form after Inigo Quilez
 // @camera 2.79 0.7 2.46   0.69 0.5 -0.79
+// @autopilot through 0.05
 // @render stepFactor=0.8 detail=0.4 maxSteps=300 maxDist=10
 // @look palette="Dusk (cosine)" colorScale=1.0 paletteMix=0.9 fog=0.12 fogColor=0.75,0.62,0.55 sunAzimuth=250 sunElevation=20 sunColor=1.0,0.8,0.6
 // @param float strength = 1.15 [0.8, 1.6] "Inversion strength" -- The s in the inversion p -> s * p / |p|^2. Around 1.1 gives airy arches. Higher values make the gaps fill in.

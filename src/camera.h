@@ -27,6 +27,7 @@ struct Camera {
     float pitch = 0.0f;  // radians, + = looking up
     float distance = 3.0f;
     float fovDeg = 55.0f;
+    float roll = 0.0f;   // radians, banks the view (+ raises the right wing); the autopilot leans into turns; not saved
 
     Vec3 forward() const;
     Vec3 right() const;

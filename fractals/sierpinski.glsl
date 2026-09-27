@@ -2,6 +2,7 @@
 // @category Folding
 // @credit Wacław Sierpiński, 1915 (3D folding form after Syntopia)
 // @camera 2.4 1.6 -2.6   0 0.3 0
+// @autopilot around 0.25
 // @render stepFactor=1.0 detail=0.5 maxSteps=220 maxDist=6
 // @look palette="Ice" colorScale=1.3 paletteMix=0.95 specular=0.4 sunAzimuth=200 sunElevation=24 floor=1 floorY=-0.58
 // @param int iterations = 16 [1, 30] "Iterations" -- Each iteration halves the size of the tetrahedra.

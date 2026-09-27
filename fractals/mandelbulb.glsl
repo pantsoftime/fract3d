@@ -2,6 +2,7 @@
 // @category Escape-time 3D
 // @credit Daniel White & Paul Nylander, 2009 (after Rudy Rucker's 1987 idea)
 // @camera 1.85 0.95 -2.05   0 -0.05 0
+// @autopilot around 0.25
 // @render stepFactor=0.9 detail=0.5 maxSteps=300 maxDist=6
 // @look palette="Gold" colorScale=1.1 colorOffset=0.1 paletteMix=0.95 specular=0.35 roughness=0.3 sunAzimuth=320 sunElevation=35 floor=1 floorY=-1.2
 // @param float power = 8 [2, 16] "Power" -- The exponent n in z -> z^n + c. White and Nylander found n = 8 gives the famous bulb. Try 2 (a lumpy blob), 3 or 4, and in-between values for morphing shapes.

@@ -53,9 +53,9 @@ bool Renderer::init(const fs::path& dataDir, std::string& err) {
     glTextureParameteri(blueNoise_, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTextureParameteri(blueNoise_, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
-    probeRT_.ensure(2, 1, GL_RG32F, GL_NEAREST);
+    probeRT_.ensure(7 + kMaxWhiskers, 1, GL_R32F, GL_NEAREST);
     glCreateBuffers(2, probePbo_);
-    for (auto b : probePbo_) glNamedBufferStorage(b, 16, nullptr, GL_MAP_READ_BIT);
+    for (auto b : probePbo_) glNamedBufferStorage(b, (7 + kMaxWhiskers) * sizeof(float), nullptr, GL_MAP_READ_BIT);
 
     if (!loadCore(err)) return false;
     coreTime_ = newestShaderTime();
@@ -628,15 +628,8 @@ void Renderer::display(ViewMode mode, const RenderTarget* accum, const IndexTarg
 }
 
 // ------------------------------------------------------------------ probe
-bool Renderer::probe(const Fractal& f, const RenderSettings& rs, const View3D& v, const Vec3& dir, float pixelAngle) {
-    if (status(f) != ProgStatus::Ready) return false;
-    FractalPrograms& fp = programs(f);
-    int slot = probeIdx_;
-    if (probeFence_[slot]) return false;  // both slots still in flight
-    Program& p = fp.probe;
+static void setProbeCommon(Program& p, const Fractal& f, const RenderSettings& rs, const View3D& v) {
     p.set3("uCamPos", v.pos.data());
-    p.set3("uProbeDir", dir.data());
-    p.set("uPixelAngle", pixelAngle);
     p.set("uDetail", rs.detail);
     p.set("uStepFactor", rs.stepFactor);
     p.set("uMaxSteps", rs.maxSteps);
@@ -645,37 +638,82 @@ bool Renderer::probe(const Fractal& f, const RenderSettings& rs, const View3D& v
     p.set("uFloorY", rs.floorY);
     setFormulaUniforms(p, v.formulaP, v.formulaMaxit);  // only the landscape's custom formula uses these
     setFractalParams(p, f, v.animTime);
+}
+
+bool Renderer::probe(const Fractal& f, const RenderSettings& rs, const View3D& v, const ProbeRequest& req) {
+    if (status(f) != ProgStatus::Ready) return false;
+    FractalPrograms& fp = programs(f);
+    int slot = probeIdx_;
+    if (probeFence_[slot]) return false;  // both slots still in flight
+    Program& p = fp.probe;
+    setProbeCommon(p, f, rs, v);
+    p.set("uMode", 0);
+    p.set3("uProbeDir", req.dir.data());
+    p.set("uPixelAngle", req.pixelAngle);
+    p.set("uGradH", req.gradH);
+    int nw = std::min((int)req.whiskers.size(), kMaxWhiskers);
+    if (nw > 0) p.set3v("uWhisker[0]", nw, req.whiskers[0].data());
+    p.set("uNumWhiskers", nw);
+    p.set("uWhiskerRange", req.whiskerRange);
     if (f.key == "landscape") prepareLandscape(p, f);
+    int width = 7 + nw;
     glBindFramebuffer(GL_FRAMEBUFFER, probeRT_.fbo);
-    glViewport(0, 0, 2, 1);
+    glViewport(0, 0, width, 1);
     glBindVertexArray(vao_);
     p.use();
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindBuffer(GL_PIXEL_PACK_BUFFER, probePbo_[slot]);
-    glReadPixels(0, 0, 2, 1, GL_RG, GL_FLOAT, nullptr);
+    glReadPixels(0, 0, width, 1, GL_RED, GL_FLOAT, nullptr);
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
     probeFence_[slot] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    probeWhiskers_[slot] = nw;
     probeIdx_ ^= 1;
     return true;
 }
 
-bool Renderer::fetchProbe(float& deAtCam, float& hitT) {
+bool Renderer::fetchProbe(ProbeResult& out, bool wait) {
     // Slots alternate, so the one we'd write next is the oldest outstanding readback.
     for (int k = 0; k < 2; k++) {
         int slot = probeIdx_ ^ k;
         GLsync& fence = probeFence_[slot];
         if (!fence) continue;
-        GLenum r = glClientWaitSync(fence, 0, 0);
+        GLenum r = glClientWaitSync(fence, wait ? GL_SYNC_FLUSH_COMMANDS_BIT : 0, wait ? 1000000000ull : 0);
         if (r != GL_ALREADY_SIGNALED && r != GL_CONDITION_SATISFIED) return false;
         glDeleteSync(fence);
         fence = nullptr;
-        float v[4];
-        glGetNamedBufferSubData(probePbo_[slot], 0, 16, v);
-        deAtCam = v[0];
-        hitT = v[2];
+        float v[7 + kMaxWhiskers];
+        int n = 7 + probeWhiskers_[slot];
+        glGetNamedBufferSubData(probePbo_[slot], 0, n * sizeof(float), v);
+        out.deAtCam = v[0];
+        out.hitT = v[1];
+        for (int i = 0; i < 4; i++) out.grad[i] = v[2 + i];
+        out.objectDe = v[6];
+        out.whiskers.assign(v + 7, v + n);
         return true;
     }
     return false;
+}
+
+bool Renderer::renderMap(const Fractal& f, const RenderSettings& rs, const View3D& v, const Vec3& center, const Vec3& right,
+                         const Vec3& fwd, float span, RenderTarget& out, int size) {
+    if (status(f) != ProgStatus::Ready) return false;
+    if (!out.ensure(size, size, GL_RGBA8, GL_LINEAR)) return false;
+    Program& p = programs(f).probe;
+    setProbeCommon(p, f, rs, v);
+    p.set("uMode", 1);
+    p.set3("uMapCenter", center.data());
+    p.set3("uMapRight", right.data());
+    p.set3("uMapFwd", fwd.data());
+    p.set("uMapSpan", span);
+    p.set("uMapRes", (float)size, (float)size);
+    if (f.key == "landscape") prepareLandscape(p, f);
+    glBindFramebuffer(GL_FRAMEBUFFER, out.fbo);
+    glViewport(0, 0, size, size);
+    glBindVertexArray(vao_);
+    p.use();
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    return true;
 }
 
 // ------------------------------------------------------------------ screenshots

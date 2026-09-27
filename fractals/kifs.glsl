@@ -2,6 +2,7 @@
 // @category Folding
 // @credit Knighty, 2010 (fractalforums.com)
 // @camera 1.55 1.05 -1.85   0 -0.05 0
+// @autopilot around 0.25
 // @render stepFactor=1.0 detail=0.5 maxSteps=220 maxDist=6
 // @look palette="Neon" colorScale=0.9 paletteMix=0.9 background=1 bgColor=0.01,0.005,0.03 glow=0.9 glowColor=0.55,0.25,1.0 sky=0.35 sunIntensity=2.2 specular=0.5 roughness=0.25
 // @param choice fold = 1 {Tetrahedral, Octahedral} "Symmetry" -- Which set of mirror planes to fold with. Tetrahedral has 24 symmetries and Octahedral (cube) has 48.

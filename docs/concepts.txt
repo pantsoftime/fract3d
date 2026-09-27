@@ -89,3 +89,14 @@ $ // @name My Fractal
 $ // @param float scale = 2 [1, 3] "Scale" -- what it does
 $ float DE(vec3 p, inout vec4 trap) { ... return distance; }
 Copy one of the existing files, change the math, and save. The app reloads it immediately and shows any compile errors on the Fractal tab. Parameters become sliders automatically, and the lines between @about and @end become the lesson in this panel.
+
+@@ Flying blind: how the autopilot steers
+The spaceship's autopilot (X opens the cockpit, G engages it) has no map of the fractal. Nobody does: the shape exists only as a formula. It steers the way a bat or a rover does, by what it can sense right now.
+* Distance: the same distance estimate that draws the picture says how far the nearest surface is. Anywhere inside that sphere is guaranteed empty, so the ship never moves more than half of it in one frame. However it turns, it cannot pass through a wall.
+* Which way is up: nudging that distance in four directions gives its gradient, which points away from the nearest surface, like the normal used for lighting.
+* Whiskers: 34 rays marched out in a cone around the heading report how much free space lies in each direction. That's how it sees an opening before it reaches it, and a dead end in time to turn around.
+Around holds a height above the surface and slides along it, so it circles the object like a satellite. Through heads for the roomiest opening while keeping its distance from the walls, and shrinks that distance to suit the room it's in. That's why it can follow a Mandelbox chamber a thousandth of the size of the whole fractal.
+$ step  <= half the distance to the nearest surface
+$ height:  steer along the gradient toward the clearance
+$ heading: toward the whisker with the most room, preferring small turns
+The moving map in the cockpit is a slice through the fractal at the ship's height, drawn from the same distance estimate: amber is solid, green is open space, and the rings are distance contours.

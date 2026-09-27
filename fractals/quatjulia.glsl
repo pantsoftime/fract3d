@@ -2,6 +2,7 @@
 // @category Escape-time 3D
 // @credit Alan Norton, 1982; John C. Hart et al., 1989 (ray tracing with distance estimation)
 // @camera 1.6 1.0 -2.0   0 0 0
+// @autopilot around 0.25
 // @render stepFactor=0.9 detail=0.5 maxSteps=280 maxDist=6
 // @look palette="Rainbow (cosine)" colorScale=0.9 paletteMix=0.85 specular=0.7 roughness=0.12 sunAzimuth=60 sunElevation=40 floor=1 floorY=-1.25
 // @param vec4 c = (-0.2, 0.6, 0.2, 0.2) [-1.2, 1.2] "Constant c" -- The 4D constant. Each c gives a different Julia set. c near the edge of the Mandelbrot set gives the most intricate shapes.

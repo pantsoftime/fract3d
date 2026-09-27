@@ -131,6 +131,16 @@ if(FRACT3D_TESTS)
                      -P ${CMAKE_SOURCE_DIR}/tests/no_crash.cmake)
   endforeach()
 
+  # The autopilot flies real fractals: around the outside (Mandelbulb), through caves
+  # (Kleinian), out of a view that starts almost touching the walls (the Mandelbox
+  # chamber), and over terrain whose distance estimate runs long (the landscape)
+  foreach(stop 07-mandelbulb-path-traced 11-kleinian-caves 09-mandelbox-cathedral 12-crater-lake)
+    add_test(NAME autopilot.fly-${stop}
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:fract3d> -DPAR=${CMAKE_SOURCE_DIR}/presets/${stop}.par
+                     -DFRAMES=1200 -DMIN_FLOWN=5 -DOUT=${TEST_OUT}/autopilot-${stop}.png
+                     -P ${CMAKE_SOURCE_DIR}/tests/autopilot_flight.cmake)
+  endforeach()
+
   # Fractint .PAR import: every supported sample entry renders; an unsupported one fails
   # with a clear message; the chooser window draws; an import survives a round trip
   foreach(entry Blue_Classic Seahorse_Rainbow Dragon_Julia Spider_Formula)

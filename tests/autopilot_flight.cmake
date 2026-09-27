@@ -1,0 +1,22 @@
+# Flies a view with the autopilot (fixed time step, so the flight is the same every run)
+# and checks the report: it must never touch a surface, and it must actually get somewhere.
+#   -DAPP -DPAR -DFRAMES -DMIN_FLOWN (in the clearances it keeps) -DOUT (a screenshot path)
+execute_process(COMMAND ${APP} --par ${PAR} --autopilot auto --fixed-dt 0.0166 --flight-report
+                        --ui-shot ${OUT} --frames ${FRAMES} --size 640x360 --hide-ui
+                RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+if(NOT rc STREQUAL "0")
+  message(FATAL_ERROR "the app failed (${rc}):\n${out}${err}")
+endif()
+if(NOT out MATCHES "flight: [a-z]+ [0-9]+ s, closest ([0-9.e+-]+) of the distance kept, ([0-9.]+) of those flown, ([0-9]+) frames touching")
+  message(FATAL_ERROR "no flight report:\n${out}${err}")
+endif()
+set(closest ${CMAKE_MATCH_1})
+set(flown ${CMAKE_MATCH_2})
+set(touching ${CMAKE_MATCH_3})
+message(STATUS "closest ${closest} of the distance kept, ${flown} flown, ${touching} frames touching")
+if(NOT touching EQUAL 0)
+  message(FATAL_ERROR "the ship touched a surface on ${touching} frames")
+endif()
+if(flown LESS ${MIN_FLOWN})
+  message(FATAL_ERROR "the ship only covered ${flown} clearances (expected at least ${MIN_FLOWN})")
+endif()

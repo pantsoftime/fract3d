@@ -2,6 +2,7 @@
 // @category Folding
 // @credit Tom Lowe (Tglad), 2010
 // @camera 11 8 -15   0 0 0
+// @autopilot through 0.03
 // @render stepFactor=0.9 detail=0.5 maxSteps=320 maxDist=6
 // @look palette="Copper Patina" colorScale=1.2 paletteMix=0.9 specular=0.3 sunAzimuth=140 sunElevation=40 floor=1 floorY=-6.1
 // @param float scale = 2 [-3, 3] "Scale" -- Multiplies space after each fold. Negative scales (about -1.5) give sponge-like, organic shapes. Around 2 to 3 gives architectural boxes full of chambers.

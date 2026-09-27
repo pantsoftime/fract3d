@@ -216,6 +216,233 @@ static void openPath(const fs::path& p) {
     posix_spawn_file_actions_destroy(&fa);
 }
 
+// ------------------------------------------------------------------ the spaceship cockpit
+// A dashboard along the bottom of the screen: speed, an artificial horizon, a moving
+// map (a slice through the fractal at the ship's height, heading up, like a car's GPS),
+// the clearance to the nearest surface, and the autopilot's controls.
+namespace {
+const ImU32 kPhosphor = IM_COL32(110, 255, 150, 255), kPhosphorDim = IM_COL32(60, 150, 90, 255);
+const ImU32 kAmber = IM_COL32(255, 180, 60, 255), kRed = IM_COL32(255, 70, 50, 255);
+const ImU32 kFace = IM_COL32(8, 14, 10, 255), kBezel = IM_COL32(55, 60, 58, 255);
+
+std::string shortNum(double v) {
+    char b[32];
+    double a = std::fabs(v);
+    if (a != 0 && (a < 1e-3 || a >= 1e5)) snprintf(b, sizeof b, "%.2e", v);
+    else snprintf(b, sizeof b, "%.4g", v);
+    return b;
+}
+
+// A round gauge: 270 degrees of arc from lower left, clockwise. frac in 0..1.
+void gauge(ImDrawList* dl, ImVec2 c, float r, float frac, const char* title, const std::string& value,
+           const std::vector<std::string>& ticks, float redFrom, float bug = -1) {
+    dl->AddCircleFilled(c, r, kBezel, 48);
+    dl->AddCircleFilled(c, r * 0.93f, kFace, 48);
+    const float a0 = 2.356f, sweep = 4.712f;  // 135 degrees, then 270 clockwise (y down)
+    auto at = [&](float f, float rr) { float a = a0 + sweep * f; return ImVec2(c.x + std::cos(a) * rr, c.y + std::sin(a) * rr); };
+    if (redFrom < 1) {
+        dl->PathArcTo(c, r * 0.8f, a0 + sweep * redFrom, a0 + sweep, 24);
+        dl->PathStroke(IM_COL32(200, 50, 40, 200), 0, r * 0.07f);
+    }
+    int n = (int)ticks.size();
+    for (int i = 0; i < n; i++) {
+        float f = n > 1 ? (float)i / (n - 1) : 0;
+        dl->AddLine(at(f, r * 0.72f), at(f, r * 0.86f), kPhosphor, 2.0f);
+        for (int k = 1; k < 5 && i < n - 1; k++) dl->AddLine(at(f + k / (5.0f * (n - 1)), r * 0.8f), at(f + k / (5.0f * (n - 1)), r * 0.86f), kPhosphorDim, 1.0f);
+        ImVec2 ts = ImGui::CalcTextSize(ticks[i].c_str()), p = at(f, r * 0.56f);
+        dl->AddText(ImVec2(p.x - ts.x * 0.5f, p.y - ts.y * 0.5f), kPhosphorDim, ticks[i].c_str());
+    }
+    if (bug >= 0) {  // the autopilot's target, like an altitude bug
+        ImVec2 p = at(std::clamp(bug, 0.0f, 1.0f), r * 0.9f), q = at(std::clamp(bug, 0.0f, 1.0f) - 0.02f, r * 0.99f), w = at(std::clamp(bug, 0.0f, 1.0f) + 0.02f, r * 0.99f);
+        dl->AddTriangleFilled(p, q, w, IM_COL32(80, 200, 255, 255));
+    }
+    ImVec2 ts = ImGui::CalcTextSize(title);
+    dl->AddText(ImVec2(c.x - ts.x * 0.5f, c.y + r * 0.22f), kPhosphorDim, title);
+    ts = ImGui::CalcTextSize(value.c_str());
+    dl->AddText(ImVec2(c.x - ts.x * 0.5f, c.y + r * 0.45f), frac >= redFrom ? kRed : kPhosphor, value.c_str());
+    float f = std::clamp(frac, -0.02f, 1.02f);
+    ImVec2 tip = at(f, r * 0.82f), s1 = at(f + 0.25f, r * 0.06f), s2 = at(f - 0.25f, r * 0.06f);
+    dl->AddTriangleFilled(tip, s1, s2, kAmber);
+    dl->AddCircleFilled(c, r * 0.07f, kBezel, 16);
+}
+
+// Attitude indicator: sky and ground, banked by the roll, shifted by the pitch.
+void horizon(ImDrawList* dl, ImVec2 c, float r, float pitch, float roll, float headingDeg) {
+    dl->AddCircleFilled(c, r, kBezel, 48);
+    float rr = r * 0.93f;
+    dl->AddCircleFilled(c, rr, IM_COL32(40, 110, 200, 255), 48);
+    // the horizon line in screen space (y down): along (cos roll, sin roll), ground on its normal side
+    ImVec2 d(std::cos(roll), std::sin(roll)), nrm(-std::sin(roll), std::cos(roll));
+    float off = std::clamp(pitch / 0.8f, -1.5f, 1.5f) * rr;  // looking up moves the horizon down
+    ImVec2 h0(c.x + nrm.x * off, c.y + nrm.y * off);
+    std::vector<ImVec2> ground;
+    const int N = 64;
+    for (int i = 0; i <= N; i++) {
+        float a = 6.2831853f * i / N;
+        ImVec2 p(c.x + std::cos(a) * rr, c.y + std::sin(a) * rr);
+        float side = (p.x - h0.x) * nrm.x + (p.y - h0.y) * nrm.y;
+        if (i > 0) {
+            float a1 = 6.2831853f * (i - 1) / N;
+            ImVec2 q(c.x + std::cos(a1) * rr, c.y + std::sin(a1) * rr);
+            float sq = (q.x - h0.x) * nrm.x + (q.y - h0.y) * nrm.y;
+            if ((sq > 0) != (side > 0)) {  // the edge crosses the horizon: add the crossing
+                float t = sq / (sq - side);
+                ground.push_back(ImVec2(q.x + (p.x - q.x) * t, q.y + (p.y - q.y) * t));
+            }
+        }
+        if (side > 0 && i < N) ground.push_back(p);
+    }
+    if (ground.size() >= 3) dl->AddConvexPolyFilled(ground.data(), (int)ground.size(), IM_COL32(120, 80, 40, 255));
+    if (std::abs(off) < rr) {  // the horizon line: the chord inside the dial
+        float hw = std::sqrt(rr * rr - off * off);
+        dl->AddLine(ImVec2(h0.x - d.x * hw, h0.y - d.y * hw), ImVec2(h0.x + d.x * hw, h0.y + d.y * hw), IM_COL32(255, 255, 255, 200), 1.5f);
+    }
+    for (int k = -2; k <= 2; k++) {  // pitch ladder, every 20 degrees
+        if (!k) continue;
+        float o = off - k * 0.349f / 0.8f * rr;
+        if (std::abs(o) > rr * 0.85f) continue;
+        ImVec2 m(c.x + nrm.x * o, c.y + nrm.y * o);
+        float w = rr * 0.22f;
+        dl->AddLine(ImVec2(m.x - d.x * w, m.y - d.y * w), ImVec2(m.x + d.x * w, m.y + d.y * w), IM_COL32(255, 255, 255, 140), 1.0f);
+    }
+    dl->AddCircle(c, rr, IM_COL32(0, 0, 0, 160), 48, 2.0f);
+    // the ship: fixed in the middle
+    float w = rr * 0.45f;
+    dl->AddLine(ImVec2(c.x - w, c.y), ImVec2(c.x - w * 0.35f, c.y), kAmber, 3.0f);
+    dl->AddLine(ImVec2(c.x + w * 0.35f, c.y), ImVec2(c.x + w, c.y), kAmber, 3.0f);
+    dl->AddLine(ImVec2(c.x - w * 0.35f, c.y), ImVec2(c.x, c.y + w * 0.25f), kAmber, 3.0f);
+    dl->AddLine(ImVec2(c.x, c.y + w * 0.25f), ImVec2(c.x + w * 0.35f, c.y), kAmber, 3.0f);
+    char b[32];
+    snprintf(b, sizeof b, "HDG %03.0f", headingDeg);
+    ImVec2 ts = ImGui::CalcTextSize(b);
+    dl->AddRectFilled(ImVec2(c.x - ts.x * 0.5f - 3, c.y + rr * 0.62f - 1), ImVec2(c.x + ts.x * 0.5f + 3, c.y + rr * 0.62f + ts.y + 1), IM_COL32(0, 0, 0, 170), 3);
+    dl->AddText(ImVec2(c.x - ts.x * 0.5f, c.y + rr * 0.62f), kPhosphor, b);
+}
+}  // namespace
+
+float App::cockpitHeight() const {
+    if (!cockpit.show || !ui.showUI || view.mode != ViewMode::Fractal3D) return 0;
+    return ImGui::GetFontSize() * 10.5f + ImGui::GetStyle().WindowPadding.y * 2 + 10;
+}
+
+void App::drawCockpit() {
+    ImGuiIO& io = ImGui::GetIO();
+    float fs_ = ImGui::GetFontSize(), H = fs_ * 10.5f, gap = fs_ * 0.6f;
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y - 10), ImGuiCond_Always, ImVec2(0.5f, 1));
+    ImGui::SetNextWindowBgAlpha(0.88f);
+    ImGuiWindowFlags fl = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+                          ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove;
+    if (!ImGui::Begin("##cockpit", nullptr, fl)) {
+        ImGui::End();
+        return;
+    }
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const Fractal& f = fractal();
+    float S = f.sceneSize();
+    float de = probeValid && deAtCam > 0 ? deAtCam : 0;
+    // narrow windows drop instruments from the ends, so the map and controls always fit
+    float avail = io.DisplaySize.x - 40 - fs_ * 17;
+    int slots = std::clamp((int)(avail / (H + gap)), 1, 4);
+    bool showSpeed = slots >= 3, showHorizon = slots >= 2, showClear = slots >= 4;
+    auto slot = [&]() {
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        ImGui::Dummy(ImVec2(H, H));
+        ImGui::SameLine(0, gap);
+        return ImVec2(p.x + H * 0.5f, p.y + H * 0.5f);
+    };
+    if (showSpeed) {  // speed, in clearances per second: how fast the surfaces rush past
+        float rush = de > 0 ? cockpit.speed / de : 0;
+        gauge(dl, slot(), H * 0.5f, rush / 5.0f, "SPEED", shortNum(cockpit.speed) + " u/s", {"0", "1", "2", "3", "4", "5"}, 0.8f);
+    }
+    if (showHorizon) {
+        Vec3 fw = view.cam.forward();
+        float hdg = std::fmod(std::atan2(fw.x, fw.z) * 57.29578f + 360.0f, 360.0f);
+        horizon(dl, slot(), H * 0.5f, view.cam.pitch, view.cam.roll, hdg);
+    }
+    {  // the moving map
+        ImVec2 p = ImGui::GetCursorScreenPos(), c(p.x + H * 0.5f, p.y + H * 0.5f);
+        if (cockpit.map.tex) ImGui::Image((ImTextureID)(intptr_t)cockpit.map.tex, ImVec2(H, H), ImVec2(0, 1), ImVec2(1, 0));
+        else ImGui::Dummy(ImVec2(H, H));
+        ImGui::SameLine(0, gap);
+        dl->PushClipRect(p, ImVec2(p.x + H, p.y + H), true);
+        for (float rf : {0.25f, 0.5f}) dl->AddCircle(c, H * rf, IM_COL32(110, 255, 150, 60), 48, 1.0f);
+        float yaw = view.cam.yaw, span = std::max(cockpit.span, 1e-12f);
+        Vec3 fwd(std::sin(yaw), 0, std::cos(yaw)), right(std::cos(yaw), 0, -std::sin(yaw));
+        for (size_t i = 0; i < cockpit.trail.size(); i++) {  // where we've been
+            Vec3 rel = cockpit.trail[i] - view.cam.pos;
+            float mx = rel.dot(right) / span, my = rel.dot(fwd) / span;
+            if (std::abs(mx) > 0.6f || std::abs(my) > 0.6f) continue;
+            float fade = (float)(i + 1) / cockpit.trail.size() * std::exp(-std::abs(rel.y) / (span * 0.25f));
+            dl->AddCircleFilled(ImVec2(c.x + mx * H, c.y - my * H), 1.6f, IM_COL32(200, 255, 220, (int)(40 + 180 * fade)));
+        }
+        // north (+z), on the rim
+        float nx = -std::sin(yaw), ny = std::cos(yaw);
+        ImVec2 np(c.x + nx * H * 0.43f, c.y - ny * H * 0.43f);
+        ImVec2 ts = ImGui::CalcTextSize("N");
+        dl->AddText(ImVec2(np.x - ts.x * 0.5f, np.y - ts.y * 0.5f), kPhosphor, "N");
+        // the ship, pointing up (the way it's heading)
+        float s = fs_ * 0.55f;
+        dl->AddTriangleFilled(ImVec2(c.x, c.y - s), ImVec2(c.x - s * 0.6f, c.y + s * 0.6f), ImVec2(c.x + s * 0.6f, c.y + s * 0.6f), kAmber);
+        std::string rng = "RNG " + shortNum(span * 0.5f);
+        dl->AddText(ImVec2(p.x + 4, p.y + 2), kPhosphor, rng.c_str());
+        dl->AddText(ImVec2(p.x + 4, p.y + H - fs_ - 2), kPhosphorDim, "SLICE AT SHIP");
+        dl->PopClipRect();
+        dl->AddRect(p, ImVec2(p.x + H, p.y + H), kBezel, 0, 0, 2.0f);
+    }
+    if (showClear) {  // distance to the nearest surface, on a log scale of the fractal's size
+        float frac = de > 0 ? (std::log10(de / S) + 5.0f) / 5.0f : 0;
+        float bug = autopilot.active ? (std::log10(autopilot.clearance / S) + 5.0f) / 5.0f : -1;
+        gauge(dl, slot(), H * 0.5f, frac, "CLEARANCE", de > 0 ? shortNum(de) : "--", {"-5", "-4", "-3", "-2", "-1", "0"}, 2.0f, bug);
+    }
+    // readouts and the autopilot
+    ImGui::BeginGroup();
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(kPhosphor));
+    ImGui::PushItemWidth(fs_ * 9);
+    Vec3 p = view.cam.pos;
+    ImGui::Text("X %s", shortNum(p.x).c_str());
+    ImGui::SameLine(fs_ * 6.2f);
+    ImGui::Text("Y %s", shortNum(p.y).c_str());
+    ImGui::SameLine(fs_ * 12.4f);
+    ImGui::Text("Z %s", shortNum(p.z).c_str());
+    ImGui::PopStyleColor();
+    ImGui::Separator();
+    bool on = autopilot.active;
+    ImGui::TextDisabled("AUTOPILOT");
+    ImGui::SameLine();
+    ImGui::TextColored(on ? ImVec4(0.45f, 1, 0.6f, 1) : ImVec4(0.6f, 0.6f, 0.6f, 1), "%s", on ? autopilot.status : "off");
+    if (on && autopilot.style == FlightStyle::Through) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("(walls %s)", shortNum(autopilot.wallDistance).c_str());
+        ImGui::SetItemTooltip("The distance it keeps from the walls: it adapts to the room it's in, up to the Clearance below");
+    }
+    auto styleButton = [&](const char* label, int style) {
+        bool cur = on && (int)autopilot.style == style;
+        if (cur) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+        if (ImGui::Button(label)) {
+            if (cur) disengageAutopilot("Autopilot off");
+            else engageAutopilot(style);
+        }
+        if (cur) ImGui::PopStyleColor();
+    };
+    styleButton("Around", 0);
+    ImGui::SetItemTooltip("Circle the outside at a steady height, looking in (G engages the style that suits this fractal)");
+    ImGui::SameLine();
+    styleButton("Through", 1);
+    ImGui::SetItemTooltip("Explore the inside: head for the roomiest opening, keep clear of the walls, turn around in dead ends");
+    ImGui::SameLine();
+    if (ImGui::Button(on ? "Off (G)" : "Engage (G)")) on ? disengageAutopilot("Autopilot off") : engageAutopilot(-1);
+    float lo = S * 1e-5f, hi = S;
+    ImGui::SliderFloat("Clearance", &autopilot.clearance, lo, hi, "%.3g", ImGuiSliderFlags_Logarithmic);
+    ImGui::SetItemTooltip("Around: the height it holds above the surface. Through: the most it keeps from the walls (it squeezes into smaller rooms on its own). Speed follows it.");
+    ImGui::SliderFloat("Speed", &autopilot.speedFactor, 0.2f, 5.0f, "%.1fx", ImGuiSliderFlags_Logarithmic);
+    ImGui::SetItemTooltip("Cruise speed, in clearances per second");
+    if (tourFlight.active) ImGui::TextDisabled("Tour: next stop in %.0f s", std::max(0.0f, tourFlight.seconds - autopilot.time));
+    else ImGui::TextDisabled("X hides this panel");
+    ImGui::PopItemWidth();
+    ImGui::EndGroup();
+    ImGui::End();
+}
+
 // ------------------------------------------------------------------ top level
 void App::drawUI() {
     if (ui.showUI) {
@@ -223,6 +450,7 @@ void App::drawUI() {
         if (view.mode == ViewMode::Fractal3D) drawControlPanel();
         else drawClassicPanel();
         if (session.showLearn) drawLearnPanel();
+        if (cockpit.show && view.mode == ViewMode::Fractal3D) drawCockpit();
         drawHud();
     }
     if (view.mode == ViewMode::Classic2D && view.cs.showOrbit) drawOrbitOverlay();
@@ -231,7 +459,7 @@ void App::drawUI() {
     if (ui.showPoster || (poster.active && !poster.toVideo)) drawPosterDialog();  // video frames: see the path window
     if (ui.showDemo) ImGui::ShowDemoWindow(&ui.showDemo);
     ui.lastDisplayW = ImGui::GetIO().DisplaySize.x;
-    ui.lastDisplayH = ImGui::GetIO().DisplaySize.y;
+    ui.lastDisplayH = ImGui::GetIO().DisplaySize.y - cockpitHeight();
     if (ui.showFormulaEditor) drawFormulaEditor();
     if (ui.showGradientEditor) drawGradientEditor();
     if (ui.showFractintImport) drawFractintImport();
@@ -321,6 +549,8 @@ void App::drawMenuBar() {
     if (ImGui::BeginMenu("View")) {
         ImGui::MenuItem("Controls & everything (Tab hides all)", "Tab", &ui.showUI);
         ImGui::MenuItem("Learn panel", "L", &session.showLearn);
+        ImGui::MenuItem("Spaceship cockpit (3D)", "X", &cockpit.show);
+        if (ImGui::MenuItem("Autopilot (3D)", "G", autopilot.active)) autopilot.active ? disengageAutopilot("Autopilot off") : engageAutopilot(-1);
         ImGui::MenuItem("Keyboard & mouse help", "F1", &ui.showHelp);
         if (ImGui::MenuItem("Fullscreen", "F11", fullscreen)) toggleFullscreen();
         int nMon = 0;
@@ -385,7 +615,8 @@ void App::fitPanel(int panel, bool anchoredRight) {
     ImGuiIO& io = ImGui::GetIO();
     ImVec2 pos = ImGui::GetWindowPos(), size = ImGui::GetWindowSize(), want = pos, wantSize = size;
     float fs_ = ImGui::GetFontSize();
-    bool resized = ui.lastDisplayW > 0 && (io.DisplaySize.x != ui.lastDisplayW || io.DisplaySize.y != ui.lastDisplayH);
+    float bottom = io.DisplaySize.y - cockpitHeight();  // (the cockpit's strip along the bottom is off limits)
+    bool resized = ui.lastDisplayW > 0 && (io.DisplaySize.x != ui.lastDisplayW || bottom != ui.lastDisplayH);
     if (resized && anchoredRight) {
         float gap = ui.lastDisplayW - (pos.x + size.x);  // how far it sat from the old right edge
         if (gap > -fs_ && gap < fs_ * 3) want.x = io.DisplaySize.x - size.x - std::max(gap, 0.0f);
@@ -402,10 +633,10 @@ void App::fitPanel(int panel, bool anchoredRight) {
             if (wantDim >= pref) pref = 0;
         }
     };
-    fit(wantSize.y, size.y, io.DisplaySize.y - top, fs_ * 6, prefH);
+    fit(wantSize.y, size.y, bottom - top, fs_ * 6, prefH);
     fit(wantSize.x, size.x, io.DisplaySize.x, fs_ * 8, prefW);
     want.x = std::clamp(want.x, 0.0f, std::max(0.0f, io.DisplaySize.x - wantSize.x));
-    want.y = std::clamp(want.y, 0.0f, std::max(0.0f, io.DisplaySize.y - wantSize.y));
+    want.y = std::clamp(want.y, 0.0f, std::max(0.0f, bottom - wantSize.y));
     if (wantSize.x != size.x || wantSize.y != size.y) ImGui::SetWindowSize(wantSize);
     if (want.x != pos.x || want.y != pos.y) ImGui::SetWindowPos(want);
 }
@@ -1445,6 +1676,23 @@ void App::drawLearnPanel() {
             if (ImGui::Button("< Previous")) tourStep(-1);
             ImGui::SameLine();
             if (ImGui::Button("Next >")) tourStep(1);
+            ImGui::Spacing();
+            if (ImGui::Button(tourFlight.active ? "Stop the autopilot tour" : "Autopilot tour")) {
+                if (tourFlight.active) disengageAutopilot("Autopilot tour ended");
+                else {
+                    tourFlight.active = true;
+                    if (view.mode == ViewMode::Fractal3D && ui.tourIdx >= 0) {  // start right here
+                        engageAutopilot(-1);
+                        tourFlight.active = autopilot.active;
+                    } else {
+                        tourFlightNext();
+                    }
+                }
+            }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(fs_ * 7);
+            ImGui::SliderFloat("##tourSeconds", &tourFlight.seconds, 15, 300, "%.0f s a stop", ImGuiSliderFlags_Logarithmic);
+            ImGui::TextDisabled("Flies each 3D stop in the cockpit: around the outside or through the inside, whichever suits it. Touch any control to take over.");
             ImGui::Separator();
             if (ui.tourIdx >= 0 && !ui.parNote.empty()) {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_PlotHistogram));
@@ -1494,7 +1742,7 @@ void App::drawLearnPanel() {
 void App::drawHud() {
     ImGuiIO& io = ImGui::GetIO();
     float pad = 10.0f;
-    ImGui::SetNextWindowPos(ImVec2(pad, io.DisplaySize.y - pad), ImGuiCond_Always, ImVec2(0, 1));
+    ImGui::SetNextWindowPos(ImVec2(pad, io.DisplaySize.y - pad - cockpitHeight()), ImGuiCond_Always, ImVec2(0, 1));
     ImGui::SetNextWindowBgAlpha(0.45f);
     ImGuiWindowFlags fl = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
                           ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove;
@@ -1565,7 +1813,9 @@ void App::drawHelp() {
                   {"P", "toggle path tracing"},
                   {"Space", "pause parameter animation"},
                   {"1 - 9", "switch fractal"},
-                  {"K", "add a camera-path keyframe (Animate menu)"}});
+                  {"K", "add a camera-path keyframe (Animate menu)"},
+                  {"X", "spaceship cockpit: speed, horizon, moving map, clearance"},
+                  {"G / Shift+G", "autopilot on/off / the other style (around the outside, through the inside)"}});
     ImGui::SeparatorText("Classic 2D");
     table("h2d", {{"Left drag", "pan"},
                   {"Wheel / PgUp / PgDn", "zoom at the cursor"},
@@ -1601,7 +1851,7 @@ void App::drawToast() {
     if (ui.toastMsg.empty() || glfwGetTime() > ui.toastUntil) return;
     ImGuiIO& io = ImGui::GetIO();
     float alpha = std::min(1.0f, (float)(ui.toastUntil - glfwGetTime()) * 2.0f);
-    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y - 60), ImGuiCond_Always, ImVec2(0.5f, 1));
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y - 60 - cockpitHeight()), ImGuiCond_Always, ImVec2(0.5f, 1));
     ImGui::SetNextWindowBgAlpha(0.8f * alpha);
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
     ImGui::Begin("##toast", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |

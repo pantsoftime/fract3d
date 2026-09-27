@@ -16,6 +16,8 @@ static void usage() {
         "  --fractal KEY        start on a fractal (mandelbulb, mandelbox, menger, ...)\n"
         "  --par FILE           load a saved view (.par, or a PNG saved by Fract3D), or import a Fractint .PAR\n"
         "  --par-entry NAME     which entry of a Fractint .PAR file (default: the first)\n"
+        "  --autopilot STYLE    start flying: around, through, auto (the fractal's own) or tour (every 3D tour stop)\n"
+        "  --cockpit            start with the spaceship cockpit open (X)\n"
         "  --2d                 start in Classic 2D mode\n"
         "  --pt / --rt          path traced / real-time rendering\n"
         "  --render OUT.png     render an image and exit (no window shown)\n"
@@ -78,6 +80,14 @@ int main(int argc, char** argv) {
         else if (a == "--orbit") o.orbitOn = true;
         else if (a == "--hide-ui") o.hideUi = true;  // testing: start with the overlay hidden (Tab)
         else if (a == "--wheel") o.wheel = (float)atof(next().c_str());  // testing: scroll the mouse wheel N notches
+        else if (a == "--cockpit") o.cockpit = true;
+        else if (a == "--fixed-dt") o.fixedDt = (float)atof(next().c_str());  // testing: motion as if at 1/S fps
+        else if (a == "--flight-report") o.flightReport = true;  // testing: see App::flyAutopilot
+        else if (a == "--autopilot") {
+            std::string s = next();
+            o.autopilot = s == "around" ? 0 : s == "through" ? 1 : s == "auto" ? 2 : s == "tour" ? 3 : -2;
+            if (o.autopilot == -2) { fprintf(stderr, "--autopilot takes around, through, auto or tour\n"); return 2; }
+        }
         else if (a == "--gl-debug-verbose") o.glDebug = o.glDebugVerbose = true;
         else if (a.size() > 4 && (a.substr(a.size() - 4) == ".par" || a.substr(a.size() - 4) == ".png")) o.parFile = a;
         else { fprintf(stderr, "unknown option %s\n", a.c_str()); usage(); return 2; }

@@ -2,6 +2,7 @@
 // @category Folding
 // @credit Karl Menger, 1926 (folding formulation after Knighty and Syntopia)
 // @camera 2.2 1.6 -2.6   0 0 0
+// @autopilot through 0.05
 // @render stepFactor=1.0 detail=0.5 maxSteps=200 maxDist=6
 // @look palette="Plaster" paletteMix=1.0 specular=0.15 sunAzimuth=125 sunElevation=28 sunSize=1.2 floor=1 floorY=-1.0
 // @param int iterations = 5 [0, 10] "Iterations" -- Level 0 is a solid cube. Each level removes the middle of every cube face and the center. Each step multiplies the detail by 20.

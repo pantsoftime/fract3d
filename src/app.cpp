@@ -166,6 +166,7 @@ bool App::init(const CliOptions& opts) {
     ui.showJuliaInset = session.cli.insetOn;
     wheelPending = session.cli.wheel;
     if (session.cli.hideUi) ui.showUI = false;
+    cockpit.show = session.cli.cockpit;
     for (auto& w : session.cli.openWindows) {
         if (w == "gradient") {
             view.gradient = sampleStops(palettes[view.rs.palette], 8);
@@ -254,6 +255,9 @@ void App::shutdown() {
 
 int App::run() {
     while (!glfwWindowShouldClose(win) && !quit) frame();
+    if (session.cli.flightReport)
+        printf("fract3d: flight: %s %.0f s, closest %.3g of the distance kept, %.1f of those flown, %d frames touching\n", fractal().key.c_str(),
+               flightStats.seconds, flightStats.closest, flightStats.travelled, flightStats.touches);
     return 0;
 }
 
@@ -429,7 +433,8 @@ std::string App::historyLabel() const {
 // change, so a slider drag or a zoom becomes one undo step, not hundreds.
 void App::recordHistory() {
     // (a playing camera path or a video export moves the view on its own: not the user's steps)
-    if (dragButton >= 0 || flying || camAnim.active || camPath.playing || video.active || wheelPending != 0 || ImGui::IsAnyItemActive()) {
+    if (dragButton >= 0 || flying || camAnim.active || camPath.playing || video.active || wheelPending != 0 || autopilot.active ||
+        ImGui::IsAnyItemActive()) {
         history.changedAt = now;
         return;
     }
@@ -881,6 +886,7 @@ void App::setMode(ViewMode m) {
         setMouseCapture(false);
         dragButton = -1;
         wheelPending = 0;
+        if (m != ViewMode::Fractal3D) disengageAutopilot(nullptr);
     }
     view.mode = m;
     shownSig2D.clear();
@@ -897,6 +903,7 @@ void App::frame() {
     now = glfwGetTime();
     double rawDt = now - lastFrameTime;
     dt = (float)std::min(rawDt, 0.1);  // animation/motion step, clamped after stalls
+    if (session.cli.fixedDt > 0) dt = std::min(session.cli.fixedDt, 0.1f);
     lastFrameTime = now;
     fps = fps * 0.95f + (rawDt > 0 ? (float)(1.0 / rawDt) : 0.0f) * 0.05f;
     glfwGetFramebufferSize(win, &fbW, &fbH);
@@ -927,6 +934,21 @@ void App::frame() {
         view.cam.pitch = camAnim.pitch0 + (camAnim.pitch1 - camAnim.pitch0) * s;
         view.cam.distance = camAnim.dist0 * std::pow(camAnim.dist1 / camAnim.dist0, s);
         if (t >= 1.0f || dragButton >= 0) camAnim.active = false;
+    }
+    if (session.cli.autopilot == 3) {  // --autopilot tour
+        tourFlight.active = true;
+        tourFlightNext();
+        session.cli.autopilot = -1;
+    } else if (session.cli.autopilot >= 0 && view.mode == ViewMode::Fractal3D) {  // --autopilot
+        engageAutopilot(session.cli.autopilot == 2 ? -1 : session.cli.autopilot);
+        session.cli.autopilot = -1;
+    }
+    if (autopilot.active) {
+        // any hand on the controls takes over, as in an aircraft
+        if (flying || dragButton >= 0 || wheelPending != 0 || camAnim.active || camPath.playing || video.active)
+            disengageAutopilot("Autopilot off - you have the controls");
+        else if (view.mode == ViewMode::Fractal3D && !poster.active)
+            flyAutopilot(dt);
     }
 
     // live reload of shaders/, fractals/ and the Learn docs (edit a file and save)
@@ -960,6 +982,7 @@ void App::frame() {
         updateJuliaInset();
     }
     if (view.mode == ViewMode::Fractal3D) updateProbe();
+    updateCockpit(dt);
 
     // present
     GLuint target = 0;
@@ -994,6 +1017,7 @@ void App::frame() {
 double App::computeIdle() {
     if (session.cli.hidden) return 0;  // headless renders and tests run flat out
     if (poster.active || job2D.active || camAnim.active || dragButton >= 0 || flying || gamepadActive || camPath.playing || wheelPending != 0 ||
+        autopilot.active || tourFlight.active ||
         video.active || refPending || (inset.job.active && view.mode == ViewMode::Classic2D))
         return 0;
     if (view.rs.cycleSpeed != 0.0f || glfwGetTime() < ui.toastUntil) return 0;
@@ -1044,6 +1068,12 @@ void App::handleKeys() {
             toast(view.rs.renderMode ? "Path tracing: hold still to refine" : "Real-time rendering", 1.5f);
         }
         if (pressed(ImGuiKey_R) && !ctrl) resetView();
+        if (pressed(ImGuiKey_X) && !ctrl) cockpit.show = !cockpit.show;
+        if (pressed(ImGuiKey_G) && !ctrl) {
+            if (io.KeyShift) engageAutopilot(autopilot.active ? 1 - (int)autopilot.style : 1 - fractal().autopilotStyle);
+            else if (autopilot.active) disengageAutopilot("Autopilot off");
+            else engageAutopilot(-1);
+        }
         if (pressed(ImGuiKey_Space)) animPaused = !animPaused;
         if (pressed(ImGuiKey_F) && centerHitT > 0) {
             view.rs.autoFocus = 0;
@@ -1376,6 +1406,12 @@ View3D App::makeView(int w, int h) const {
     v.fwd = view.cam.forward();
     v.right = view.cam.right();
     v.up = view.cam.up();
+    if (view.cam.roll != 0.0f) {  // bank: turn the image around the view direction
+        float c = std::cos(view.cam.roll), s = std::sin(view.cam.roll);
+        Vec3 r = v.right * c + v.up * s, u = v.up * c - v.right * s;
+        v.right = r;
+        v.up = u;
+    }
     v.tanHalfFov = std::tan(view.rs.fov * 0.5f * 0.0174533f);
     v.sceneScale = view.cam.distance;
     v.focusDist = view.rs.autoFocus ? (centerHitT > 0 ? centerHitT : view.cam.distance) : view.rs.focusDist;
@@ -1408,6 +1444,7 @@ std::vector<uint8_t> App::signature3D(int w, int h) const {
     appendBytes(s, view.cam.pos);
     appendBytes(s, view.cam.yaw);
     appendBytes(s, view.cam.pitch);
+    appendBytes(s, view.cam.roll);
     appendBytes(s, view.cam.distance);
     appendBytes(s, view.fractal);
     appendBytes(s, generation);
@@ -1507,24 +1544,48 @@ void App::render3D() {
 }
 
 void App::updateProbe() {
-    float de, hit;
-    while (!probeTags.empty() && rend.fetchProbe(de, hit)) {
-        int tag = probeTags.front();
-        Vec3 dir = probeDirs.front(), from = probePos.front();
-        probeTags.erase(probeTags.begin());
-        probeDirs.erase(probeDirs.begin());
-        probePos.erase(probePos.begin());
+    Renderer::ProbeResult r;
+    // (--fixed-dt test runs aren't paced by a display: waiting here gives them what a real
+    // window gets - readings one frame old - so their flights are the same every time)
+    while (!probeQueue.empty() && rend.fetchProbe(r, session.cli.fixedDt > 0)) {
+        PendingProbe req = std::move(probeQueue.front());
+        probeQueue.erase(probeQueue.begin());
         // the camera may have moved since the probe was taken: correct for that, so a
         // late result never claims more free space ahead than there is
-        Vec3 moved = view.cam.pos - from;
-        if (tag == 0) {
+        Vec3 moved = view.cam.pos - req.pos;
+        if (req.tag == 0) {
             probeValid = true;
-            deAtCam = de - moved.length();
-            centerHitT = hit > 0 ? std::max(hit - moved.dot(dir), 0.0f) : hit;
-        } else if (hit > 0) {
+            deAtCam = r.deAtCam - moved.length();
+            centerHitT = r.hitT > 0 ? std::max(r.hitT - moved.dot(req.dir), 0.0f) : r.hitT;
+            if (req.gradH > 0) {  // the gradient from the tetrahedron's corners (see probe.frag)
+                Vec3 g = Vec3(1, -1, -1) * r.grad[0] + Vec3(-1, -1, 1) * r.grad[1] + Vec3(-1, 1, -1) * r.grad[2] + Vec3(1, 1, 1) * r.grad[3];
+                shipNormalValid = g.length() > 0 && std::isfinite(g.length());
+                if (shipNormalValid) shipNormal = g.normalized();
+            }
+            if (!req.whiskers.empty() && r.whiskers.size() == req.whiskers.size()) {
+                ShipSensors s;
+                s.valid = std::isfinite(r.deAtCam);
+                // (fractals whose estimate runs long are marched with a smaller step factor:
+                // the ship takes the same margin in how far it may move - not in how far it
+                // thinks the fractal is, which steers it)
+                s.de = r.deAtCam * std::clamp(view.rs.stepFactor, 0.05f, 1.0f);
+                s.objectDe = r.objectDe;
+                s.normal = shipNormal;
+                s.normalValid = shipNormalValid;
+                s.dirs = req.whiskers;
+                s.range = req.range;
+                s.eps = std::max(req.pos.length() * 4e-6f, 1e-7f);
+                for (float h : r.whiskers) {
+                    s.free.push_back(h < 0 ? req.range : h);
+                    s.hit.push_back(h >= 0);
+                }
+                shipSensors = std::move(s);
+                shipSensorsAt = req.pos;
+            }
+        } else if (r.hitT > 0) {
             // turn smoothly toward the clicked point; it becomes the new orbit center
             Camera goal = view.cam;
-            goal.lookAt(view.cam.pos, view.cam.pos + dir * hit);
+            goal.lookAt(view.cam.pos, view.cam.pos + req.dir * r.hitT);
             camAnim = {true, (float)now, view.cam.yaw, view.cam.pitch, view.cam.distance, goal.yaw, goal.pitch, goal.distance};
             toast("Turning to face the point you double-clicked - it's the new orbit center", 1.5f);
         } else {
@@ -1532,21 +1593,164 @@ void App::updateProbe() {
         }
     }
     View3D v = makeView(fbW, fbH);
-    float pixelAngle = 2.0f * v.tanHalfFov / std::max(fbH, 1);
-    Vec3 dir = v.fwd;
+    Renderer::ProbeRequest req;
+    req.pixelAngle = 2.0f * v.tanHalfFov / std::max(fbH, 1);
+    req.dir = v.fwd;
     int tag = 0;
     if (pickRequested) {
         float sx = (float)fbW / std::max(winW, 1), sy = (float)fbH / std::max(winH, 1);
         float ux = (float)(pickX * sx - fbW * 0.5) / fbH, uy = (float)(fbH * 0.5 - pickY * sy) / fbH;
-        dir = (v.fwd + (v.right * ux + v.up * uy) * (2.0f * v.tanHalfFov)).normalized();
+        req.dir = (v.fwd + (v.right * ux + v.up * uy) * (2.0f * v.tanHalfFov)).normalized();
         tag = 1;
     }
-    if (rend.probe(fractal(), view.rs, v, dir, pixelAngle)) {
-        probeTags.push_back(tag);
-        probeDirs.push_back(dir);
-        probePos.push_back(v.pos);
+    if (tag == 0 && (autopilot.active || cockpit.show)) {
+        // what the autopilot steers by: the surface's direction, and whiskers around the heading
+        float de = probeValid && deAtCam > 0 ? deAtCam : view.cam.distance * 0.1f;
+        // (never finer than floats resolve at the camera's position: the samples would coincide)
+        // (wide enough to follow the shape rather than every bump on it)
+        req.gradH = std::max({de * 0.6f, v.pos.length() * 4e-6f, 1e-7f});
+        if (autopilot.active) {
+            req.whiskers = autopilot.whiskerDirs();
+            req.whiskerRange = autopilot.whiskerRange(de);
+        }
+    }
+    if (rend.probe(fractal(), view.rs, v, req)) {
+        PendingProbe p;
+        p.tag = tag;
+        p.dir = req.dir;
+        p.pos = v.pos;
+        p.whiskers = req.whiskers;
+        p.range = req.whiskerRange;
+        p.gradH = req.gradH;
+        probeQueue.push_back(std::move(p));
         if (tag == 1) pickRequested = false;
     }
+}
+
+// ------------------------------------------------------------------ the spaceship
+// Engages the autopilot from wherever the camera is. The clearance to keep comes from the
+// fractal's @autopilot hint (a fraction of its default camera distance).
+void App::engageAutopilot(int style) {
+    if (view.mode != ViewMode::Fractal3D) {
+        toast("The autopilot flies the 3D fractals - press M for 3D mode", 2.5f);
+        return;
+    }
+    const Fractal& f = fractal();
+    if (style < 0) style = f.autopilotStyle;
+    float clearance = f.autopilotClearance * f.sceneSize();
+    // the ship flies at the scale it finds: tour stops and your own zooms can be far deeper
+    // than the default view, so never ask for more clearance than the camera's surroundings
+    if (probeValid && deAtCam > 0 && style == 1) clearance = std::min(clearance, std::max(deAtCam * 1.5f, clearance * 0.02f));
+    unsigned seed = session.cli.fixedDt > 0 ? 12345u : (unsigned)(now * 1000.0) ^ 0x9e3779b9u;  // (tests: the same flight every time)
+    autopilot.engage(style == 1 ? FlightStyle::Through : FlightStyle::Around, makeView(fbW, fbH).fwd, clearance, seed);
+    autopilot.lookIn = f.autopilotLook;
+    autopilot.orbitCenter = f.autopilotOrbit > 0;
+    autopilot.center = Vec3(f.camTarget[0], f.camTarget[1], f.camTarget[2]);
+    autopilot.orbitRadius = f.autopilotOrbit * f.sceneSize();
+    shipSensors = ShipSensors();  // (whiskers from before don't match the new heading)
+    if (!autopilot.active || !autopilotRestorePT) {  // path tracing is all noise in motion: real-time while flying
+        autopilotRestorePT = view.rs.renderMode == 1;
+        if (autopilotRestorePT) view.rs.renderMode = 0;
+    }
+    cockpit.show = true;
+    toast(style == 1 ? "Autopilot: exploring the inside - move or press G to take over"
+                     : "Autopilot: circling the outside - move or press G to take over",
+          2.5f);
+}
+
+void App::disengageAutopilot(const char* why) {
+    if (!autopilot.active) return;
+    autopilot.active = false;
+    tourFlight.active = false;
+    if (autopilotRestorePT) {
+        view.rs.renderMode = 1;
+        autopilotRestorePT = false;
+    }
+    if (why) toast(why, 2.0f);
+}
+
+// One frame of autopilot flight: the ship moves and the camera follows its view.
+void App::flyAutopilot(float dt) {
+    ShipSensors s = shipSensors;
+    if (s.valid && s.de > s.eps) {
+        // The readings are a frame or two old: take the distance flown since off them. If
+        // that uses up the free space they reported, hold still until fresh ones arrive
+        // (they would otherwise read as touching, and the ship would back away on stale data).
+        float moved = (view.cam.pos - shipSensorsAt).length();
+        s.de -= moved;
+        s.objectDe -= moved;
+        for (auto& f : s.free) f = std::max(f - moved, 0.0f);
+        if (s.de <= s.eps) s.valid = false;
+    }
+    s.normal = shipNormal;
+    s.normalValid = shipNormalValid;
+    Vec3 look;
+    Vec3 pos = autopilot.step(dt, view.cam.pos, s, look);
+    if (session.cli.flightReport && shipSensors.valid) {  // measured on fresh readings only
+        FlightStats& st = flightStats;
+        float keep = std::max(autopilot.wallDistance, 1e-30f);
+        if (shipSensors.de <= shipSensors.eps) st.touches++;
+        else st.closest = std::min(st.closest, shipSensors.de / keep);
+        st.travelled += (pos - view.cam.pos).length() / keep;
+        st.seconds += dt;
+    }
+    // the orbit target (and so the renderer's sense of scale) follows the surface ahead, as when flying with WASD
+    // (it also sets how far the renderer draws: with nothing ahead, it eases back out to the
+    // fractal's size, or everything beyond the last wall passed would vanish into the fog)
+    float want = centerHitT > 0 ? centerHitT : fractal().sceneSize();
+    float dist = view.cam.distance + (want - view.cam.distance) * std::min(dt * (centerHitT > 0 ? 4.0f : 1.0f), 1.0f);
+    view.cam.lookAt(pos, pos + look * dist);
+    view.cam.roll = autopilot.roll;
+}
+
+void App::updateCockpit(float dt) {
+    if (!autopilot.active && view.cam.roll != 0.0f) {  // level the wings once the autopilot lets go
+        view.cam.roll *= std::exp(-dt * 5.0f);
+        if (std::abs(view.cam.roll) < 1e-3f) view.cam.roll = 0;
+    }
+    if (tourFlight.active && autopilot.active && autopilot.time >= tourFlight.seconds) tourFlightNext();
+    if (!cockpit.show || view.mode != ViewMode::Fractal3D) {
+        cockpit.lastPosValid = false;
+        return;
+    }
+    Vec3 p = view.cam.pos;
+    if (cockpit.lastPosValid && dt > 0) {
+        float v = (p - cockpit.lastPos).length() / dt;
+        cockpit.speed += (v - cockpit.speed) * (1 - std::exp(-dt * 4.0f));
+    }
+    cockpit.lastPos = p;
+    cockpit.lastPosValid = true;
+    if (now - cockpit.lastTrail > 0.1) {
+        cockpit.lastTrail = now;
+        if (cockpit.trail.empty() || (cockpit.trail.back() - p).length() > 1e-9f) cockpit.trail.push_back(p);
+        if (cockpit.trail.size() > 300) cockpit.trail.erase(cockpit.trail.begin());
+    }
+    // the map's range follows the clearance, like a GPS zooming in on a winding road
+    float de = probeValid && deAtCam > 0 ? deAtCam : view.cam.distance * 0.1f;
+    float want = std::clamp(de * 14.0f, fractal().sceneSize() * 1e-6f, fractal().sceneSize() * 2.0f);
+    cockpit.span = cockpit.span <= 0 ? want : cockpit.span * std::pow(want / cockpit.span, 1 - std::exp(-dt * 1.5f));
+    float yaw = view.cam.yaw;
+    Vec3 fwd(std::sin(yaw), 0, std::cos(yaw)), right(std::cos(yaw), 0, -std::sin(yaw));
+    rend.renderMap(fractal(), view.rs, makeView(fbW, fbH), p, right, fwd, cockpit.span, cockpit.map,
+                   std::max(64, (int)(ImGui::GetFontSize() * 9.0f)));
+}
+
+// The autopilot tour: each 3D stop of the guided tour, flown for a while.
+void App::tourFlightNext() {
+    int n = (int)ui.tourStops.size();
+    bool keep = tourFlight.active;  // (loading a 2D stop on the way leaves the cockpit)
+    for (int tries = 0; tries < n; tries++) {
+        tourStep(1);
+        if (view.mode == ViewMode::Fractal3D) {
+            autopilot.active = false;
+            engageAutopilot(-1);
+            tourFlight.active = keep && autopilot.active;
+            cockpit.trail.clear();
+            return;
+        }
+    }
+    tourFlight.active = false;
+    toast("The tour has no 3D stops to fly", 2.5f);
 }
 
 // ------------------------------------------------------------------ 2D rendering

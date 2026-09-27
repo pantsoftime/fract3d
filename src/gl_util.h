@@ -63,6 +63,7 @@ public:
     void set(const char* n, float a, float b, float c, float d) { glProgramUniform4f(id_, loc(n), a, b, c, d); }
     void set(const char* n, int a, int b) { glProgramUniform2i(id_, loc(n), a, b); }
     void set3(const char* n, const float* v) { glProgramUniform3fv(id_, loc(n), 1, v); }
+    void set3v(const char* n, int count, const float* v) { glProgramUniform3fv(id_, loc(n), count, v); }
     void setd(const char* n, double v) { glProgramUniform1d(id_, loc(n), v); }
     void setd(const char* n, double a, double b) { glProgramUniform2d(id_, loc(n), a, b); }
 

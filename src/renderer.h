@@ -103,9 +103,27 @@ public:
     void display(ViewMode mode, const RenderTarget* accum, const IndexTarget* index, const RenderSettings& rs,
                  const Classic2DSettings& cs, float cycleOffset, int outW, int outH, GLuint fbo);
 
-    // ---- probe: async readback of DE at camera and hit distance along a ray
-    bool probe(const Fractal& f, const RenderSettings& rs, const View3D& v, const Vec3& dir, float pixelAngle);
-    bool fetchProbe(float& deAtCam, float& hitT);  // oldest pending result, in issue order
+    // ---- probe: async readback of what's around the camera (see probe.frag)
+    static constexpr int kMaxWhiskers = 40;
+    struct ProbeRequest {
+        Vec3 dir;                    // the pick / center ray
+        float pixelAngle = 0.001f;
+        float gradH = 0;             // > 0: also sample the gradient at this spacing
+        std::vector<Vec3> whiskers;  // autopilot rays (at most kMaxWhiskers)
+        float whiskerRange = 0;
+    };
+    struct ProbeResult {
+        float deAtCam = -1, hitT = -1;
+        float grad[4] = {0, 0, 0, 0};  // the fractal's DE at the tetrahedron corners (see probe.frag)
+        float objectDe = -1;           // the fractal's own DE at the camera (no floor)
+        std::vector<float> whiskers;   // free distance along each, -1: nothing within range
+    };
+    bool probe(const Fractal& f, const RenderSettings& rs, const View3D& v, const ProbeRequest& req);
+    bool fetchProbe(ProbeResult& out, bool wait = false);  // oldest pending result, in issue order
+    // The cockpit map: a slice through the fractal (plane spanned by right and fwd around
+    // center, span across), drawn into `out` (size x size).
+    bool renderMap(const Fractal& f, const RenderSettings& rs, const View3D& v, const Vec3& center, const Vec3& right,
+                   const Vec3& fwd, float span, RenderTarget& out, int size);
 
     // Renders the display pass at w x h and reads it back (RGBA, bottom-up).
     bool readImage(ViewMode mode, const RenderTarget* accum, const IndexTarget* index, const RenderSettings& rs,
@@ -153,5 +171,6 @@ private:
     RenderTarget probeRT_, shotRT_;
     GLuint probePbo_[2] = {0, 0};
     GLsync probeFence_[2] = {nullptr, nullptr};
+    int probeWhiskers_[2] = {0, 0};  // whiskers in each slot's request
     int probeIdx_ = 0;
 };

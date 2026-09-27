@@ -222,6 +222,23 @@ bool parseFractalFile(const fs::path& path, Fractal& f) {
                         f.look.push_back({k, v});
                     }
                 }
+                else if (tag == "autopilot") {
+                    std::istringstream as(arg);
+                    std::string style;
+                    float c = 0;
+                    as >> style;
+                    f.autopilotStyle = style == "through" ? 1 : 0;
+                    if (as >> c && std::isfinite(c) && c > 0) f.autopilotClearance = std::min(c, 10.0f);
+                    std::string kv;
+                    while (as >> kv)
+                        if (kv.rfind("orbit=", 0) == 0) {
+                            float o = std::strtof(kv.c_str() + 6, nullptr);
+                            if (std::isfinite(o)) f.autopilotOrbit = std::clamp(o, 0.0f, 10.0f);
+                        } else if (kv.rfind("look=", 0) == 0) {
+                            float l = std::strtof(kv.c_str() + 5, nullptr);
+                            if (std::isfinite(l)) f.autopilotLook = std::clamp(l, 0.0f, 5.0f);
+                        }
+                }
                 else if (tag == "camera") {
                     std::istringstream cs(arg);
                     cs >> f.camPos[0] >> f.camPos[1] >> f.camPos[2] >> f.camTarget[0] >> f.camTarget[1] >> f.camTarget[2];

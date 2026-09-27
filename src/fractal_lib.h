@@ -1,4 +1,6 @@
 #pragma once
+#include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -43,6 +45,17 @@ struct Fractal {
     std::string code;   // GLSL body
     std::vector<Param> params;
     float camPos[3] = {0, 0, -3}, camTarget[3] = {0, 0, 0};
+    // "@autopilot around|through [clearance]": how the cockpit's autopilot flies it - around the
+    // outside or through the inside - and the clearance to keep, as a fraction of the
+    // distance from the default camera to its target
+    int autopilotStyle = 0;
+    float autopilotClearance = 0.25f;
+    float autopilotLook = 1.2f;  // "look=X": Around's gaze toward the surface (see Autopilot::lookIn)
+    float autopilotOrbit = 0;    // "orbit=R": Around also circles the @camera target at R x its scene size (terrain)
+    float sceneSize() const {
+        float dx = camPos[0] - camTarget[0], dy = camPos[1] - camTarget[1], dz = camPos[2] - camTarget[2];
+        return std::max(std::sqrt(dx * dx + dy * dy + dz * dz), 1e-6f);
+    }
     RenderHints hints;
     // "@look key=value ..." — curated colors/lighting applied when the fractal is selected
     std::vector<std::pair<std::string, std::string>> look;

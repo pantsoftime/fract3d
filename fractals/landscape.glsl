@@ -2,6 +2,7 @@
 // @category Classic 2D in 3D
 // @credit Benoit Mandelbrot, 1980; Fractint's 3D mode, 1990
 // @camera 0.9 1.5 -1.9   -0.15 0.0 0.1
+// @autopilot around 0.08 look=0.35 orbit=0.35
 // @render stepFactor=0.4 detail=0.6 maxSteps=500 maxDist=8
 // @look palette="Ultra Fractal" colorScale=5.0 paletteMix=1.0 specular=0.04 roughness=0.7 sunAzimuth=150 sunElevation=28 sunSize=1.0 fov=50 fog=0.06 fogColor=0.66,0.70,0.80
 // @param choice formula = 0 {Mandelbrot, Burning Ship, Tricorn, Multibrot z^3, Julia, Custom formula} "Formula" -- The 2D escape-time formula that the terrain is made from. "Custom formula" uses the formula from Classic 2D mode's formula editor.

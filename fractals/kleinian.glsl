@@ -2,6 +2,7 @@
 // @category Inversion
 // @credit Knighty, 2011 (after Kleinian group limit sets: Mumford, Series & Wright, "Indra's Pearls")
 // @camera 0.3 0.1 -0.9   0.2 0.05 0.0
+// @autopilot through 0.05
 // @render stepFactor=0.9 detail=0.4 maxSteps=300 maxDist=10
 // @look palette="Twilight" colorScale=1.4 paletteMix=0.9 fog=0.5 fogColor=0.35,0.3,0.45 sunAzimuth=30 sunElevation=55
 // @param vec3 boxSize = (0.92436, 0.90756, 0.92436) [0.4, 1.5] "Box size" -- Size of the box fold. This is the main shape control; small changes open or close whole caverns.

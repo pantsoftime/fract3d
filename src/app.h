@@ -1,4 +1,5 @@
 #pragma once
+#include "autopilot.h"
 #include "camera.h"
 #include "deepzoom.h"
 #include "formula.h"
@@ -47,6 +48,10 @@ struct CliOptions {
     std::string pathFile;                  // camera path to load (--path); with --render x.mp4 it's exported
     float videoFps = 30;
     float wheel = 0;  // testing: mouse-wheel notches to apply at startup (--wheel)
+    int autopilot = -1;  // --autopilot around|through|auto|tour: engage it at startup (2: the fractal's own style, 3: the tour)
+    bool cockpit = false;  // --cockpit: start with the spaceship dashboard open
+    float fixedDt = 0;     // testing: --fixed-dt S makes every frame advance motion by S seconds
+    bool flightReport = false;  // testing: --flight-report prints how the autopilot flew, at exit
     float pathTime = -1;
     std::string dumpIterations;
     int cancelAfterFrames = -1;  // testing: cancel a video export after N frames, like the Cancel button  // --dump-iterations: 2D renders also write the raw iteration buffer (tests)  // --path-time: render the camera path at this time (with --render x.png)
@@ -97,7 +102,7 @@ struct UiState {
     ImFont* fontRetro = nullptr;
     std::string toastMsg;
     double toastUntil = 0;
-    float lastDisplayW = 0, lastDisplayH = 0;  // the window size the panels were last laid out for (see fitPanel)
+    float lastDisplayW = 0, lastDisplayH = 0;  // the room the panels were last laid out in: width, usable bottom (see fitPanel)
     float panelPrefW[3] = {0, 0, 0}, panelPrefH[3] = {0, 0, 0};  // a panel's size before fitPanel shrank it (0: not shrunk)
     int posterW = 3840, posterH = 2160, posterSamples = 256;
     char parName[128] = "my-view";
@@ -297,10 +302,49 @@ public:
     float deAtCam = 1.0f, centerHitT = -1.0f;
     bool pickRequested = false;
     double pickX = 0, pickY = 0;
-    std::vector<int> probeTags;  // FIFO: 0 = center, 1 = pick
-    std::vector<Vec3> probeDirs;
-    std::vector<Vec3> probePos;  // camera position when each probe was taken (results arrive frames later)
+    struct PendingProbe {
+        int tag = 0;                 // 0 = center, 1 = pick
+        Vec3 dir, pos;               // the ray, and the camera position when the probe was taken (results arrive frames later)
+        std::vector<Vec3> whiskers;  // the autopilot's rays, if any
+        float range = 0, gradH = 0;
+    };
+    std::vector<PendingProbe> probeQueue;  // FIFO, in issue order
     bool probeValid = false;     // deAtCam/centerHitT describe the current scene (false after a jump)
+
+    // ---- the spaceship: cockpit dashboard and autopilot (autopilot.h)
+    Autopilot autopilot;
+    ShipSensors shipSensors;     // the newest whisker readings, taken at shipSensorsAt
+    Vec3 shipSensorsAt;
+    Vec3 shipNormal{0, 1, 0};    // away from the nearest surface (newest gradient probe)
+    bool shipNormalValid = false;
+    bool autopilotRestorePT = false;  // it switched path tracing off while flying: back on when it stops
+    struct Cockpit {
+        bool show = false;
+        RenderTarget map;            // the moving map (a slice through the fractal at the ship's height)
+        float span = 0;              // across the map (world units), eased toward the wanted range
+        std::vector<Vec3> trail;     // where the ship has been (for the map), newest last
+        double lastTrail = 0;
+        float speed = 0;             // measured, world units per second
+        Vec3 lastPos;
+        bool lastPosValid = false;
+    } cockpit;
+    struct TourFlight {              // the autopilot tour: flies each 3D stop for a while
+        bool active = false;
+        float seconds = 45;          // of flight (Autopilot::time) per stop
+    } tourFlight;
+    void engageAutopilot(int style);   // 0 around, 1 through, -1 the fractal's own style
+    void disengageAutopilot(const char* why);
+    void flyAutopilot(float dt);
+    void updateCockpit(float dt);
+    void tourFlightNext();
+    struct FlightStats {             // for --flight-report
+        float closest = 1e30f;       // nearest surface seen, as a fraction of the distance it meant to keep
+        float travelled = 0;         // in those distances
+        float seconds = 0;
+        int touches = 0;             // frames that started touching a surface
+    } flightStats;
+    void drawCockpit();
+    float cockpitHeight() const;  // screen space it takes along the bottom (0 when hidden)
 
     // input
     int dragButton = -1;
