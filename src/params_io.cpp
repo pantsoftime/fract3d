@@ -163,6 +163,7 @@ bool App::loadParText(const std::string& text, const std::string& label, bool qu
     std::istringstream in(text);
     juliaReturn.formula.clear();  // a different view: right-click no longer returns to an earlier formula
     probeValid = false;           // the camera may jump: surface distances must be measured again
+    disengageAutopilot("Autopilot off - you have the controls");  // (a no-op for the autopilot tour: it lets go before it loads the next stop)
     std::map<std::string, std::string> kv;
     std::string line, note;
     while (std::getline(in, line)) {

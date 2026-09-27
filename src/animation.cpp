@@ -104,6 +104,7 @@ void App::applyPathTime(float t) {
     parseKeyframes();
     auto& keys = camPath.keys;
     if (keys.empty()) return;
+    disengageAutopilot("Autopilot off - you have the controls");  // scrubbing or playing a path is flying it yourself
     int n = (int)keys.size(), seg = 0;
     float u = 0;
     if (n > 1) {

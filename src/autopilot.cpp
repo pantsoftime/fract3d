@@ -107,7 +107,8 @@ Vec3 Autopilot::step(float dt, const Vec3& pos, const ShipSensors& s, Vec3& look
     if (style == FlightStyle::Through) {
         std::vector<float> f = s.free;
         std::nth_element(f.begin(), f.begin() + f.size() / 2, f.end());
-        wall = std::clamp(0.35f * f[f.size() / 2], std::max(s.eps * 4, clearance * 1e-4f), clearance);
+        float lo = std::min(std::max(s.eps * 4, clearance * 1e-4f), clearance);  // (clearance can be below float precision here)
+        wall = std::clamp(0.35f * f[f.size() / 2], lo, clearance);
     }
     wallDistance = wall;
     // anything closer than that pushes the ship away (the floor too, which the normal ignores)

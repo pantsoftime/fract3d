@@ -245,6 +245,7 @@ void App::shutdown() {
     uiShotRT.release();
     inset.index.release();
     inset.image.release();
+    cockpit.map.release();
     rend.shutdown();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
@@ -705,6 +706,27 @@ int App::selfTest() {
     // hostile values are repaired
     loadParText("mode = 2d\nclassic.formula = 99\nclassic.maxIter = -3\npost.tonemap = 7\n", "bad", true);
     check(view.cs.formula < kClassicFormulaCount && view.cs.maxIter >= 1 && view.rs.tonemap <= 2, "hostile PAR values are sanitized");
+    // the autopilot lets go whenever a hand is on the controls - but the autopilot tour,
+    // which loads its own stops, keeps flying
+    setMode(ViewMode::Fractal3D);
+    engageAutopilot(0);
+    check(autopilot.active && autopilot.style == FlightStyle::Around, "the autopilot engages in 3D mode");
+    resetView();
+    check(!autopilot.active, "resetting the view takes the controls from the autopilot");
+    engageAutopilot(1);
+    selectFractal(view.fractal, false);
+    check(!autopilot.active, "switching fractal takes the controls");
+    engageAutopilot(-1);
+    loadParText(parText(), "self-test", true);
+    check(!autopilot.active, "loading a view takes the controls");
+    tourFlight.active = true;
+    tourFlightNext();
+    check(autopilot.active && tourFlight.active && view.mode == ViewMode::Fractal3D, "the autopilot tour flies on after loading a stop");
+    view.rs.renderMode = 1;
+    engageAutopilot(0);
+    check(view.rs.renderMode == 0, "flying switches path tracing off");
+    disengageAutopilot(nullptr);
+    check(!tourFlight.active && view.rs.renderMode == 1, "letting go ends the tour and brings path tracing back");
     printf("self-test: %s\n", fails ? "FAILED" : "all passed");
     return fails ? 1 : 0;
 }
@@ -780,6 +802,7 @@ void App::applyPalette() {
 void App::selectFractal(int idx, bool reset) {
     view.fractal = std::clamp(idx, 0, (int)lib_.all().size() - 1);
     probeValid = false;
+    disengageAutopilot("Autopilot off - you have the controls");
     Fractal& f = fractal();
     view.rs.stepFactor = f.hints.stepFactor;
     view.rs.detail = f.hints.detail;
@@ -834,6 +857,7 @@ void App::applyLook(const Fractal& f) {
 void App::resetView() {
     Fractal& f = fractal();
     probeValid = false;
+    disengageAutopilot("Autopilot off - you have the controls");
     view.cam.lookAt(Vec3(f.camPos[0], f.camPos[1], f.camPos[2]), Vec3(f.camTarget[0], f.camTarget[1], f.camTarget[2]));
 }
 
@@ -939,7 +963,7 @@ void App::frame() {
         tourFlight.active = true;
         tourFlightNext();
         session.cli.autopilot = -1;
-    } else if (session.cli.autopilot >= 0 && view.mode == ViewMode::Fractal3D) {  // --autopilot
+    } else if (session.cli.autopilot >= 0) {  // --autopilot (in 2D mode it says how to get to 3D)
         engageAutopilot(session.cli.autopilot == 2 ? -1 : session.cli.autopilot);
         session.cli.autopilot = -1;
     }
@@ -1647,10 +1671,15 @@ void App::engageAutopilot(int style) {
     autopilot.orbitCenter = f.autopilotOrbit > 0;
     autopilot.center = Vec3(f.camTarget[0], f.camTarget[1], f.camTarget[2]);
     autopilot.orbitRadius = f.autopilotOrbit * f.sceneSize();
-    shipSensors = ShipSensors();  // (whiskers from before don't match the new heading)
-    if (!autopilot.active || !autopilotRestorePT) {  // path tracing is all noise in motion: real-time while flying
-        autopilotRestorePT = view.rs.renderMode == 1;
-        if (autopilotRestorePT) view.rs.renderMode = 0;
+    shipSensors = ShipSensors();  // (whiskers from before don't match the new heading, nor the normal the new scene)
+    shipNormalValid = false;
+    // Path tracing is all noise in motion: real-time while flying, and back afterwards. A
+    // flight already under way keeps its promise to restore it (Shift+G switches style).
+    if (view.rs.renderMode == 1) {
+        autopilotRestorePT = true;
+        view.rs.renderMode = 0;
+    } else if (!autopilot.active) {
+        autopilotRestorePT = false;
     }
     cockpit.show = true;
     toast(style == 1 ? "Autopilot: exploring the inside - move or press G to take over"
@@ -1697,8 +1726,9 @@ void App::flyAutopilot(float dt) {
     // the orbit target (and so the renderer's sense of scale) follows the surface ahead, as when flying with WASD
     // (it also sets how far the renderer draws: with nothing ahead, it eases back out to the
     // fractal's size, or everything beyond the last wall passed would vanish into the fog)
-    float want = centerHitT > 0 ? centerHitT : fractal().sceneSize();
-    float dist = view.cam.distance + (want - view.cam.distance) * std::min(dt * (centerHitT > 0 ? 4.0f : 1.0f), 1.0f);
+    bool hit = probeValid && centerHitT > 0;
+    float want = hit ? centerHitT : fractal().sceneSize();
+    float dist = view.cam.distance + (want - view.cam.distance) * std::min(dt * (hit ? 4.0f : 1.0f), 1.0f);
     view.cam.lookAt(pos, pos + look * dist);
     view.cam.roll = autopilot.roll;
 }

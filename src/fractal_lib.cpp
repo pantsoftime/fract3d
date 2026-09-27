@@ -222,22 +222,27 @@ bool parseFractalFile(const fs::path& path, Fractal& f) {
                         f.look.push_back({k, v});
                     }
                 }
-                else if (tag == "autopilot") {
+                else if (tag == "autopilot") {  // around|through [CLEARANCE] [look=X] [orbit=R], in any order after the style
                     std::istringstream as(arg);
-                    std::string style;
-                    float c = 0;
-                    as >> style;
-                    f.autopilotStyle = style == "through" ? 1 : 0;
-                    if (as >> c && std::isfinite(c) && c > 0) f.autopilotClearance = std::min(c, 10.0f);
-                    std::string kv;
-                    while (as >> kv)
-                        if (kv.rfind("orbit=", 0) == 0) {
-                            float o = std::strtof(kv.c_str() + 6, nullptr);
+                    std::string tok;
+                    bool first = true;
+                    while (as >> tok) {
+                        char* end = nullptr;
+                        if (first) {
+                            f.autopilotStyle = tok == "through" ? 1 : 0;
+                            first = false;
+                        } else if (tok.rfind("orbit=", 0) == 0) {
+                            float o = std::strtof(tok.c_str() + 6, nullptr);
                             if (std::isfinite(o)) f.autopilotOrbit = std::clamp(o, 0.0f, 10.0f);
-                        } else if (kv.rfind("look=", 0) == 0) {
-                            float l = std::strtof(kv.c_str() + 5, nullptr);
+                        } else if (tok.rfind("look=", 0) == 0) {
+                            float l = std::strtof(tok.c_str() + 5, nullptr);
                             if (std::isfinite(l)) f.autopilotLook = std::clamp(l, 0.0f, 5.0f);
+                        } else if (float c = std::strtof(tok.c_str(), &end); end != tok.c_str() && std::isfinite(c) && c > 0) {
+                            f.autopilotClearance = std::min(c, 10.0f);
+                        } else {
+                            f.parseError += path.filename().string() + ":" + std::to_string(lineNo) + ": @autopilot: unknown \"" + tok + "\"\n";
                         }
+                    }
                 }
                 else if (tag == "camera") {
                     std::istringstream cs(arg);
