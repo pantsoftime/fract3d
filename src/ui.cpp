@@ -230,6 +230,8 @@ void App::drawUI() {
     if (ui.showHelp) drawHelp();
     if (ui.showPoster || (poster.active && !poster.toVideo)) drawPosterDialog();  // video frames: see the path window
     if (ui.showDemo) ImGui::ShowDemoWindow(&ui.showDemo);
+    ui.lastDisplayW = ImGui::GetIO().DisplaySize.x;
+    ui.lastDisplayH = ImGui::GetIO().DisplaySize.y;
     if (ui.showFormulaEditor) drawFormulaEditor();
     if (ui.showGradientEditor) drawGradientEditor();
     if (ui.showFractintImport) drawFractintImport();
@@ -373,6 +375,41 @@ void App::drawMenuBar() {
     ImGui::EndMainMenuBar();
 }
 
+// ------------------------------------------------------------------ panels and the window
+// When the window shrinks, ImGui only keeps a sliver of a panel's title bar reachable;
+// a panel that ends up outside is moved back in, and shrunk if it's taller or wider than
+// the window (it gets its size back once the window grows enough). A panel that sat
+// against the right edge (the Learn panel) follows that edge both ways, so it comes back
+// when the window grows again. Call right after Begin.
+void App::fitPanel(int panel, bool anchoredRight) {
+    ImGuiIO& io = ImGui::GetIO();
+    ImVec2 pos = ImGui::GetWindowPos(), size = ImGui::GetWindowSize(), want = pos, wantSize = size;
+    float fs_ = ImGui::GetFontSize();
+    bool resized = ui.lastDisplayW > 0 && (io.DisplaySize.x != ui.lastDisplayW || io.DisplaySize.y != ui.lastDisplayH);
+    if (resized && anchoredRight) {
+        float gap = ui.lastDisplayW - (pos.x + size.x);  // how far it sat from the old right edge
+        if (gap > -fs_ && gap < fs_ * 3) want.x = io.DisplaySize.x - size.x - std::max(gap, 0.0f);
+    }
+    float top = fs_ * 2.4f;  // below the menu bar
+    float& prefW = ui.panelPrefW[panel];
+    float& prefH = ui.panelPrefH[panel];
+    auto fit = [&](float& wantDim, float dim, float avail, float least, float& pref) {
+        if (dim > avail) {
+            if (pref <= 0) pref = dim;  // remember what to grow back to
+            wantDim = std::max(avail, least);
+        } else if (pref > 0 && resized) {
+            wantDim = std::min(pref, avail);
+            if (wantDim >= pref) pref = 0;
+        }
+    };
+    fit(wantSize.y, size.y, io.DisplaySize.y - top, fs_ * 6, prefH);
+    fit(wantSize.x, size.x, io.DisplaySize.x, fs_ * 8, prefW);
+    want.x = std::clamp(want.x, 0.0f, std::max(0.0f, io.DisplaySize.x - wantSize.x));
+    want.y = std::clamp(want.y, 0.0f, std::max(0.0f, io.DisplaySize.y - wantSize.y));
+    if (wantSize.x != size.x || wantSize.y != size.y) ImGui::SetWindowSize(wantSize);
+    if (want.x != pos.x || want.y != pos.y) ImGui::SetWindowPos(want);
+}
+
 // ------------------------------------------------------------------ 3D control panel
 void App::drawControlPanel() {
     float fs_ = ImGui::GetFontSize();
@@ -382,6 +419,7 @@ void App::drawControlPanel() {
         ImGui::End();
         return;
     }
+    fitPanel(0, false);
     ImGui::PushItemWidth(-fs_ * 8.5f);
     if (ImGui::BeginTabBar("tabs")) {
         if (ImGui::BeginTabItem("Fractal")) { drawFractalTab(); ImGui::EndTabItem(); }
@@ -725,6 +763,7 @@ void App::drawClassicPanel() {
         ImGui::End();
         return;
     }
+    fitPanel(1, false);
     ImGui::PushItemWidth(-fs_ * 8.5f);
     ImGui::Combo("Formula", &view.cs.formula, kClassicFormulas, kClassicFormulaCount);
     if (view.cs.formula == kCustomFormula) drawFormulaControls();
@@ -1354,6 +1393,7 @@ void App::drawLearnPanel() {
         ImGui::End();
         return;
     }
+    fitPanel(2, true);
     if (ImGui::BeginTabBar("learn")) {
         if (ImGui::BeginTabItem(view.mode == ViewMode::Fractal3D ? "This fractal" : "This formula")) {
             ImGui::BeginChild("lesson");

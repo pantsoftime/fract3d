@@ -97,6 +97,8 @@ struct UiState {
     ImFont* fontRetro = nullptr;
     std::string toastMsg;
     double toastUntil = 0;
+    float lastDisplayW = 0, lastDisplayH = 0;  // the window size the panels were last laid out for (see fitPanel)
+    float panelPrefW[3] = {0, 0, 0}, panelPrefH[3] = {0, 0, 0};  // a panel's size before fitPanel shrank it (0: not shrunk)
     int posterW = 3840, posterH = 2160, posterSamples = 256;
     char parName[128] = "my-view";
     std::string parNote;  // the "; comment" line of the last loaded PAR (shown on the Tour tab)
@@ -198,6 +200,7 @@ private:
     void drawPostTab();
     void drawClassicPanel();
     void drawLearnPanel();
+    void fitPanel(int panel, bool anchoredRight);  // keeps the current panel inside the window when the window is resized
     void drawHud();
     void drawHelp();
     void drawPosterDialog();
