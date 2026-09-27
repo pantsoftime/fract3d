@@ -505,7 +505,7 @@ int App::selfTest() {
     history = History();
     recordHistoryNow();
     std::string start = parText();
-    check(preset("10-menger-crystal.par"), "load a preset");
+    check(preset("11-menger-crystal.par"), "load a preset");
     recordHistoryNow();
     std::string menger = parText();
     check(preset("02-seahorse-valley.par"), "load a second preset");

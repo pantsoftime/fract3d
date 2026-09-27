@@ -112,7 +112,7 @@ if(FRACT3D_TESTS)
   # saved PARs must reproduce their image exactly: two presets, plus one view per
   # feature that PAR files carry (gradients, cosine palettes, formulas, animation, deep centers)
   file(GLOB ROUNDTRIP_FILES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/tests/roundtrip/*.par)
-  foreach(p ${CMAKE_SOURCE_DIR}/presets/02-seahorse-valley.par ${CMAKE_SOURCE_DIR}/presets/10-menger-crystal.par ${ROUNDTRIP_FILES})
+  foreach(p ${CMAKE_SOURCE_DIR}/presets/02-seahorse-valley.par ${CMAKE_SOURCE_DIR}/presets/11-menger-crystal.par ${ROUNDTRIP_FILES})
     get_filename_component(name ${p} NAME_WE)
     add_test(NAME roundtrip.${name}
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:fract3d> -DDIFF=$<TARGET_FILE:imgdiff>
@@ -133,8 +133,9 @@ if(FRACT3D_TESTS)
 
   # The autopilot flies real fractals: around the outside (Mandelbulb), through caves
   # (Kleinian), out of a view that starts almost touching the walls (the Mandelbox
-  # chamber), and over terrain whose distance estimate runs long (the landscape)
-  foreach(stop 07-mandelbulb-path-traced 11-kleinian-caves 09-mandelbox-cathedral 12-crater-lake)
+  # chamber), through the passages in the Mandelbox's walls at the view's own small scale,
+  # and over terrain whose distance estimate runs long (the landscape)
+  foreach(stop 07-mandelbulb-path-traced 12-kleinian-caves 09-mandelbox-cathedral 10-inside-the-mandelbox 13-crater-lake)
     add_test(NAME autopilot.fly-${stop}
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:fract3d> -DPAR=${CMAKE_SOURCE_DIR}/presets/${stop}.par
                      -DFRAMES=1200 -DMIN_FLOWN=5 -DOUT=${TEST_OUT}/autopilot-${stop}.png
@@ -263,7 +264,7 @@ if(FRACT3D_TESTS)
   # skipping ahead (BLA) changes nothing visible: the 10^32x minibrot with and without it
   add_test(NAME deep.bla-agrees
            COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:fract3d> -DDIFF=$<TARGET_FILE:imgdiff>
-                   -DPAR=${CMAKE_SOURCE_DIR}/presets/18-minibrot-1e32.par
+                   -DPAR=${CMAKE_SOURCE_DIR}/presets/19-minibrot-1e32.par
                    -DGOLDEN_PAR=${CMAKE_SOURCE_DIR}/tests/deep/minibrot-no-bla.par -DOUT=${TEST_OUT} -DSIZE=240x135
                    -P ${CMAKE_SOURCE_DIR}/tests/render_pair.cmake)
   # ...and agrees with plain doubles where both are accurate (a well-conditioned view)

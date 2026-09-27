@@ -1,0 +1,5 @@
+; Inside the Mandelbox: its walls hide a maze of rooms, joined by gaps too narrow to see from outside. Press G to fly them.
+; (In here the ship shrinks to 1/600 of the box to fit the gaps; if it comes out it grows again, and from outside it dives to the surface to find a way in.)
+fractal = mandelbox
+camera.pos = 4.002 3.49 0
+camera.target = 4.002 3.49 1

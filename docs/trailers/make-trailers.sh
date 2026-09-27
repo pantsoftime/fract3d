@@ -34,10 +34,10 @@ app --par in/title-cycle.par --hide-ui "${REC[@]}" --record-from 15 --frames 129
 app --par in/orbits.par --inset --mouse 1118,229 --mouse-to 858,494 "${REC[@]}" --record-from 10 --frames 154 --ui-record seg/e-orbits.mp4
 app --par in/cyc-only.par --formula Spider --open formula "${REC[@]}" --record-from 20 --frames 131 --ui-record seg/e-formula.mp4
 app --par "$REPO/presets/07-mandelbulb-path-traced.par" "${FLY[@]}" "${REC[@]}" --record-from 100 --frames 850 --ui-record seg/a-bulb-long.mp4
-app --par "$REPO/presets/12-crater-lake.par" "${FLY[@]}" "${REC[@]}" --record-from 100 --frames 850 --ui-record seg/a-land-long.mp4
-app --par "$REPO/presets/11-kleinian-caves.par" "${FLY[@]}" "${REC[@]}" --record-from 100 --frames 310 --ui-record seg/a-klein.mp4
+app --par "$REPO/presets/13-crater-lake.par" "${FLY[@]}" "${REC[@]}" --record-from 100 --frames 850 --ui-record seg/a-land-long.mp4
+app --par "$REPO/presets/12-kleinian-caves.par" "${FLY[@]}" "${REC[@]}" --record-from 100 --frames 310 --ui-record seg/a-klein.mp4
 app --par "$REPO/presets/09-mandelbox-cathedral.par" "${FLY[@]}" "${REC[@]}" --record-from 100 --frames 280 --ui-record seg/a-mbox.mp4
-XDG_CONFIG_HOME="$WORK/cfg2" "$APP" --par "$REPO/presets/11-kleinian-caves.par" "${FLY[@]}" --fixed-dt 0.0333333 --size 3840x2160 \
+XDG_CONFIG_HOME="$WORK/cfg2" "$APP" --par "$REPO/presets/12-kleinian-caves.par" "${FLY[@]}" --fixed-dt 0.0333333 --size 3840x2160 \
     --record-from 200 --frames 350 --ui-record seg/a-close4k.mp4
 
 # edit: trims, captions, crossfades -> 30 s masters; then the web and sharing versions

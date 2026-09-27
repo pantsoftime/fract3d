@@ -1,6 +1,9 @@
 # Flies a view with the autopilot (fixed time step, so the flight is the same every run)
 # and checks the report: it must never touch a surface, and it must actually get somewhere.
 #   -DAPP -DPAR -DFRAMES -DMIN_FLOWN (in the clearances it keeps) -DOUT (a screenshot path)
+if(NOT EXISTS ${PAR})  # (the app would fly its default view instead, and pass)
+  message(FATAL_ERROR "no such view: ${PAR}")
+endif()
 execute_process(COMMAND ${APP} --par ${PAR} --autopilot auto --fixed-dt 0.0166 --flight-report
                         --ui-shot ${OUT} --frames ${FRAMES} --size 640x360 --hide-ui
                 RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
