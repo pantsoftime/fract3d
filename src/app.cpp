@@ -1470,12 +1470,13 @@ void App::render3D() {
     }
     int maxS = view.rs.renderMode ? view.rs.maxSamplesPT : view.rs.maxSamplesRT;
     if (samples >= maxS) return;  // converged: GPU idles
+    // Samples whose cost isn't measured yet don't pile up: with two frames' worth in
+    // flight, wait for a result (the estimate may be far too low for this view). This
+    // comes before clearing: skipping a frame must leave the last image up, not a black one.
+    if (rend.timer.inFlight() >= 2) return;
     if (samples == 0 && band3DRow == 0) rend.clear3D(rend.accum);
 
     View3D v = makeView(rw, rh);
-    // Samples whose cost isn't measured yet don't pile up: with two frames' worth in
-    // flight, wait for a result (the estimate may be far too low for this view).
-    if (rend.timer.inFlight() >= 2) return;
     float perSample = perSampleMsFull * scale * scale;
     if (!interactive && perSample > targetMs * 2.0f) {
         // A full sample would stall the desktop: render it in bands over several frames.
