@@ -2,6 +2,11 @@
 
 A GPU fractal explorer for Linux, built as a 3D homage to **Fractint**. You can fly through Mandelbulbs, Mandelboxes and Kleinian caves in real time, or switch to a path tracer and let the image refine to photographic quality. There is also a Classic 2D mode with VGA palettes and color cycling. Every fractal includes a short lesson on the math behind it.
 
+| Trailer | Autopilot |
+|---|---|
+| [![Fract3D trailer: 30 seconds](docs/media/fract3d-trailer-poster.jpg)](docs/media/fract3d-trailer.mp4) | [![Fract3D autopilot trailer: 30 seconds](docs/media/fract3d-autopilot-trailer-poster.jpg)](docs/media/fract3d-autopilot-trailer.mp4) |
+| Deep zoom, orbits and Julia sets, formulas, 3D landscapes and path-traced fractals | The cockpit and the autopilot, around the Mandelbulb and through the Kleinian caves |
+
 | | | |
 |---|---|---|
 | ![](docs/images/07-mandelbulb-path-traced.jpg) | ![](docs/images/11-kleinian-caves.jpg) | ![](docs/images/15-kifs-gem.jpg) |
@@ -164,6 +169,7 @@ fractals/   one self-describing .glsl per 3D fractal
 formulas/   Fractint-style .frm formula files
 presets/    the guided tour (.par)
 docs/       concepts.txt and classic.txt (Learn panel content), the two code reviews and their resolutions
+docs/media/ the trailers; docs/trailers/make-trailers.sh renders them again from scratch
 tests/      golden images, hostile inputs, test paths and deep views; tools/ imgdiff and itercheck (exact MPFR check)
 ```
 
