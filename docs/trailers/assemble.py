@@ -100,7 +100,7 @@ def seq_len(durs, xf=XF):
 GH = "github.com/pantsoftime/fract3d"
 
 # ---------------------------------------------------------------- trailer 1: the educational tour
-gal = [("bulb", 0.1, 2.35), ("mbox", 0.1, 2.3), ("klein", 0.1, 2.3), ("kifs", 0.1, 2.35)]
+gal = [("bulb", 1.22, 2.35), ("mbox", 1.22, 2.3), ("klein", 1.22, 2.3), ("kifs", 1.22, 2.35)]  # (the paths' steady middle: 1.2-3.6 s)
 gclips = [make_clip(f"g-{n}", f"seg/{n}.mp4", s, d) for n, s, d in gal]
 chain(gclips, "clip/gallery-raw.mp4", seq_len([d for *_, d in gal], 0.3), xf=0.3, crf=12)
 glen = seq_len([d for *_, d in gal], 0.3)
@@ -109,7 +109,7 @@ e = [
     make_clip("e2", "seg/deepzoom.mp4", 0.0, 4.6, caption_layer(4.6, ["Zoom 100,000,000,000,000,000,000×", "Deep zoom, checked pixel by pixel against exact arithmetic"], "bottom")),
     make_clip("e3", "seg/e-orbits.mp4", 0.0, 4.8, caption_layer(4.8, ["See the math", "Orbits, live Julia sets, and a lesson for every fractal"], "top")),
     make_clip("e4", "seg/e-formula.mp4", 0.0, 3.7, caption_layer(3.7, ["Write your own formulas", "Fractint .frm files, compiled for the GPU"], "top")),
-    make_clip("e5", "seg/land.mp4", 0.0, 4.4, caption_layer(4.4, ["Lift any view into 3D", "Escape time becomes a landscape"], "bottom")),
+    make_clip("e5", "seg/land.mp4", 2.2, 4.4, caption_layer(4.4, ["Lift any view into 3D", "Escape time becomes a landscape"], "bottom")),
     make_clip("e6", "clip/gallery-raw.mp4", 0.0, glen, caption_layer(glen, ["Fly through 3D fractals", "Real-time or path traced · Mandelbulb · Mandelbox · Kleinian caves · KIFS"], "bottom", t1=glen - 0.6)),
 ]
 end1 = 30.0 - (seq_len([d for _, d in e]) - XF)  # what the end card must cover
