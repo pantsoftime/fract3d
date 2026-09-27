@@ -122,7 +122,7 @@ CROP = "crop=2560:1440:640:720,"  # the 4K close-up: the bottom middle, cockpit 
 def two(layer_a, layer_b):  # two layers, one over the other
     return layer_a + "[ta];" + layer_b + "[tb];[tb][ta]overlay=format=auto"
 a = [
-    make_clip("a1", "seg/a-bulb-long.mp4", 8.3, 7.2,
+    make_clip("a1", "seg/a-bulb-long.mp4", 3.5, 7.2,
               two(title_layer(7.2, "FRACT3D", "AUTOPILOT", "Take the controls \u2014 or let it fly", t1=2.9, subsize=72, subfont=FONT_BOLD),
                   caption_layer(7.2, ["Around", "It circles the outside, holding its altitude"], "top", t0=3.4))),
     make_clip("a2", "seg/a-klein.mp4", 0.3, 6.2, caption_layer(6.2, ["Through", "It threads caves and tunnels, never touching a wall"], "top")),
@@ -131,6 +131,6 @@ a = [
     make_clip("a5", "seg/a-land-long.mp4", 20.4, 4.6, caption_layer(4.6, ["The autopilot tour", "Every 3D world, hands-free"], "top")),
 ]
 end2 = 30.0 - (seq_len([d for _, d in a]) - XF)
-a.append(make_clip("a6", "seg/a-bulb-long.mp4", 18.6, round(end2 + 0.001, 3),
+a.append(make_clip("a6", "seg/a-bulb-long.mp4", 17.5, round(end2 + 0.001, 3),
                    title_layer(round(end2, 3), "FRACT3D", "Press G. Enjoy the flight.", GH, t1=99, dim=0.66)))
 chain(a, "out/master-autopilot.mp4", 30.0, crf=12)
