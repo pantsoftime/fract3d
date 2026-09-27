@@ -70,7 +70,7 @@ bool App::init(const CliOptions& opts) {
     if (session.cli.hidden) glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
     // --ui-shot captures the window, so it gets the requested size; --render draws
     // offscreen at any size, and its (hidden) window only needs to exist
-    bool uiShot = !session.cli.uiShotPath.empty() && session.cli.shotW;
+    bool uiShot = (!session.cli.uiShotPath.empty() || !session.cli.uiRecord.empty()) && session.cli.shotW;
     int ww = uiShot ? session.cli.shotW : 1600, wh = uiShot ? session.cli.shotH : 900;
     win = glfwCreateWindow(ww, wh, "Fract3D", nullptr, nullptr);
     if (!win) {
@@ -167,6 +167,9 @@ bool App::init(const CliOptions& opts) {
     wheelPending = session.cli.wheel;
     if (session.cli.hideUi) ui.showUI = false;
     cockpit.show = session.cli.cockpit;
+    ui.showPanels = !session.cli.hidePanels;
+    if (session.cli.autopilotSpeed > 0) autopilot.speedFactor = std::clamp(session.cli.autopilotSpeed, 0.2f, 5.0f);
+    if (recording()) view.rs.adaptiveRes = false;  // (every recorded frame at full resolution)
     for (auto& w : session.cli.openWindows) {
         if (w == "gradient") {
             view.gradient = sampleStops(palettes[view.rs.palette], 8);
@@ -825,8 +828,11 @@ void App::savePrefs() {
 
 // ------------------------------------------------------------------ helpers
 void App::toast(const std::string& msg, float seconds) {
-    ui.toastMsg = msg;
-    ui.toastUntil = glfwGetTime() + seconds;
+    // (a recording runs faster than real time, so a toast would hang over all of it)
+    if (!recording()) {
+        ui.toastMsg = msg;
+        ui.toastUntil = glfwGetTime() + seconds;
+    }
     printf("fract3d: %s\n", msg.c_str());
 }
 
@@ -972,6 +978,7 @@ void App::frame() {
     if (session.cli.fixedDt > 0) dt = std::min(session.cli.fixedDt, 0.1f);
     lastFrameTime = now;
     fps = fps * 0.95f + (rawDt > 0 ? (float)(1.0 / rawDt) : 0.0f) * 0.05f;
+    if (session.cli.fixedDt > 0) fps = 1.0f / dt;  // (recordings and tests: the rate they play at, not how fast they ran)
     glfwGetFramebufferSize(win, &fbW, &fbH);
     glfwGetWindowSize(win, &winW, &winH);
     if (fbW <= 0 || fbH <= 0) {  // minimized
@@ -981,7 +988,16 @@ void App::frame() {
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
-    if (session.cli.fakeMouse[0] >= 0) ImGui::GetIO().AddMousePosEvent(session.cli.fakeMouse[0], session.cli.fakeMouse[1]);
+    if (session.cli.fakeMouse[0] >= 0) {
+        float mx = session.cli.fakeMouse[0], my = session.cli.fakeMouse[1];
+        if (session.cli.mouseTo[0] >= 0) {  // --mouse-to: glide across the frames, easing in and out
+            float t = std::clamp((float)frameCount / std::max(session.cli.uiShotFrames - 1, 1), 0.0f, 1.0f);
+            t = t * t * (3 - 2 * t);
+            mx += (session.cli.mouseTo[0] - mx) * t;
+            my += (session.cli.mouseTo[1] - my) * t;
+        }
+        ImGui::GetIO().AddMousePosEvent(mx, my);
+    }
     ImGui::NewFrame();
 
     handleKeys();
@@ -1054,7 +1070,7 @@ void App::frame() {
 
     // present
     GLuint target = 0;
-    if (!session.cli.uiShotPath.empty()) {
+    if (!session.cli.uiShotPath.empty() || recording()) {
         uiShotRT.ensure(fbW, fbH, GL_RGBA8, GL_NEAREST);
         target = uiShotRT.fbo;
     }
@@ -1065,6 +1081,38 @@ void App::frame() {
     glBindFramebuffer(GL_FRAMEBUFFER, target);
     glViewport(0, 0, fbW, fbH);
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    if (recording()) {  // --ui-record: every frame from --record-from on, as it appears, into ffmpeg
+        int f = frameCount++;
+        if (f >= session.cli.recordFrom) {
+            if (!recordPipe) {
+                float fps = session.cli.fixedDt > 0 ? 1.0f / session.cli.fixedDt : 30.0f;
+                char cmd[1024];
+                snprintf(cmd, sizeof cmd,
+                         "ffmpeg -loglevel error -y -f rawvideo -pix_fmt rgba -s %dx%d -framerate %.4f -i - -vf vflip "
+                         "-c:v libx264 -preset medium -crf 14 -pix_fmt yuv420p -movflags +faststart '%s'",
+                         fbW, fbH, fps, session.cli.uiRecord.c_str());
+                recordPipe = popen(cmd, "w");
+                if (!recordPipe) {
+                    fprintf(stderr, "fract3d: can't start ffmpeg for --ui-record\n");
+                    exitCode = 1;
+                    quit = true;
+                }
+            }
+            if (recordPipe) {
+                std::vector<uint8_t> px((size_t)fbW * fbH * 4);
+                glPixelStorei(GL_PACK_ALIGNMENT, 1);
+                glReadPixels(0, 0, fbW, fbH, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+                for (size_t i = 3; i < px.size(); i += 4) px[i] = 255;
+                fwrite(px.data(), 1, px.size(), recordPipe);
+            }
+        }
+        if (frameCount >= session.cli.uiShotFrames) {
+            if (recordPipe && pclose(recordPipe) != 0) exitCode = 1;
+            recordPipe = nullptr;
+            printf("fract3d: recorded %d frames into %s\n", std::max(0, frameCount - session.cli.recordFrom), session.cli.uiRecord.c_str());
+            quit = true;
+        }
+    }
     if (!session.cli.uiShotPath.empty() && ++frameCount >= session.cli.uiShotFrames) {
         std::vector<uint8_t> px((size_t)fbW * fbH * 4);
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
@@ -1111,7 +1159,14 @@ void App::handleKeys() {
     auto pressed = [](ImGuiKey k) { return ImGui::IsKeyPressed(k, false); };
     bool ctrl = io.KeyCtrl;
 
-    if (pressed(ImGuiKey_Tab)) ui.showUI = !ui.showUI;
+    if (pressed(ImGuiKey_Tab)) {
+        if (io.KeyShift) {
+            ui.showPanels = !ui.showPanels;
+            if (!ui.showPanels) toast("Panels hidden - Shift+Tab brings them back", 2.0f);
+        } else {
+            ui.showUI = !ui.showUI;
+        }
+    }
     if (pressed(ImGuiKey_F1)) ui.showHelp = !ui.showHelp;
     if (pressed(ImGuiKey_F12)) takeScreenshot();
     if (pressed(ImGuiKey_L)) session.showLearn = !session.showLearn;
@@ -1600,7 +1655,7 @@ void App::render3D() {
         return;
     }
     band3DRow = 0;
-    int n = 1;
+    int n = recording() ? std::min(session.cli.recordSamples, maxS - samples) : 1;  // (a recording has time to smooth motion)
     if (!interactive) {
         n = std::clamp((int)(targetMs / std::max(perSample, 0.01f)), 1, 16);
         n = std::min(n, maxS - samples);
@@ -2031,7 +2086,7 @@ void App::render2D() {
     }
     interactive = now - lastChange < 0.2;
     double budgetMs = 1000.0 / std::max(view.rs.targetFps, 10.0f) * 0.8;  // the 3D renderer's budget
-    int ss = interactive ? 1 : std::clamp(view.cs.supersample, 1, 4);
+    int ss = interactive && !recording() ? 1 : std::clamp(view.cs.supersample, 1, 4);
     int down = interactive && view.rs.adaptiveRes ? down2D : 1;  // (see down2D)
     const std::vector<uint8_t> sigView = sig;  // the view, before the sampling details
     // what is shown of this very view: its sampling (supersample, or -reduction), 0 if another view
@@ -2093,7 +2148,12 @@ void App::render2D() {
     }
     if (!job2D.active) return;
     IndexTarget& target = job2D.offscreen ? work2D : rend.index2D;
-    if (stepJob2D(job2D, target, budgetMs)) {
+    bool done = stepJob2D(job2D, target, budgetMs);
+    for (int guard = 0; recording() && !done && job2D.active && guard < 100000; guard++) {  // a recorded frame is a finished one
+        glFinish();
+        done = stepJob2D(job2D, target, budgetMs);
+    }
+    if (done) {
         if (job2D.offscreen) {
             rend.index2D.swap(work2D);
             work2D.release();

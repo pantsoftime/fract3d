@@ -36,6 +36,12 @@ struct CliOptions {
     bool hidden = false;
     std::string uiShotPath;  // render N frames with the UI into a PNG and exit (docs/testing)
     int uiShotFrames = 90;
+    std::string uiRecord;    // --ui-record OUT.mp4: record frames (UI included) into a video, then exit (trailers, docs)
+    int recordFrom = 0;      // --record-from N: the first frame to record (the ones before let the view settle)
+    int recordSamples = 4;   // --record-samples N: 3D samples per frame while moving, when recording (anti-aliasing)
+    float mouseTo[2] = {-1, -1};  // --mouse-to X,Y: the fake mouse glides from --mouse to here over the frames
+    bool hidePanels = false;      // --hide-panels: start with the panels and menu hidden (Shift+Tab)
+    float autopilotSpeed = 0;     // --autopilot-speed X: its cruise speed (clearances per second)
     int theme = -1;          // override the saved UI theme
     std::string formula;     // start in Classic 2D with this formula from the formula files
     std::vector<std::string> frmFiles;  // --frm: more formula files to load (like dropping them on the window)
@@ -97,6 +103,7 @@ struct Session {
 // Transient overlay state.
 struct UiState {
     bool showUI = true, showHelp = false, showDemo = false, showPoster = false;
+    bool showPanels = true;  // Shift+Tab: the panels and the menu bar (the cockpit and HUD stay)
     bool showJuliaInset = false;
     ImFont* fontUI = nullptr;
     ImFont* fontMono = nullptr;
@@ -475,6 +482,8 @@ public:
     RenderTarget uiShotRT;
     int exitCode = 0;
     int frameCount = 0;
+    FILE* recordPipe = nullptr;  // --ui-record: ffmpeg's stdin
+    bool recording() const { return !session.cli.uiRecord.empty(); }
     bool fullscreen = false;
     int savedWin[4] = {0, 0, 1600, 900};
     bool quit = false;

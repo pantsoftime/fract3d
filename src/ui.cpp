@@ -447,10 +447,12 @@ void App::drawCockpit() {
 // ------------------------------------------------------------------ top level
 void App::drawUI() {
     if (ui.showUI) {
-        drawMenuBar();
-        if (view.mode == ViewMode::Fractal3D) drawControlPanel();
-        else drawClassicPanel();
-        if (session.showLearn) drawLearnPanel();
+        if (ui.showPanels) {
+            drawMenuBar();
+            if (view.mode == ViewMode::Fractal3D) drawControlPanel();
+            else drawClassicPanel();
+            if (session.showLearn) drawLearnPanel();
+        }
         if (cockpit.show && view.mode == ViewMode::Fractal3D) drawCockpit();
         drawHud();
     }
@@ -549,6 +551,10 @@ void App::drawMenuBar() {
     }
     if (ImGui::BeginMenu("View")) {
         ImGui::MenuItem("Controls & everything (Tab hides all)", "Tab", &ui.showUI);
+        if (ImGui::MenuItem("Hide panels, keep cockpit & HUD", "Shift+Tab")) {
+            ui.showPanels = false;
+            toast("Panels hidden - Shift+Tab brings them back", 2.0f);
+        }
         ImGui::MenuItem("Learn panel", "L", &session.showLearn);
         ImGui::MenuItem("Spaceship cockpit (3D)", "X", &cockpit.show);
         if (ImGui::MenuItem("Autopilot (3D)", "G", autopilot.active)) autopilot.active ? disengageAutopilot("Autopilot off") : engageAutopilot(-1);
@@ -1836,6 +1842,7 @@ void App::drawHelp() {
                    {"Start", "switch 3D / Classic 2D"}});
     ImGui::SeparatorText("Everywhere");
     table("hall", {{"Tab", "hide or show all UI"},
+                   {"Shift+Tab", "hide the panels and menu (the cockpit and HUD stay)"},
                    {"M", "switch between 3D and Classic 2D"},
                    {"C", "color cycling on/off"},
                    {"L", "Learn panel"},

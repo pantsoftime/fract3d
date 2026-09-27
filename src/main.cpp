@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "app.h"
 
 #include <cstdio>
@@ -18,6 +19,9 @@ static void usage() {
         "  --par-entry NAME     which entry of a Fractint .PAR file (default: the first)\n"
         "  --autopilot STYLE    start flying: around, through, auto (the fractal's own) or tour (every 3D tour stop)\n"
         "  --cockpit            start with the spaceship cockpit open (X)\n"
+        "  --hide-panels        start with the panels and menu hidden (Shift+Tab)\n"
+        "  --ui-record OUT.mp4  record what the window shows (UI included) for --frames frames and exit;\n"
+        "                       use with --size, --fixed-dt (motion per frame) and --record-from N\n"
         "  --2d                 start in Classic 2D mode\n"
         "  --pt / --rt          path traced / real-time rendering\n"
         "  --render OUT.png     render an image and exit (no window shown)\n"
@@ -61,6 +65,15 @@ int main(int argc, char** argv) {
         else if (a == "--samples") o.shotSamples = atoi(next().c_str());
         else if (a == "--ui-shot") { o.uiShotPath = next(); o.hidden = true; }
         else if (a == "--frames") o.uiShotFrames = atoi(next().c_str());
+        else if (a == "--ui-record") { o.uiRecord = next(); o.hidden = true; }  // with --frames, --fixed-dt, --size
+        else if (a == "--record-from") o.recordFrom = atoi(next().c_str());
+        else if (a == "--record-samples") o.recordSamples = std::clamp(atoi(next().c_str()), 1, 64);
+        else if (a == "--mouse-to") {
+            std::string s = next();
+            if (sscanf(s.c_str(), "%f,%f", &o.mouseTo[0], &o.mouseTo[1]) != 2) { fprintf(stderr, "bad --mouse-to\n"); return 2; }
+        }
+        else if (a == "--hide-panels") o.hidePanels = true;
+        else if (a == "--autopilot-speed") o.autopilotSpeed = (float)atof(next().c_str());
         else if (a == "--theme") o.theme = next() == "fractint" ? 1 : 0;
         else if (a == "--gl-debug") o.glDebug = true;
         else if (a == "--formula") o.formula = next();
