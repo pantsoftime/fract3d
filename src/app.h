@@ -10,6 +10,7 @@
 #include "state.h"
 
 #include <array>
+#include <map>
 #include <filesystem>
 #include <random>
 
@@ -327,12 +328,14 @@ public:
         float speed = 0;             // measured, world units per second
         Vec3 lastPos;
         bool lastPosValid = false;
+        std::vector<uint8_t> mapSig;  // what the map was last drawn for (see updateCockpit)
     } cockpit;
     struct TourFlight {              // the autopilot tour: flies each 3D stop for a while
         bool active = false;
         float seconds = 45;          // of flight (Autopilot::time) per stop
     } tourFlight;
     void engageAutopilot(int style);   // 0 around, 1 through, -1 the fractal's own style
+    std::map<std::string, float> userClearance;  // "fractal/style" -> the Clearance slider's value / scene size (this session)
     void disengageAutopilot(const char* why);
     void flyAutopilot(float dt);
     void updateCockpit(float dt);

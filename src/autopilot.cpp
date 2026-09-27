@@ -28,6 +28,8 @@ void Autopilot::engage(FlightStyle s, const Vec3& look, float clearanceTarget, u
     wallDistance = clearance;
     speed = 0;
     time = 0;
+    turnRate = 0;
+    roomAhead = 0;
     for (int i = 0; i < 6; i++) {  // a different wander on every flight
         seed = seed * 1664525u + 1013904223u;
         phase[i] = (float)(seed >> 8) / (float)(1u << 24) * 6.2831853f;
@@ -68,7 +70,8 @@ Vec3 Autopilot::step(float dt, const Vec3& pos, const ShipSensors& s, Vec3& look
         status = "waiting for sensors";
         return pos;
     }
-    Vec3 n = s.normalValid ? s.normal.normalized() : Vec3(0, 1, 0);
+    const bool nOk = s.normalValid && std::isfinite(s.normal.length()) && s.normal.length() > 0;
+    Vec3 n = nOk ? s.normal.normalized() : Vec3(0, 1, 0);
     // The nearest surface can't be farther than the free distance along any whisker: where
     // the distance estimate runs long (height fields near cliffs), believe the whiskers.
     float de = s.de;
@@ -78,7 +81,9 @@ Vec3 Autopilot::step(float dt, const Vec3& pos, const ShipSensors& s, Vec3& look
         // normal by the smallest distance that is still resolvable here - never more.
         speed = 0;
         status = "backing out";
-        return s.normalValid && s.eps > 0 ? pos + n * (s.eps * 0.5f) : pos;
+        // (no usable normal - a flat or broken estimate there: reverse the way it came)
+        Vec3 away = nOk ? n : heading * -1.0f;
+        return s.eps > 0 ? pos + away * (s.eps * 0.5f) : pos;
     }
     float L = std::max(s.range, 1e-9f);
     float obj = s.objectDe > 0 ? s.objectDe : de;  // how far the fractal itself is (the floor aside)
@@ -241,9 +246,14 @@ FlightLog simulateFlight(const std::function<float(const Vec3&)>& de, Autopilot 
     for (float t = 0; t < seconds; t += dt) {
         q.push_back({sense(pos), pos});
         ShipSensors s;
-        if (q.size() > 2) {
+        if (q.size() > 2) {  // corrected for the distance flown since, exactly as App::flyAutopilot does
             s = q.front().s;
-            s.de -= (pos - q.front().at).length();  // as the app corrects late probe results
+            float moved = (pos - q.front().at).length();
+            if (s.de > s.eps) {
+                s.de -= moved;
+                for (auto& f : s.free) f = std::max(f - moved, 0.0f);
+                if (s.de <= s.eps) s.valid = false;
+            }
             q.pop_front();
         }
         Vec3 look;

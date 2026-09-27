@@ -727,6 +727,47 @@ int App::selfTest() {
     check(view.rs.renderMode == 0, "flying switches path tracing off");
     disengageAutopilot(nullptr);
     check(!tourFlight.active && view.rs.renderMode == 1, "letting go ends the tour and brings path tracing back");
+    // a path-traced tour stop, then a real-time one: letting go keeps it real-time
+    view.rs.renderMode = 1;
+    engageAutopilot(0);
+    autopilot.active = false;  // (as tourFlightNext does before the next stop)
+    view.rs.renderMode = 0;
+    engageAutopilot(0);
+    disengageAutopilot(nullptr);
+    check(view.rs.renderMode == 0, "a path-traced stop's restore doesn't carry over to a real-time one");
+    // the ship keeps to the scale you've zoomed to, and to the clearance you set
+    {
+        const Fractal& f = fractal();
+        float hint = f.autopilotClearance * f.sceneSize();
+        probeValid = true;
+        deAtCam = hint * 0.01f;
+        view.cam.distance = hint * 0.02f;
+        engageAutopilot(0);
+        check(std::abs(autopilot.clearance - hint * 0.015f) < hint * 1e-4f, "zoomed in close, it circles at that scale");
+        userClearance[f.key + "/around"] = 0.5f;
+        engageAutopilot(0);
+        check(std::abs(autopilot.clearance - 0.5f * f.sceneSize()) < 1e-4f, "the Clearance slider's value is remembered");
+        userClearance.clear();
+        disengageAutopilot(nullptr);
+    }
+    view.cam.roll = 0.4f;
+    loadParText(parText(), "self-test", true);
+    check(view.cam.roll == 0.0f, "a loaded view is level");
+    // no usable normal while touching: it backs out the way it came, never stays stuck
+    {
+        Autopilot ap;
+        ap.engage(FlightStyle::Through, Vec3(0, 0, 1), 1.0f, 1);
+        ShipSensors s;
+        s.valid = true;
+        s.de = 0;
+        s.eps = 1e-3f;
+        s.normalValid = true;
+        s.normal = Vec3(std::nanf(""), 0, 0);
+        s.dirs = ap.whiskerDirs();
+        s.free.assign(s.dirs.size(), 0.0f);
+        Vec3 look, p = ap.step(0.016f, Vec3(0, 0, 0), s, look);
+        check(p.z < 0 && std::isfinite(p.x), "touching with a broken normal: it reverses out");
+    }
     printf("self-test: %s\n", fails ? "FAILED" : "all passed");
     return fails ? 1 : 0;
 }
@@ -857,6 +898,7 @@ void App::applyLook(const Fractal& f) {
 void App::resetView() {
     Fractal& f = fractal();
     probeValid = false;
+    view.cam.roll = 0;
     disengageAutopilot("Autopilot off - you have the controls");
     view.cam.lookAt(Vec3(f.camPos[0], f.camPos[1], f.camPos[2]), Vec3(f.camTarget[0], f.camTarget[1], f.camTarget[2]));
 }
@@ -963,7 +1005,9 @@ void App::frame() {
         tourFlight.active = true;
         tourFlightNext();
         session.cli.autopilot = -1;
-    } else if (session.cli.autopilot >= 0) {  // --autopilot (in 2D mode it says how to get to 3D)
+    } else if (session.cli.autopilot >= 0 && (probeValid || view.mode != ViewMode::Fractal3D)) {
+        // --autopilot: as if G were pressed once the view is measured (so it flies at the
+        // scale it finds, like the key does); in 2D mode it says how to get to 3D
         engageAutopilot(session.cli.autopilot == 2 ? -1 : session.cli.autopilot);
         session.cli.autopilot = -1;
     }
@@ -1661,12 +1705,22 @@ void App::engageAutopilot(int style) {
     }
     const Fractal& f = fractal();
     if (style < 0) style = f.autopilotStyle;
+    const bool fresh = !autopilot.active;  // (Shift+G switches the style of a flight under way)
     float clearance = f.autopilotClearance * f.sceneSize();
-    // the ship flies at the scale it finds: tour stops and your own zooms can be far deeper
-    // than the default view, so never ask for more clearance than the camera's surroundings
-    if (probeValid && deAtCam > 0 && style == 1) clearance = std::min(clearance, std::max(deAtCam * 1.5f, clearance * 0.02f));
+    auto remembered = userClearance.find(f.key + (style == 1 ? "/through" : "/around"));
+    if (remembered != userClearance.end()) {
+        clearance = remembered->second * f.sceneSize();  // what you set with the slider last time
+    } else if (probeValid && deAtCam > 0) {
+        // The ship flies at the scale it finds: if you've zoomed in close (the wheel, WASD,
+        // a tour stop), it keeps to that scale instead of climbing away from what you were
+        // looking at. The scale is how close the surface is, or how far the point you're
+        // looking at is (the orbit target) - whichever is larger, so that starting right
+        // against a wall still leaves room to fly.
+        clearance = std::min(clearance, std::max(deAtCam * 1.5f, view.cam.distance * 0.1f));
+    }
     unsigned seed = session.cli.fixedDt > 0 ? 12345u : (unsigned)(now * 1000.0) ^ 0x9e3779b9u;  // (tests: the same flight every time)
     autopilot.engage(style == 1 ? FlightStyle::Through : FlightStyle::Around, makeView(fbW, fbH).fwd, clearance, seed);
+    autopilot.roll = view.cam.roll;  // (carry on from the current bank, so switching style doesn't jolt the view)
     autopilot.lookIn = f.autopilotLook;
     autopilot.orbitCenter = f.autopilotOrbit > 0;
     autopilot.center = Vec3(f.camTarget[0], f.camTarget[1], f.camTarget[2]);
@@ -1678,7 +1732,7 @@ void App::engageAutopilot(int style) {
     if (view.rs.renderMode == 1) {
         autopilotRestorePT = true;
         view.rs.renderMode = 0;
-    } else if (!autopilot.active) {
+    } else if (fresh) {
         autopilotRestorePT = false;
     }
     cockpit.show = true;
@@ -1734,14 +1788,21 @@ void App::flyAutopilot(float dt) {
 }
 
 void App::updateCockpit(float dt) {
-    if (!autopilot.active && view.cam.roll != 0.0f) {  // level the wings once the autopilot lets go
-        view.cam.roll *= std::exp(-dt * 5.0f);
-        if (std::abs(view.cam.roll) < 1e-3f) view.cam.roll = 0;
+    if (!autopilot.active && view.cam.roll != 0.0f) {
+        // Level the wings once the autopilot lets go - quickly: roll is part of the view, so
+        // the image can't start refining until it's level (about a third of a second).
+        float step = std::max(std::abs(view.cam.roll) * 6.0f, 1.5f) * dt;
+        view.cam.roll = std::abs(view.cam.roll) <= step ? 0.0f : view.cam.roll - std::copysign(step, view.cam.roll);
     }
     if (tourFlight.active && autopilot.active && autopilot.time >= tourFlight.seconds) tourFlightNext();
     if (!cockpit.show || view.mode != ViewMode::Fractal3D) {
         cockpit.lastPosValid = false;
         return;
+    }
+    if (!probeValid) {  // the view jumped (a load, a reset, another fractal): no speed or trail across it
+        cockpit.lastPosValid = false;
+        cockpit.trail.clear();
+        cockpit.speed = 0;
     }
     Vec3 p = view.cam.pos;
     if (cockpit.lastPosValid && dt > 0) {
@@ -1759,10 +1820,18 @@ void App::updateCockpit(float dt) {
     float de = probeValid && deAtCam > 0 ? deAtCam : view.cam.distance * 0.1f;
     float want = std::clamp(de * 14.0f, fractal().sceneSize() * 1e-6f, fractal().sceneSize() * 2.0f);
     cockpit.span = cockpit.span <= 0 ? want : cockpit.span * std::pow(want / cockpit.span, 1 - std::exp(-dt * 1.5f));
+    if (std::abs(want / cockpit.span - 1.0f) < 1e-3f) cockpit.span = want;  // (settles, so a still view stops redrawing)
+    // Redraw only when something it shows changed: the view (camera, fractal, parameters:
+    // the 3D renderer's signature), the range or the size.
+    int size = std::max(64, (int)(ImGui::GetFontSize() * 9.0f));
+    std::vector<uint8_t> sig = lastSig3D;
+    const uint8_t* extra = reinterpret_cast<const uint8_t*>(&cockpit.span);
+    sig.insert(sig.end(), extra, extra + sizeof(float));
+    sig.insert(sig.end(), reinterpret_cast<const uint8_t*>(&size), reinterpret_cast<const uint8_t*>(&size) + sizeof(int));
+    if (sig == cockpit.mapSig && cockpit.map.tex) return;
     float yaw = view.cam.yaw;
     Vec3 fwd(std::sin(yaw), 0, std::cos(yaw)), right(std::cos(yaw), 0, -std::sin(yaw));
-    rend.renderMap(fractal(), view.rs, makeView(fbW, fbH), p, right, fwd, cockpit.span, cockpit.map,
-                   std::max(64, (int)(ImGui::GetFontSize() * 9.0f)));
+    if (rend.renderMap(fractal(), view.rs, makeView(fbW, fbH), p, right, fwd, cockpit.span, cockpit.map, size)) cockpit.mapSig = std::move(sig);
 }
 
 // The autopilot tour: each 3D stop of the guided tour, flown for a while.

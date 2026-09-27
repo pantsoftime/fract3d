@@ -432,8 +432,9 @@ void App::drawCockpit() {
     ImGui::SameLine();
     if (ImGui::Button(on ? "Off (G)" : "Engage (G)")) on ? disengageAutopilot("Autopilot off") : engageAutopilot(-1);
     float lo = S * 1e-5f, hi = S;
-    ImGui::SliderFloat("Clearance", &autopilot.clearance, lo, hi, "%.3g", ImGuiSliderFlags_Logarithmic);
-    ImGui::SetItemTooltip("Around: the height it holds above the surface. Through: the most it keeps from the walls (it squeezes into smaller rooms on its own). Speed follows it.");
+    if (ImGui::SliderFloat("Clearance", &autopilot.clearance, lo, hi, "%.3g", ImGuiSliderFlags_Logarithmic))
+        userClearance[f.key + (autopilot.style == FlightStyle::Through ? "/through" : "/around")] = autopilot.clearance / S;
+    ImGui::SetItemTooltip("Around: the height it holds above the surface. Through: the most it keeps from the walls (it squeezes into smaller rooms on its own). Speed follows it. Remembered for this fractal and style until you quit.");
     ImGui::SliderFloat("Speed", &autopilot.speedFactor, 0.2f, 5.0f, "%.1fx", ImGuiSliderFlags_Logarithmic);
     ImGui::SetItemTooltip("Cruise speed, in clearances per second");
     if (tourFlight.active) ImGui::TextDisabled("Tour: next stop in %.0f s", std::max(0.0f, tourFlight.seconds - autopilot.time));
