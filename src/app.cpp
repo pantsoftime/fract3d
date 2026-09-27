@@ -1600,7 +1600,7 @@ bool App::stepJob2D(Job2D& job, IndexTarget& target, double budgetMs, int stateS
     bool deep = rend.classicUsesDeep(job.cs, th) && refUploadedOrbit && refUploadedOrbit->size() >= 6;
     if (pt.fresh > 0 && pt.lastMs > 0) {
         double ideal = pt.lastWork * (budgetMs / 3.0) / pt.lastMs / bandMpx;
-        job.chunk = (int)std::clamp(ideal, std::max(job.chunk / 4.0, 16.0), job.chunk * 2.0);
+        job.chunk = (int)std::clamp(ideal, std::max(job.chunk / 4.0, 16.0), std::max(job.chunk * 2.0, 16.0));  // (deep jobs set chunk as low as 1)
         pt.fresh = 0;
     }
     double cap = pt.costBound() > 0 ? passMs / pt.costBound() / bandMpx : 512.0;
