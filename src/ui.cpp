@@ -1782,7 +1782,8 @@ void App::drawHud() {
             bool compiling = rend.status(fractal()) == Renderer::ProgStatus::Compiling;
             ImGui::Text("%.0f fps  |  %d x %d  |  scale %.2f  |  %s", ui.shownFps, rend.accum.w, rend.accum.h,
                         (float)rend.accum.w / std::max(fbW, 1), compiling ? "compiling shaders..." : interactive ? "moving" : "refining");
-            ImGui::TextDisabled("F1 help  |  Tab hide UI  |  F12 screenshot  |  P %s  |  M 2D mode", view.rs.renderMode ? "real-time" : "path trace");
+            ImGui::TextDisabled("F1 help  |  Tab hide UI  |  F12 screenshot  |  P %s  |  X %s  |  M 2D mode",
+                               view.rs.renderMode ? "real-time" : "path trace", cockpit.show ? "hide cockpit" : "cockpit");
         } else {
             float sx = (float)fbW / std::max(winW, 1), sy = (float)fbH / std::max(winH, 1);
             double ps = view.cs.height / fbH;
