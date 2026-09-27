@@ -1663,7 +1663,7 @@ bool App::stepJob2D(Job2D& job, IndexTarget& target, double budgetMs, int stateS
         const IndexTarget* reuse = job.reusePreview && &target != &rend.index2D ? &rend.index2D : nullptr;
         int slot = pt.head;
         pt.begin((float)work, first);
-        bool ok = rend.dispatch2D(target, job.cs, y0, job.bandRows, k, first, stateSlot, reuse, trips, slot);
+        bool ok = rend.dispatch2D(target, job.cs, y0, job.bandRows, k, first, stateSlot, reuse, trips, slot, std::min(itersDone + k, maxIter));
         pt.end();
         if (!ok) {
             job.active = false;
@@ -1683,7 +1683,7 @@ bool App::stepJob2D(Job2D& job, IndexTarget& target, double budgetMs, int stateS
                 if (!rend.passLagged(slot)) break;
                 slot = pt.head;
                 pt.begin((float)(trips * bandMpx), false);
-                ok = rend.dispatch2D(target, job.cs, y0, job.bandRows, maxIter, false, stateSlot, reuse, trips, slot);
+                ok = rend.dispatch2D(target, job.cs, y0, job.bandRows, maxIter, false, stateSlot, reuse, trips, slot, maxIter);
                 pt.end();
                 if (!ok) {
                     job.active = false;

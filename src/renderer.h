@@ -66,7 +66,7 @@ public:
     // `reuse`: a finished 1x image of the same view, whose pixels become the center samples.
     // `trips`/`passSlot`: deep zoom's per-pass trip valve and the lag flag it reports in (see classic2d.comp).
     bool dispatch2D(IndexTarget& out, const Classic2DSettings& cs, int y0, int rows, int chunk, bool first, int stateSlot = 0,
-                    const IndexTarget* reuse = nullptr, int trips = 0, int passSlot = 0);
+                    const IndexTarget* reuse = nullptr, int trips = 0, int passSlot = 0, int bandIter = 0);
     bool passLagged(int passSlot) const { return lagMap_ && lagMap_[passSlot] != 0; }  // valid once that pass has finished
     int bandRowsFor(int width) const;  // rows per band so the orbit state stays small
     bool classicUsesFp64(const Classic2DSettings& cs, int targetH) const;

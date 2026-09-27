@@ -483,7 +483,7 @@ int Renderer::bandRowsFor(int width) const {
 }
 
 bool Renderer::dispatch2D(IndexTarget& out, const Classic2DSettings& cs, int y0, int rows, int chunk, bool first,
-                          int stateSlot, const IndexTarget* reuse, int trips, int passSlot) {
+                          int stateSlot, const IndexTarget* reuse, int trips, int passSlot, int bandIter) {
     StateImages& state = state2D_[stateSlot & 1];
     bool custom = cs.formula == kCustomFormula;
     bool deep = classicUsesDeep(cs, out.h);
@@ -561,6 +561,7 @@ bool Renderer::dispatch2D(IndexTarget& out, const Classic2DSettings& cs, int y0,
         if (lagMap_) lagMap_[passSlot] = 0;  // (the slot's previous pass was polled: finished)
         p.set("uTrips", trips);
         p.set("uPassSlot", passSlot);
+        p.set("uBandIter", bandIter);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, lagSsbo_);
         bool series = seriesSkip(cs, out.w, out.h) > 0;
         p.set("uSaSkip", series ? series_.skip : 0);

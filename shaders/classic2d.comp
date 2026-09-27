@@ -194,10 +194,13 @@ layout(std430, binding = 1) readonly buffer Bla { BlaStep bla[]; };
 uniform int uBlaLevels;  // 0: no skipping
 // A pass may run each pixel for at most uTrips loop trips (0: no limit): the cost of an
 // iteration varies a thousandfold between pixels and phases (jumps vs. steps), and a
-// pass must never hold the GPU for long. A pixel stopped by the valve is behind the
-// band; it says so in lag[uPassSlot], and the planner gives the band more passes.
+// pass must never hold the GPU for long. A pixel stopped by the valve falls behind the
+// band, and stays behind on later passes: any pixel that ends a pass short of uBandIter
+// (where the band's pixels should be by now) says so in lag[uPassSlot], and the planner
+// gives the band more passes until none is.
 uniform int uTrips;
 uniform int uPassSlot;
+uniform int uBandIter;
 layout(std430, binding = 5) coherent buffer Lag { uint lag[]; };
 uniform double uBlaDcMax2;  // the table was built for |delta_c|^2 up to this: farther pixels don't jump
 
@@ -250,12 +253,8 @@ void mainPerturb() {
     dvec2 zf = refZ[m] + eps;
     int end = min(i + uChunk, uMaxIter);
     int trips = 0;
-    bool lagged = false;
     for (; i < end; i++) {
-        if (uTrips > 0 && trips++ >= uTrips) {
-            lagged = true;
-            break;
-        }
+        if (uTrips > 0 && trips++ >= uTrips) break;  // (the valve: this pixel falls behind)
         // Skip ahead while delta is small enough for the linear approximation: the
         // longest valid jump that starts at this (aligned) reference index. Jumps may
         // run past this pass's chunk, never past the iteration limit or the reference.
@@ -306,7 +305,7 @@ void mainPerturb() {
         finish(-1.0, float(length(zf)) * 0.5, i, 0u);
         return;
     }
-    if (lagged) lag[uPassSlot] = 1u;
+    if (i < uBandIter) lag[uPassSlot] = 1u;
     imageStore(uState2, g_local, uvec4(uint(i), flags, floatBitsToUint(g_accA), floatBitsToUint(g_accB)));
     imageStore(uState0, g_local, uvec4(unpackDouble2x32(eps.x), unpackDouble2x32(eps.y)));
     imageStore(uState1, g_local, uvec4(uint(m), 0u, 0u, 0u));
