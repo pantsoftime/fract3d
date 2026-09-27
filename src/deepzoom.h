@@ -141,6 +141,21 @@ struct SeriesResult {
     std::vector<double> coef;    // c_1 .. c_K (re, im)
 };
 
+// A pixel's orbit replayed on the CPU exactly as the perturbation kernel runs it (single
+// steps, skip-ahead jumps, rebasing), to count the loop trips a stretch of iterations
+// costs: the pass planner uses a few of these per band to predict pass length, because
+// the cost per iteration swings a thousandfold along an orbit (jumps vs. steps).
+struct OrbitProbe {
+    double dc[2] = {0, 0};   // delta_c (0 for Julia sets)
+    double eps[2] = {0, 0};  // delta
+    int m = 0, i = 0;        // reference index, iteration
+    bool done = false;       // escaped or at the limit
+};
+// Advances `p` by at most `maxTrips` trips and never past iteration `until`; returns the
+// trips used. `t` may be null (no skip-ahead); jumps are only taken within `dcMax`.
+long advanceOrbit(const std::vector<double>& z, const BlaTable* t, double dcMax, OrbitProbe& p, int until, int maxIter,
+                  long maxTrips, double bail);
+
 class SeriesWorker {
 public:
     ~SeriesWorker();

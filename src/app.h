@@ -240,6 +240,7 @@ public:
     double lastChange = -10.0;
     float motionScale = 0.6f;
     float perSampleMsFull = 8.0f;  // estimated ms per sample at full resolution
+    int kind3DFractal = -1, kind3DMode = -1;  // what perSampleMsFull was measured on
     bool interactive = false;
     int generation = 0;         // bumped on shader reload to force re-render
     int formulaGeneration = 0;  // bumped when the custom formula is recompiled
@@ -261,6 +262,7 @@ public:
         bool preview = false;       // started while the view was moving (adapts down2D)
         double estMs = 0;           // estimated GPU time issued so far
         int frames = 0;             // frames it has been stepped
+        std::vector<OrbitProbe> probes;  // deep zoom: a few of the band's pixels replayed on the CPU to size passes
         std::vector<uint8_t> sig;
     } job2D;
     // While the view moves, previews are drawn at 1/down2D (up to 1/16) of the window size when a
@@ -272,6 +274,7 @@ public:
     IndexTarget work2D;
     // Advances a 2D job on `target` for up to budgetMs; returns true once the image is complete.
     bool stepJob2D(Job2D& job, IndexTarget& target, double budgetMs, int stateSlot = 0);
+    void setupProbes2D(Job2D& job, int tw, int th, int y0, int rows, int startIter);
     std::vector<uint8_t> coreSig2D;   // last compute signature (without supersampling)
     std::vector<uint8_t> shownSig2D;  // signature of the complete image in index2D
 

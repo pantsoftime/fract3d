@@ -109,6 +109,10 @@ void Renderer::shutdown() {
     if (blaSsbo_) glDeleteBuffers(1, &blaSsbo_);
     if (landRefSsbo_) glDeleteBuffers(1, &landRefSsbo_);
     if (seriesSsbo_) glDeleteBuffers(1, &seriesSsbo_);
+    if (lagSsbo_) {
+        glUnmapNamedBuffer(lagSsbo_);
+        glDeleteBuffers(1, &lagSsbo_);
+    }
     accum.release();
     index2D.release();
     for (auto& s : state2D_) s.release();
@@ -479,7 +483,7 @@ int Renderer::bandRowsFor(int width) const {
 }
 
 bool Renderer::dispatch2D(IndexTarget& out, const Classic2DSettings& cs, int y0, int rows, int chunk, bool first,
-                          int stateSlot, const IndexTarget* reuse) {
+                          int stateSlot, const IndexTarget* reuse, int trips, int passSlot) {
     StateImages& state = state2D_[stateSlot & 1];
     bool custom = cs.formula == kCustomFormula;
     bool deep = classicUsesDeep(cs, out.h);
@@ -548,6 +552,16 @@ bool Renderer::dispatch2D(IndexTarget& out, const Classic2DSettings& cs, int y0,
         }
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, blaSsbo_);
         p.setd("uBlaDcMax2", blaDcMax_ * blaDcMax_);
+        if (!lagSsbo_) {
+            const GLbitfield flags = GL_MAP_READ_BIT | GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
+            glCreateBuffers(1, &lagSsbo_);
+            glNamedBufferStorage(lagSsbo_, PassTimer::kSlots * sizeof(uint32_t), nullptr, flags);
+            lagMap_ = (uint32_t*)glMapNamedBufferRange(lagSsbo_, 0, PassTimer::kSlots * sizeof(uint32_t), flags);
+        }
+        if (lagMap_) lagMap_[passSlot] = 0;  // (the slot's previous pass was polled: finished)
+        p.set("uTrips", trips);
+        p.set("uPassSlot", passSlot);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, lagSsbo_);
         bool series = seriesSkip(cs, out.w, out.h) > 0;
         p.set("uSaSkip", series ? series_.skip : 0);
         if (series) {

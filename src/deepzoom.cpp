@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <complex>
+#include <limits>
 
 namespace hp {
 
@@ -206,25 +207,28 @@ void RefOrbitWorker::request(const RefOrbitRequest& r) {
 // The perturbation kernel's loop in doubles: how many trips (single steps and skip-ahead
 // jumps) a pixel at delta_c = dc takes from (m, i, eps) until iteration `until`, escape or
 // the limit. Used to judge whether the series saves work that skip-ahead didn't already.
-static long orbitTrips(const std::vector<double>& z, const BlaTable& t, bool julia, std::complex<double> dc,
-                       std::complex<double> eps, int m, int i, int until, int maxIter, double bail) {
+long advanceOrbit(const std::vector<double>& z, const BlaTable* t, double dcMax, OrbitProbe& p, int until, int maxIter,
+                  long maxTrips, double bail) {
     using C = std::complex<double>;
-    int refLen = (int)(z.size() / 2), levels = std::min(t.levels(), 30);
-    C cD = julia ? C(0) : dc;
+    if (p.done) return 0;
+    int refLen = (int)(z.size() / 2), levels = t ? std::min(t->levels(), 30) : 0;
+    C cD(p.dc[0], p.dc[1]), eps(p.eps[0], p.eps[1]);
+    bool jumps = levels > 0 && std::norm(cD) <= dcMax * dcMax;
     double bail2 = bail * bail;
     auto Z = [&](int k) { return C(z[2 * k], z[2 * k + 1]); };
     long trips = 0;
-    for (; i < until; i++) {
+    int m = p.m, i = p.i;
+    for (; i < until && trips < maxTrips; i++) {
         trips++;
-        if (levels > 0 && m >= 1) {
+        if (jumps && m >= 1) {
             int mm = m - 1;
             double d2 = std::norm(eps);
             int jmax = std::min(mm == 0 ? levels : __builtin_ctz(mm), levels), best = 0;
             const double* bs = nullptr;
             for (int j = 1; j <= jmax; j++) {
                 int l = 1 << j, k = mm >> j;
-                if (k >= t.levelCount[j] || m + l >= refLen - 1 || i + l >= maxIter) break;
-                const double* s = &t.data[6 * (size_t)(t.levelOffset[j] + k)];
+                if (k >= t->levelCount[j] || m + l >= refLen - 1 || i + l >= maxIter) break;
+                const double* s = &t->data[6 * (size_t)(t->levelOffset[j] + k)];
                 if (d2 >= s[4]) break;
                 best = j;
                 bs = s;
@@ -240,13 +244,29 @@ static long orbitTrips(const std::vector<double>& z, const BlaTable& t, bool jul
         eps = (2.0 * Z(m) + eps) * eps + cD;
         m++;
         C zf = Z(m) + eps;
-        if (std::norm(zf) > bail2) break;
+        if (std::norm(zf) > bail2) {
+            p.done = true;
+            break;
+        }
         if (m >= refLen - 1 || std::norm(zf) < std::norm(eps)) {
             eps = zf - Z(0);
             m = 0;
         }
     }
+    p.eps[0] = eps.real(), p.eps[1] = eps.imag();
+    p.m = m, p.i = i;
+    if (i >= maxIter) p.done = true;
     return trips;
+}
+
+// The trips a pixel at delta_c = dc takes from (m, i, eps) until iteration `until`.
+static long orbitTrips(const std::vector<double>& z, const BlaTable& t, bool julia, std::complex<double> dc,
+                       std::complex<double> eps, int m, int i, int until, int maxIter, double bail) {
+    OrbitProbe p;
+    if (!julia) p.dc[0] = dc.real(), p.dc[1] = dc.imag();
+    p.eps[0] = eps.real(), p.eps[1] = eps.imag();
+    p.m = m, p.i = i;
+    return advanceOrbit(z, &t, 1e300, p, until, maxIter, std::numeric_limits<long>::max(), bail);
 }
 
 SeriesWorker::~SeriesWorker() { stop(); }

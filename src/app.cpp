@@ -1448,6 +1448,14 @@ void App::render3D() {
         perSampleMsFull = perSampleMsFull * 0.7f + est * 0.3f;
     }
     float targetMs = 1000.0f / std::max(view.rs.targetFps, 10.0f) * 0.8f;
+    // Another fractal or render mode can cost a hundred times more per sample: until it's
+    // measured, assume it's expensive (a Kleinian path-traced at full size on a stale cheap
+    // estimate queued seconds of GPU work and stalled the desktop).
+    if (view.fractal != kind3DFractal || view.rs.renderMode != kind3DMode) {
+        kind3DFractal = view.fractal;
+        kind3DMode = view.rs.renderMode;
+        perSampleMsFull = std::max(perSampleMsFull, 60.0f);
+    }
     if (view.rs.adaptiveRes) motionScale = std::clamp(std::sqrt(targetMs / std::max(perSampleMsFull, 0.01f)), std::min(0.2f, view.rs.stillScale), view.rs.stillScale);
     else motionScale = view.rs.stillScale;
 
@@ -1465,6 +1473,9 @@ void App::render3D() {
     if (samples == 0 && band3DRow == 0) rend.clear3D(rend.accum);
 
     View3D v = makeView(rw, rh);
+    // Samples whose cost isn't measured yet don't pile up: with two frames' worth in
+    // flight, wait for a result (the estimate may be far too low for this view).
+    if (rend.timer.inFlight() >= 2) return;
     float perSample = perSampleMsFull * scale * scale;
     if (!interactive && perSample > targetMs * 2.0f) {
         // A full sample would stall the desktop: render it in bands over several frames.
@@ -1538,6 +1549,33 @@ void App::updateProbe() {
 }
 
 // ------------------------------------------------------------------ 2D rendering
+// Five pixels of a band (its middle row's ends, quarters and center), set up as the
+// kernel's first pass sets up every pixel: at delta 0 (Julia sets: at the pixel), or
+// where the series approximation puts them.
+void App::setupProbes2D(Job2D& job, int tw, int th, int y0, int rows, int startIter) {
+    job.probes.clear();
+    double pixel = job.cs.height / std::max(th, 1);
+    const double* off = rend.deepOffset();
+    double shift[2] = {0, 0};
+    const SeriesResult* sa = rend.seriesInUse(job.cs, tw, th, shift);
+    int xs[5] = {0, tw / 4, tw / 2, (3 * tw) / 4, tw - 1};
+    int ys[5] = {y0 + rows / 2, y0 + rows / 4, y0 + rows / 2, y0 + (3 * rows) / 4, y0 + rows / 2};
+    for (int n = 0; n < 5; n++) {
+        OrbitProbe p;
+        double sx = (xs[n] + 0.5 - 0.5 * tw) * pixel, sy = (ys[n] + 0.5 - 0.5 * th) * pixel;  // as samplePos * uPixelSize
+        double dc[2] = {sx + off[0], sy + off[1]};
+        if (job.cs.julia) p.eps[0] = dc[0], p.eps[1] = dc[1];
+        else p.dc[0] = dc[0], p.dc[1] = dc[1];
+        if (sa && startIter > 0) {
+            std::complex<double> u((sx + shift[0]) * sa->invR, (sy + shift[1]) * sa->invR), eta(0);
+            for (int q = (int)sa->coef.size() / 2 - 1; q >= 0; q--) eta = (eta + std::complex<double>(sa->coef[2 * q], sa->coef[2 * q + 1])) * u;
+            p.eps[0] = sa->base[0] + eta.real(), p.eps[1] = sa->base[1] + eta.imag();
+            p.m = p.i = startIter;
+        }
+        job.probes.push_back(p);
+    }
+}
+
 bool App::stepJob2D(Job2D& job, IndexTarget& target, double budgetMs, int stateSlot) {
     int tw = target.w, th = target.h;
     int maxIter = std::max(job.cs.maxIter, 1);
@@ -1556,16 +1594,20 @@ bool App::stepJob2D(Job2D& job, IndexTarget& target, double budgetMs, int stateS
     // The unit of work is iterations x megapixels, so the estimate carries over between
     // bands and images of different sizes (a reduced preview, the anti-aliased image).
     double bandMpx = std::min(rend.bandRowsFor(tw), std::max(th, 1)) * (double)tw / (1 << 20);
+    // No pass may hold the GPU for long (the desktop shares it), whatever the average
+    // suggests: bounded by the highest cost seen lately (PassTimer::costBound).
+    const double passMs = std::min(budgetMs / 3.0, 20.0), queueMs = std::max(2.0 * budgetMs, 50.0);
+    bool deep = rend.classicUsesDeep(job.cs, th) && refUploadedOrbit && refUploadedOrbit->size() >= 6;
     if (pt.fresh > 0 && pt.lastMs > 0) {
         double ideal = pt.lastWork * (budgetMs / 3.0) / pt.lastMs / bandMpx;
         job.chunk = (int)std::clamp(ideal, std::max(job.chunk / 4.0, 16.0), job.chunk * 2.0);
         pt.fresh = 0;
     }
-    double worstCap = pt.worstMsPerWork > 0 ? budgetMs / pt.worstMsPerWork / bandMpx : 512.0;
-    job.chunk = (int)std::clamp((double)job.chunk, (double)std::min(16, maxIter), std::max(16.0, std::min(worstCap, (double)maxIter)));
+    double cap = pt.costBound() > 0 ? passMs / pt.costBound() / bandMpx : 512.0;
+    if (!deep) job.chunk = (int)std::clamp((double)job.chunk, (double)std::min(16, maxIter), std::max(16.0, std::min(cap, (double)maxIter)));
     double spent = 0;
     int passes = 0;
-    while (job.active && !pt.full()) {
+    while (job.active && !pt.full() && pt.queuedMs < queueMs) {
         // A new band starts with a "first" pass that initializes its orbits. Only commit
         // to the band once that pass is really issued: if the budget ran out right at a
         // band boundary, the next frame must still begin it with its first pass (it
@@ -1575,16 +1617,53 @@ bool App::stepJob2D(Job2D& job, IndexTarget& target, double budgetMs, int stateS
         // With the series approximation every pixel starts at the skip: count from there,
         // or the band would run (and budget) passes with nothing left to do.
         int itersDone = first ? std::min(rend.seriesSkip(job.cs, tw, th), maxIter) : job.itersDone;
+        int y0 = th - job.row - bandRows;  // bands run top-down (GL rows count up)
         int k = std::max(std::min(job.chunk, maxIter - itersDone), 1);
         double work = (double)k * bandRows * tw / (1 << 20);
+        int trips = 0;  // the kernel's per-pass trip valve (deep zoom)
+        if (deep) {
+            // Deep zoom: the cost of an iteration swings a thousandfold along the orbit
+            // (where the skip-ahead jumps and where it can't), so a pass sized from the
+            // last one could hold the GPU for hundreds of milliseconds and stall the
+            // desktop. Instead a few of the band's pixels are replayed on the CPU: the pass
+            // covers what the slowest of them gets through in the trips that fit passMs,
+            // and its work is counted in trips (whose cost is steady).
+            if (first) setupProbes2D(job, tw, th, y0, bandRows, itersDone);
+            const std::vector<double>& z = *refUploadedOrbit;
+            bool blaOn = job.cs.bla && job.cs.coloring != 3 && job.cs.coloring != 4 && job.cs.coloring != 5 && job.cs.coloring != 6;
+            const BlaTable* bla = blaOn ? refUploadedBla.get() : nullptr;
+            double bail = job.cs.banded ? std::max(job.cs.bailout, 2.0f) : std::max(job.cs.bailout, 64.0f);
+            // The valve: the trips whose cost (per trip and megapixel - steady, unlike the
+            // cost of an iteration) fills passMs when every pixel uses them all. A pass's work
+            // is counted as if every pixel did, so the measured cost is an upper bound.
+            // (0.03 ms per trip x megapixel until a full pass has been measured: the running
+            // average is in iteration units and mostly fixed overhead - it planned 120 ms passes)
+            double costPer = std::max(std::max(pt.peakMsPerWork, pt.worstMsPerWork), 0.03);
+            long budgetTrips = std::clamp((long)(passMs / costPer / bandMpx), 16L, (long)(1 << 30));
+            int kmax = maxIter - itersDone, kp = kmax;
+            bool bounded = false;
+            for (auto& p : job.probes) {
+                if (p.done) continue;
+                OrbitProbe q = p;
+                advanceOrbit(z, bla, rend.blaDcMax(), q, maxIter, maxIter, budgetTrips, bail);
+                if (q.done && q.i >= maxIter) continue;  // reached the limit: no bound from it
+                kp = std::min(kp, std::max(q.i - p.i, 1));
+                bounded = true;
+            }
+            k = bounded ? kp : std::max(std::min(job.chunk, kmax), 1);  // (no probe left: the last size)
+            for (auto& p : job.probes) advanceOrbit(z, bla, rend.blaDcMax(), p, itersDone + k, maxIter, std::numeric_limits<long>::max(), bail);
+            job.chunk = k;
+            trips = (int)budgetTrips;  // pixels slower than the probes are stopped by the valve and finished below
+            work = (double)trips * bandRows * tw / (1 << 20);
+        }
         double est = pt.msPerWork * work;
         if (passes > 0 && spent + est > budgetMs) break;
         job.bandRows = bandRows;
         job.itersDone = itersDone;
-        int y0 = th - job.row - job.bandRows;  // bands run top-down (GL rows count up)
+        const IndexTarget* reuse = job.reusePreview && &target != &rend.index2D ? &rend.index2D : nullptr;
+        int slot = pt.head;
         pt.begin((float)work, first);
-        bool ok = rend.dispatch2D(target, job.cs, y0, job.bandRows, k, first, stateSlot,
-                                  job.reusePreview && &target != &rend.index2D ? &rend.index2D : nullptr);
+        bool ok = rend.dispatch2D(target, job.cs, y0, job.bandRows, k, first, stateSlot, reuse, trips, slot);
         pt.end();
         if (!ok) {
             job.active = false;
@@ -1594,6 +1673,25 @@ bool App::stepJob2D(Job2D& job, IndexTarget& target, double budgetMs, int stateS
         spent += est;
         job.estMs += est;
         job.itersDone += k;
+        if (job.itersDone >= maxIter && deep) {
+            // Pixels the valve stopped are behind the band. The band's state images can't
+            // be handed to the next band until they're done, so wait for the pass (short by
+            // construction) and give them further passes while any is still behind.
+            for (;;) {
+                pt.waitFor(slot);
+                pt.poll();
+                if (!rend.passLagged(slot)) break;
+                slot = pt.head;
+                pt.begin((float)(trips * bandMpx), false);
+                ok = rend.dispatch2D(target, job.cs, y0, job.bandRows, maxIter, false, stateSlot, reuse, trips, slot);
+                pt.end();
+                if (!ok) {
+                    job.active = false;
+                    return false;
+                }
+                passes++;
+            }
+        }
         if (job.itersDone >= maxIter) {  // every orbit in the band has escaped or hit the limit
             job.row += job.bandRows;
             job.bandRows = 0;

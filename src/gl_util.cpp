@@ -318,6 +318,8 @@ void PassTimer::begin(float amountOfWork, bool worstCase) {
     if (!q[0]) glGenQueries(kSlots, q);
     work[head] = amountOfWork;
     worst[head] = worstCase;
+    est[head] = (float)(costBound() * amountOfWork);
+    queuedMs += est[head];
     glBeginQuery(GL_TIME_ELAPSED, q[head]);
 }
 
@@ -339,15 +341,26 @@ void PassTimer::poll() {
             lastWork = work[tail];
             fresh++;
             if (worst[tail]) worstMsPerWork = ns / 1e6 / work[tail];
+            // (passes under a millisecond are mostly fixed overhead: they say nothing about
+            // what work costs, so they neither raise nor decay the peak)
+            if (ns >= 1000000) peakMsPerWork = std::max(peakMsPerWork * 0.85, ns / 1e6 / work[tail]);
         }
+        queuedMs = std::max(0.0, queuedMs - est[tail]);
         tail = (tail + 1) % kSlots;
     }
+}
+
+void PassTimer::waitFor(int slot) {
+    if (!q[0]) return;
+    GLuint64 ns = 0;
+    glGetQueryObjectui64v(q[slot], GL_QUERY_RESULT, &ns);  // (the result is cached: poll() reads it again)
 }
 
 void PassTimer::release() {
     if (q[0]) glDeleteQueries(kSlots, q);
     for (auto& x : q) x = 0;
     head = tail = 0;
+    queuedMs = 0;
 }
 
 void GpuTimer::begin(float tagA, float tagB) {

@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <epoxy/gl.h>
 
 #include <functional>
@@ -150,6 +151,15 @@ struct PassTimer {
     double lastMs = 0, lastWork = 0;  // the newest measured pass
     int fresh = 0;                    // measurements since the caller last looked
     double worstMsPerWork = 0;        // from the newest worst-case pass (0: none measured yet)
+    // The cost can swing a hundredfold between passes (deep zoom: some passes skip ahead,
+    // some can't), and a pass planned from the average then holds the GPU for hundreds of
+    // milliseconds - which stalls the whole desktop, not just this window. Pass length is
+    // bounded by a decaying maximum of the measured cost instead, and the work queued on
+    // the GPU (estimated with it) is kept to a couple of frames.
+    double peakMsPerWork = 0;
+    double queuedMs = 0;              // conservative estimate of the issued passes not yet finished
+    float est[kSlots] = {};
+    double costBound() const { return std::max(peakMsPerWork, std::max(worstMsPerWork, msPerWork)); }
     PassTimer() = default;
     PassTimer(const PassTimer&) = delete;
     PassTimer& operator=(const PassTimer&) = delete;
@@ -157,6 +167,7 @@ struct PassTimer {
     void begin(float amountOfWork, bool worstCase = false);
     void end();
     void poll();  // folds finished passes into the estimate
+    void waitFor(int slot);  // blocks until that pass (and every earlier one) has finished
     void release();
 };
 
@@ -171,4 +182,5 @@ struct GpuTimer {
     void begin(float tagA = 0, float tagB = 0);
     void end();
     void poll();  // updates lastMs from the oldest finished query
+    int inFlight() const { return (pending[0] ? 1 : 0) + (pending[1] ? 1 : 0) + (pending[2] ? 1 : 0) + (pending[3] ? 1 : 0); }
 };
