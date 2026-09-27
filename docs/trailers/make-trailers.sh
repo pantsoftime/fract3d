@@ -36,7 +36,7 @@ app --par in/cyc-only.par --formula Spider --open formula "${REC[@]}" --record-f
 app --par "$REPO/presets/07-mandelbulb-path-traced.par" "${FLY[@]}" "${REC[@]}" --record-from 100 --frames 850 --ui-record seg/a-bulb-long.mp4
 app --par "$REPO/presets/13-crater-lake.par" "${FLY[@]}" "${REC[@]}" --record-from 100 --frames 850 --ui-record seg/a-land-long.mp4
 app --par "$REPO/presets/12-kleinian-caves.par" "${FLY[@]}" "${REC[@]}" --record-from 100 --frames 310 --ui-record seg/a-klein.mp4
-app --par "$REPO/presets/09-mandelbox-cathedral.par" "${FLY[@]}" "${REC[@]}" --record-from 100 --frames 280 --ui-record seg/a-mbox.mp4
+app --par "$REPO/presets/10-inside-the-mandelbox.par" "${FLY[@]}" "${REC[@]}" --record-from 390 --frames 590 --ui-record seg/a-mbox.mp4
 XDG_CONFIG_HOME="$WORK/cfg2" "$APP" --par "$REPO/presets/12-kleinian-caves.par" "${FLY[@]}" --fixed-dt 0.0333333 --size 3840x2160 \
     --record-from 200 --frames 350 --ui-record seg/a-close4k.mp4
 

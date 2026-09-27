@@ -38,12 +38,14 @@ write_path("kifs.f3dpath", orbit("16-kifs-gem", (1.55, 1.05, -1.85), (0, -0.05, 
 write_path("klein.f3dpath", lookaround("12-kleinian-caves", (0.3, 0.1, -0.9), (0.2, 0.05, 0.0), [-24, -12, 0, 12, 24], [-0.07, 0, 0.07, 0.14, 0.21]), [1.2] * 5)
 write_path("mbox.f3dpath", lookaround("09-mandelbox-cathedral", (0, 0, -4.2), (0, 0, 0), [20, 10, 0, -10, -20], [-0.001, 0, 0.001, 0.002, 0.003]), [1.2] * 5)
 write_path("land.f3dpath", orbit("13-crater-lake", (0.9, 1.5, -1.9), (-0.15, 0.0, 0.1), [-50, -25, 0, 25, 50], [1.11, 1.0, 0.9, 0.82, 0.74], None), [2.2] * 5)
-# 2D: the deep zoom, whole set -> 10^20x at Seahorse Valley (a constant zoom rate)
+# 2D: the deep zoom, whole set -> 10^20x at Seahorse Valley (a constant zoom rate). The iteration
+# limit rises in log space along the way; ending at 12000, it fell behind what the spiral needs
+# around 10^16x and a quarter-second of the zoom came out black.
 deep = ("mode = 2d\ncolor.palette = Ultra Fractal\nclassic.banded = 0\nclassic.supersample = 2\nclassic.fp64 = 2\n"
         "classic.center = -0.743643887037158704752191506114774 0.131825904205311970493132056385139\n"
         "classic.centerHP = -0.743643887037158704752191506114774 0.131825904205311970493132056385139\n")
-write_path("deepzoom.f3dpath", [deep + "classic.height = 2.6\nclassic.maxIter = 300\n", deep + "classic.height = 1e-20\nclassic.maxIter = 12000\n"], [4.6, 1], ease=True)
-with open(f"{IN}/deep-end.par", "w") as o: o.write(deep + "classic.height = 1e-20\nclassic.maxIter = 12000\n")
+write_path("deepzoom.f3dpath", [deep + "classic.height = 2.6\nclassic.maxIter = 300\n", deep + "classic.height = 1e-20\nclassic.maxIter = 40000\n"], [4.6, 1], ease=True)
+with open(f"{IN}/deep-end.par", "w") as o: o.write(deep + "classic.height = 1e-20\nclassic.maxIter = 40000\n")
 # 2D title: Fractint 1990 with the palette cycling
 with open(f"{IN}/fractint-cycling.par", "w") as o: o.write(preset("01-fractint-1990") + "color.cycleSpeed = 45\n")
 print(sorted(os.listdir(IN)))

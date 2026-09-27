@@ -125,8 +125,8 @@ a = [
     make_clip("a1", "seg/a-bulb-long.mp4", 3.5, 7.2,
               two(title_layer(7.2, "FRACT3D", "AUTOPILOT", "Take the controls \u2014 or let it fly", t1=2.9, subsize=72, subfont=FONT_BOLD),
                   caption_layer(7.2, ["Around", "It circles the outside, holding its altitude"], "top", t0=3.4))),
-    make_clip("a2", "seg/a-klein.mp4", 0.3, 6.2, caption_layer(6.2, ["Through", "It threads caves and tunnels, never touching a wall"], "top")),
-    make_clip("a3", "seg/a-mbox.mp4", 0.4, 5.4, caption_layer(5.4, ["It senses its world", "Distance estimates and 34 probe rays, every frame"], "top")),
+    make_clip("a2", "seg/a-klein.mp4", 0.3, 6.2, caption_layer(6.2, ["Through", "It senses the walls with 34 probe rays, and never touches one"], "top")),
+    make_clip("a3", "seg/a-mbox.mp4", 0.2, 5.4, caption_layer(5.4, ["It shrinks to fit", "Deep in the Mandelbox\u2019s walls, through gaps 1/400 of the box"], "top")),
     make_clip("a4", "seg/a-close4k.mp4", 0.5, 4.4, caption_layer(4.4, ["A real cockpit", "Speed \u00b7 artificial horizon \u00b7 clearance \u00b7 a live map sliced from the fractal"], "top"), pre=CROP),
     make_clip("a5", "seg/a-land-long.mp4", 20.4, 4.6, caption_layer(4.6, ["The autopilot tour", "Every 3D world, hands-free"], "top")),
 ]
